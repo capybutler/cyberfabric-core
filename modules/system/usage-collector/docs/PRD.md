@@ -4,47 +4,48 @@
 
 ### 1.1 Purpose
 
-A centralized usage metering system for reliably collecting, persisting, and managing usage data from all platform sources, with exactly-once semantics, tenant isolation, and type-safe usage definitions. The Usage Collector acts as the authoritative record of resource consumption. Business logic (pricing, rating, billing rules, invoice generation) remains the responsibility of downstream systems. Querying and server-side aggregation are handled by the usage-query module.
+A usage metering module for collecting usage records from platform services and providing aggregated usage data to clients. The Usage Collector is the centralized store and query engine for all platform usage data. It receives usage records from sources, persists them durably in a pluggable storage backend, and serves aggregated results to downstream consumers.
 
 ### 1.2 Background / Problem Statement
 
-The Usage Collector (UC) serves as the single source of truth for all platform usage data. UC handles usage capture, storage, and data integrity; querying, aggregation, and data exposure are handled by the usage-query module. UC supports diverse collection patterns optimized for different throughput needs, pluggable storage backends, and provides type-safe usage definitions through a schema-based type system.
+Platform services need a centralized place to report resource consumption (API calls, AI tokens, storage bytes, compute hours) so that downstream systems (billing, quota enforcement, dashboards) can operate on consistent data. Without a central usage module, each consumer implements its own collection logic, leading to inconsistent data, duplicated effort, and no single source of truth.
 
-The service addresses the fragmentation problem where different consumers (billing, monitoring, quota enforcement) implement their own collection logic, leading to inconsistent data and duplicated effort. By centralizing usage collection, the platform ensures that all consumers operate on the same accurate, deduplicated data.
-
-Key problems:
-
-- **Fragmented tracking**: Each consumer implements own collection leading to inconsistent data
-- **High-volume ingestion**: Per-event synchronous calls are inefficient at high throughput due to protocol overhead and blocking behavior
-- **No custom units**: Cannot meter new resource types (AI tokens) without code changes
-- **Storage lock-in**: No flexibility for different retention and performance needs
+The Usage Collector addresses this by accepting usage records from sources and providing a query/aggregation API to consumers. Business logic (pricing, billing rules, invoice generation, quota enforcement decisions) remains the responsibility of downstream consumers.
 
 ### 1.3 Goals (Business Outcomes)
 
-- All billable platform services emit usage through UC
-- Single source of truth: all downstream consumers (billing, monitoring, quota enforcement) operate on the same usage data from UC
-- Custom unit registration in less than 5 minutes without code changes
-- High-volume services can emit 10,000+ events per second without blocking
-- Storage backends are pluggable — no lock-in to a specific database technology
-- 99.95%+ monthly availability
+- **Centralized metering**: All platform services that measure resource consumption report to a single authoritative store, eliminating per-service tracking implementations and data inconsistencies across the platform.
+- **Zero record loss**: Every usage record successfully emitted by a source is eventually persisted and queryable — no record is silently lost due to source restarts, process failures, or transient storage unavailability.
+- **Operator self-service for new resource types**: Platform operators can onboard new billable resource types (e.g., GPU hours, custom credit units) via API without code changes or service redeployment, supporting rapid product iteration.
+- **Downstream consumers need no aggregation layer**: Billing, quota enforcement, and dashboard systems obtain aggregated usage views directly from the Usage Collector within interactive latency bounds, without maintaining their own aggregation infrastructure.
+
+**Success Metrics** (measured at initial production release):
+
+| Goal | Measurable Success Criterion | Target |
+|------|------------------------------|--------|
+| Centralized metering | All existing platform services with billable operations integrated with Usage Collector SDK; zero per-service custom metering implementations remaining | 100% of billable services at first production deployment |
+| Zero record loss | Zero records silently discarded in soak testing over a 7-day period including storage backend failure injection; all failures surfaced via `outbox_dead_rows_total` monitoring | 0 silent losses over 7-day soak test |
+| Operator self-service | Time to onboard a new billable resource type (from API call to first emittable records) without code changes or redeployment | ≤ 5 minutes end-to-end |
+| Downstream consumers need no aggregation layer | All registered downstream consumers (billing, quota, dashboards) serve their primary aggregation use cases via the Usage Collector query API; no downstream-maintained aggregation tables required at launch | 0 downstream aggregation tables at first production deployment |
 
 ### 1.4 Glossary
 
-| Term | Definition |
-|------|------------|
-| Usage Record | A single data point representing resource consumption by a tenant |
-| Counter | A delta metric representing a non-negative increment since the last report (e.g., API calls in this batch). The UC accumulates deltas into a monotonically increasing persistent total. |
-| Gauge | A point-in-time metric that can go up or down (e.g., current memory usage) |
-| Measuring Unit | A registered schema defining how a usage type is measured (e.g., "ai-credits", "vCPU-hours") |
-| Usage Collector Plugin | A plugin that provides backend-specific data persistence for a specific storage backend (e.g., ClickHouse, TimescaleDB). Each plugin implements the full write-path interface for its backend: record persistence, deduplication storage, retention enforcement, and failure buffering. |
-| Idempotency Key | A client-provided identifier ensuring exactly-once processing of a usage record |
-| Backfill | The process of retroactively submitting historical usage data to fill gaps caused by outages, pipeline failures, or corrections |
-| Grace Period | A configurable time window during which late-arriving events are accepted via normal ingestion without requiring explicit backfill |
-| Reconciliation | The process of comparing usage data across pipeline stages or external sources to detect gaps and inconsistencies (performed by external systems; UC exposes metadata to support this) |
-| Amendment | A correction to previously recorded usage data, either by replacing events in a time range or deprecating individual events |
-| Rate Limit | A constraint on the volume of requests a source can submit within a time window |
-| Load Shedding | The deliberate dropping or deferral of low-priority work to preserve system stability under overload |
-| Record Metadata | An optional, extensible JSON object attached to a usage record, allowing usage sources to include context-specific properties (e.g., LLM model name, token type, geographic region) that are opaque to UC and interpreted by downstream consumers |
+| Term                   | Definition                                                                                                                                                                                                                                                         |
+| ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| Usage Record           | A single data point representing resource consumption by a tenant, with a numeric value and a timestamp                                                                                                                                                            |
+| Counter                | A delta metric representing a non-negative increment since the last report (e.g., API calls in this batch). The Usage Collector accumulates submitted deltas into a monotonically increasing persistent total.                                                     |
+| Gauge                  | A point-in-time metric that can go up or down (e.g., current memory usage in bytes). Stored as-is without monotonicity constraints.                                                                                                                                |
+| Idempotency Key        | A client-provided identifier ensuring at-least-once processing without duplicate records                                                                                                                                                                           |
+| Usage Collector Plugin | A storage backend plugin for a specific database (ClickHouse, TimescaleDB)                                                                                                                                                                                         |
+| Record Metadata        | An optional, extensible JSON object attached to a usage record, allowing usage sources to include context-specific properties (e.g., LLM model name, token type, geographic region) that are opaque to the Usage Collector and interpreted by downstream consumers |
+| Measuring Unit         | A registered schema defining how a specific usage type is measured (e.g., "ai-credits", "vCPU-hours", "gpu-hours")                                                                                                                                                 |
+| Backfill               | The process of bulk-inserting historical usage records to fill gaps caused by outages, pipeline failures, or corrections. Backfill is purely additive and does not modify existing records.                                                                        |
+| Amendment              | A correction to previously recorded usage data, either by updating properties of an individual event or deprecating it                                                                                                                                             |
+| Reconciliation         | The process of comparing usage data across pipeline stages or external sources to detect gaps and inconsistencies (performed by external systems; the Usage Collector exposes metadata to support this)                                                            |
+| Rate Limit Window      | A configurable time interval over which a source's emission count is tracked for rate limiting purposes (e.g., per second, per minute)                                                                                                                             |
+| Emission Quota         | The maximum number of usage records a source module is permitted to emit for a given tenant within a single rate limit window                                                                                                                                      |
+| PDP                    | Policy Decision Point — the platform authorization service (`authz-resolver`) that evaluates access control policies and returns permit/deny decisions, optionally with query constraint filters that narrow the scope of permitted operations                     |
+| SecurityContext        | A platform-provided, server-side structure that carries the authenticated caller's identity, including tenant ID and subject (user or service account) identity. Derived from the request authentication token; never accepted from request payloads               |
 
 ## 2. Actors
 
@@ -54,15 +55,22 @@ Key problems:
 
 **ID**: `cpt-cf-usage-collector-actor-platform-operator`
 
-**Role**: Configures storage plugins, retention policies, custom measuring units, and monitors system health.
-**Needs**: Ability to manage storage backend plugins, define retention policies, register custom units, and monitor system health without code changes.
+- **Role**: Deploys and configures the usage collector module, selects storage backend, monitors system health.
+- **Needs**: Ability to choose and configure storage backends without code changes.
 
 #### Platform Developer
 
 **ID**: `cpt-cf-usage-collector-actor-platform-developer`
 
-**Role**: Integrates services with UC using SDKs or APIs to emit usage data.
-**Needs**: Well-documented SDKs and APIs for emitting usage data with minimal integration effort.
+- **Role**: Integrates platform services with the Usage Collector using the SDK or API to emit usage data.
+- **Needs**: Well-documented SDK for emitting usage data with minimal integration effort.
+
+#### Tenant Administrator
+
+**ID**: `cpt-cf-usage-collector-actor-tenant-admin`
+
+- **Role**: Queries raw and aggregated usage data for their tenant.
+- **Needs**: Access to raw and aggregated usage records filtered by type, subject, and resource for their tenant only, with time-range filtering.
 
 ### 2.2 System Actors
 
@@ -70,25 +78,46 @@ Key problems:
 
 **ID**: `cpt-cf-usage-collector-actor-usage-source`
 
-**Role**: Any platform service, infrastructure adapter, or gateway that emits usage records (e.g., LLM Gateway, Compute Service, API Gateway).
+- **Role**: Any platform service that produces usage records (e.g., LLM Gateway, Compute Service, API Gateway). Uses the Usage Collector SDK to emit records.
 
-#### Monitoring System
+#### Usage Consumer
 
-**ID**: `cpt-cf-usage-collector-actor-monitoring-system`
+**ID**: `cpt-cf-usage-collector-actor-usage-consumer`
 
-**Role**: Consumes usage metrics for dashboards, alerting, and operational visibility.
-
-#### Types Registry
-
-**ID**: `cpt-cf-usage-collector-actor-types-registry`
-
-**Role**: Provides schema validation for usage types and custom measuring units.
+- **Role**: Any system that queries aggregated usage data (e.g., billing system, quota enforcer, dashboard).
 
 #### Storage Backend
 
 **ID**: `cpt-cf-usage-collector-actor-storage-backend`
 
-**Role**: The underlying data store (ClickHouse, TimescaleDB, or external system) that persists usage records. Accessed by the usage collector plugin for write operations.
+- **Role**: The underlying data store (ClickHouse or TimescaleDB) that persists usage records.
+
+#### Types Registry
+
+**ID**: `cpt-cf-usage-collector-actor-types-registry`
+
+- **Role**: Provides schema validation for usage types and custom measuring units.
+
+#### Monitoring System
+
+**ID**: `cpt-cf-usage-collector-actor-monitoring-system`
+
+- **Role**: Consumes usage metadata for dashboards, alerting, and operational visibility.
+
+### 2.3 Actor Permissions
+
+| Actor | Permitted Operations | Denied by Default |
+|-------|---------------------|-------------------|
+| `cpt-cf-usage-collector-actor-platform-operator` | Configure and delete retention policies (except global default); submit backfill operations; amend and deactivate individual records; register custom usage types; view watermarks and ingestion metadata | Querying or modifying records belonging to any tenant without an explicit security context; deleting the global default retention policy |
+| `cpt-cf-usage-collector-actor-platform-developer` | Emit usage records via the SDK within the source module's authorized metric namespace and tenant scope | Emitting metrics outside the source module's authorized namespace; attributing records to subjects or resources outside the authorized scope |
+| `cpt-cf-usage-collector-actor-tenant-admin` | Query aggregated and raw usage records scoped to their own tenant; view watermarks for their tenant | Accessing usage data of any other tenant; invoking operator-only operations (backfill, amendment, deactivation, retention policy management) |
+| `cpt-cf-usage-collector-actor-usage-source` | Emit authorized metrics within the source module's namespace via the SDK; the scope of permitted metrics and tenants is enforced by the platform PDP | Emitting metrics outside the authorized namespace; bypassing `authorize_emit()`; submitting records attributed to other sources |
+| `cpt-cf-usage-collector-actor-usage-consumer` | Query aggregated and raw usage data scoped to the authenticated tenant; subject to PDP constraint filters | Accessing cross-tenant data; mutating usage records |
+| `cpt-cf-usage-collector-actor-storage-backend` | Receive and persist usage records forwarded by the gateway plugin; respond to query and retention operations initiated by the plugin | Direct access from any actor other than the authorized storage plugin instance |
+| `cpt-cf-usage-collector-actor-types-registry` | Respond to schema registration and validation requests initiated by the gateway | N/A — passive service; does not initiate operations on the Usage Collector |
+| `cpt-cf-usage-collector-actor-monitoring-system` | Read observability endpoints (`/health/*`, metrics scrape, watermark API) | Modifying usage records or configuration |
+
+Authorization is enforced via the platform PDP (`authz-resolver`) on all read and write operations. Unauthenticated requests are rejected before any authorization check. Failures result in immediate rejection with no partial operation (`cpt-cf-usage-collector-principle-fail-closed`).
 
 ## 3. Operational Concept & Environment
 
@@ -98,31 +127,27 @@ No module-specific environment constraints beyond project defaults.
 
 ### 4.1 In Scope
 
-- Client-side SDK with batching (primary ingestion path)
-- API for usage ingestion (Rust API, gRPC, HTTP)
+- Usage record ingestion from platform services
 - Counter and gauge metric semantics
-- Per-tenant, per-subject (user, service account, etc.), and per-resource usage attribution
-- Pluggable storage plugin framework (ClickHouse, TimescaleDB, custom)
-- Custom measuring unit registration via API
-- Configurable retention policies
-- Idempotency and deduplication for exactly-once semantics
+- Per-tenant usage attribution derived from SecurityContext
+- Per-subject (user, service account) usage attribution derived from SecurityContext
+- Per-resource usage attribution
+- Ingestion authorization via the platform PDP
+- Per-source, per-tenant rate limiting to prevent outbox flooding
+- Idempotency via client-provided keys
+- At-least-once delivery of records from sources to the Usage Collector
+- Pluggable storage backend (ClickHouse, TimescaleDB)
+- Query API for aggregated usage data (SUM, COUNT, MIN, MAX, AVG) with time-range and grouping
+- Tenant isolation on all read and write operations
+- Per-record extensible metadata (optional, opaque to the Usage Collector)
+- Configurable retention policies (global, per-tenant, per-usage-type) with automated enforcement
 - Backfill API for retroactive submission of historical usage data
-- Late-arriving event handling with configurable grace period
-- Per-tenant and per-source ingestion rate limiting with configurable overrides
-- Priority-based load shedding under sustained overload
+- Usage type validation and custom measuring unit registration
 
 ### 4.2 Out of Scope
 
-- **Querying & Aggregation**: Raw record querying, server-side aggregation, cursor-based pagination, rollups, and query engine management are handled by the usage-query module.
-- **Business Aggregation & Interpretation**: Business-specific data interpretation — pricing, rating, billing rules, invoice generation, chargeback allocation, quota policy decisions — is the responsibility of downstream consumers.
-- **Reconciliation & Gap Detection**: Monitoring for data gaps, heartbeat tracking, watermark analysis, and cross-stage count reconciliation are handled by external observability/reconciliation systems. UC exposes metadata (event counts, timestamps per source) that external systems can consume for this purpose.
-- **Report Generation**: Usage reports, dashboards, and visualizations are handled by Monitoring/Analytics systems.
-- **Rules & Exceptions**: Business rules, usage policies, threshold-based actions, and exception handling are the responsibility of downstream consumers.
-- **Billing/Rating Logic**: Pricing calculation handled by downstream Billing System.
-- **Invoice Generation**: Handled by Billing System.
-- **Quota Enforcement Decisions**: Handled by Quota Enforcement System; UC provides data only.
-- **Usage Prediction/Forecasting**: Deferred to future phase.
-- **Multi-Region Replication**: Deferred to future phase.
+- **Business Logic**: Pricing, rating, billing rules, invoice generation, quota enforcement decisions — responsibility of downstream consumers
+- **Multi-Region Replication**: Deferred to future phase
 
 ## 5. Functional Requirements
 
@@ -130,21 +155,21 @@ No module-specific environment constraints beyond project defaults.
 
 #### Usage Record Ingestion
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-usage-ingestion`
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-ingestion`
 
-The system **MUST** accept usage records via multiple transport mechanisms (Rust API, gRPC, HTTP), with SDK providing automatic batching for high-throughput scenarios (10,000+ events per second).
+The system **MUST** accept usage records from platform services. Each usage record represents a single measurement of resource consumption attributed to a tenant.
 
-**Rationale**: Different usage sources have different integration and throughput needs; providing multiple transport options ensures all sources can efficiently emit data.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-developer`
+- **Rationale**: Centralizing usage ingestion ensures all downstream consumers operate on the same data.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
 
-#### Idempotency and Deduplication
+#### Idempotent Ingestion
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-idempotency`
 
-The system **MUST** support idempotency keys to ensure exactly-once processing, preventing duplicate records and incorrect aggregations.
+The system **MUST** support client-provided idempotency keys. When an idempotency key is provided, duplicate submissions with the same key **MUST** be silently deduplicated (no error, no duplicate record). Counter records **MUST** include an idempotency key; the system **MUST** reject counter records submitted without one. When no idempotency key is provided for a gauge record, the record is accepted as-is without deduplication.
 
-**Rationale**: Network retries and batching can produce duplicate submissions; deduplication ensures billing accuracy.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`
+- **Rationale**: At-least-once delivery semantics can produce duplicate submissions; deduplication prevents incorrect aggregations. For counter metrics, a retry of a keyless delta delivery inflates the accumulated total without any means of detection or correction — requiring an idempotency key on every counter emission eliminates this data integrity risk at the source. Gauge metrics lack a meaningful cumulative total, so duplicate gauge readings introduce at most transient noise rather than a systematic data integrity failure.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
 
 #### Per-Record Extensible Metadata
 
@@ -154,8 +179,8 @@ The system **MUST** support an optional, extensible metadata field on each usage
 
 The system **MUST NOT** index, aggregate, or interpret metadata contents — metadata is opaque to the Usage Collector. Downstream consumers (billing, reporting, analytics) are responsible for extracting and processing metadata fields according to their own domain logic.
 
-**Rationale**: Different usage sources need to attach context-specific properties to usage records (e.g., LLM model name, token type, request category, geographic region) that enable downstream reporting and analytics. Storing metadata per-record at ingestion time avoids the need to correlate usage records with external context stores and supports use cases like detailed LLM usage reporting and cost attribution by model. This follows the industry-standard pattern used by metering platforms (OpenMeter, Lago, Orb, Amberflo) where per-event properties are stored alongside the core measurement.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-developer`
+- **Rationale**: Different usage sources need to attach context-specific properties to usage records (e.g., LLM model name, token type, request category, geographic region) that enable downstream reporting and analytics. Storing metadata per-record at ingestion time avoids the need to correlate usage records with external context stores.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-developer`
 
 ### 5.2 Metric Semantics
 
@@ -163,147 +188,159 @@ The system **MUST NOT** index, aggregate, or interpret metadata contents — met
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-counter-semantics`
 
-The system **MUST** enforce counter semantics: sources submit non-negative delta values representing consumption since their last report. The system **MUST** reject counter records with negative values. The system **MUST** accumulate submitted deltas into a persistent monotonically increasing total per (tenant, resource, usage_type) tuple.
+The system **MUST** enforce counter semantics: sources submit non-negative delta values representing consumption since their last report. The system **MUST** reject counter records with negative values. The system **MUST** accumulate submitted deltas into a persistent, monotonically increasing total per (tenant, metric) tuple.
 
-**Rationale**: Delta-based reporting decouples the source's internal state from the UC's persistent totals. Sources never report cumulative values, so process restarts and counter resets in the source are transparent to the UC — a restart simply results in the next batch starting from zero again, which is valid. This avoids the need for counter reset signaling.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`
+- **Rationale**: Delta-based reporting decouples the source's internal state from the Usage Collector's persistent totals. Sources never report cumulative values, so process restarts and counter resets in the source are transparent — a restart simply results in the next emission starting from zero again, which is valid.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
 
 #### Gauge Metric Semantics
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-gauge-semantics`
 
-The system **MUST** support gauge metrics (point-in-time values) without monotonicity validation, storing values as-is.
+The system **MUST** support gauge metrics representing point-in-time values. Gauge records **MUST** be stored as-is without monotonicity constraints or delta accumulation.
 
-**Rationale**: Gauges represent instantaneous measurements (e.g., current memory usage) that naturally fluctuate.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`
+- **Rationale**: Gauges represent instantaneous measurements (e.g., current active connections, memory usage in bytes) that naturally fluctuate and have no meaningful cumulative total.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
 
-### 5.3 Attribution & Isolation
+### 5.3 Delivery Guarantee
+
+#### At-Least-Once Delivery
+
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-delivery-guarantee`
+
+The system **MUST** guarantee at-least-once delivery of usage records from sources to the Usage Collector. Once a usage source has emitted a record via the SDK, that record **MUST** eventually reach the Usage Collector and be available for querying, even if the Usage Collector is temporarily unavailable at the time of emission. The system **MUST** surface permanently undeliverable records via operational monitoring.
+
+- **Rationale**: Usage data is billing-critical; loss of emitted records is unacceptable.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
+
+### 5.4 Attribution & Isolation
 
 #### Tenant Attribution
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-tenant-attribution`
 
-The system **MUST** attribute all usage records to a tenant derived from security context, ensuring attribution is immutable and used for isolation.
+The system **MUST** attribute all usage records to a tenant derived from the authenticated SecurityContext. Tenant identity **MUST NOT** be accepted from request payloads.
 
-**Rationale**: Accurate tenant attribution is the foundation for billing, quota enforcement, and data isolation.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`
+- **Rationale**: Server-side tenant derivation prevents spoofing and is the foundation for billing and isolation.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
 
 #### Resource Attribution
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-resource-attribution`
 
-The system **MUST** support attributing usage to specific resource instances within a tenant, including resource ID, type, and lineage.
+The system **MUST** support attributing usage records to specific resource instances within a tenant, identified by a resource ID and resource type.
 
-**Rationale**: Granular resource attribution enables per-resource billing and usage analysis.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`
+- **Rationale**: Per-resource attribution enables granular billing, per-resource quota enforcement, and detailed usage analysis at the resource level.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
 
 #### Subject Attribution
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-subject-attribution`
 
-The system **MUST** support attributing usage to a subject within a tenant, identified by a `subject_id` and `subject_type` pair. Subject types include but are not limited to users and service accounts. Subject attribution **MUST** always be derived from the authenticated SecurityContext — the system **MUST NOT** accept subject identity from request payloads.
+The system **MUST** support attributing usage records to a subject (user, service account, or other principal) within a tenant, identified by a subject ID and subject type. Subject attribution **MUST** always be derived from the authenticated SecurityContext — the system **MUST NOT** accept subject identity from request payloads.
 
-Subject attribution is optional on a per-usage-record basis to accommodate system-level resource consumption that is not attributable to a specific subject (e.g., background jobs authenticating as a service account where no per-user attribution is meaningful).
+Subject attribution is optional per usage record to accommodate system-level resource consumption not attributable to a specific subject (e.g., background jobs where per-user attribution is not meaningful).
 
-**Rationale**: Per-subject attribution enables chargeback, detailed usage analytics, per-subject quota enforcement, and helps organizations understand which subjects (users, service accounts) are driving consumption. This is essential for multi-user tenants who need to allocate costs or enforce limits at the subject level, and for tracking consumption by automated service accounts alongside human users.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`
+- **Rationale**: Per-subject attribution enables chargeback, per-subject quota enforcement, and visibility into which principals drive consumption within a tenant. Deriving subject identity server-side from SecurityContext prevents spoofing.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
+- **Data Classification**: Subject IDs stored by the Usage Collector are opaque internal platform identifiers issued and managed by the platform identity layer (SecurityContext). They are not directly identifying natural persons within this module. PII management responsibilities belong to the platform identity layer; the Usage Collector stores and processes only these opaque identifiers. See §6.3 NFR Exclusions for the Privacy by Design applicability statement.
 
 #### Tenant Isolation
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-tenant-isolation`
 
-The system **MUST** enforce strict tenant isolation ensuring usage data is never accessible across tenants, failing closed on authorization failures.
+The system **MUST** enforce strict tenant isolation on all read and write operations, ensuring usage data is never accessible across tenants. The system **MUST** fail closed on authorization failures.
 
-**Rationale**: Tenant data isolation is a security and compliance requirement.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-platform-developer`, `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-types-registry`, `cpt-cf-usage-collector-actor-storage-backend`
+- **Rationale**: Tenant data isolation is a security and compliance requirement.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-usage-consumer`
 
 #### Ingestion Authorization
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-ingestion-authorization`
 
-The system **MUST** identify the source of each usage record from the caller's SecurityContext using `subject_id` and `subject_type`. Source identity **MUST** be derived server-side from the authenticated SecurityContext and **MUST NOT** be accepted from the request payload. The system **MUST** authorize each ingestion request by verifying that the authenticated caller is permitted to report the specific usage type being submitted and that the referenced resource and subject are within the caller's SecurityContext scope. The system **MUST** reject usage records that fail either check, failing closed on authorization failures.
+The system **MUST** authorize each usage record emission before it is persisted. Authorization **MUST** verify that the emitting source module is permitted to report the specific metrics being submitted, and that any attributed resource and subject are within the emitting module's authorized scope.
 
-Both dimensions — which usage types a source may report, and on whose behalf it may attribute usage — **MUST** be enforced through the platform's authorization mechanisms rather than a separate registry-based validation.
+Each source module has a fixed, platform-assigned identity that is the basis for authorization. A source module **MUST** only be permitted to emit metrics within its authorized domain; emissions outside that domain **MUST** be rejected before any record is persisted.
 
-**Rationale**: Without ingestion authorization, any module or integration could report usage for resource types it does not own (e.g., a File Parser reporting LLM token usage) or attribute usage to subjects and resources beyond its organizational reach, leading to inaccurate metering, incorrect billing, quota manipulation, and cross-boundary data pollution.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-operator`
+Authorization failures **MUST** be surfaced immediately to the caller before any domain operation is committed. The system **MUST** fail closed: unauthorized records are never persisted, and there is no silent discard of denied emissions.
 
-### 5.4 Storage & Retention
+- **Rationale**: Without ingestion authorization, any module could report usage for metric types it does not own (e.g., a file-storage service reporting LLM token usage) or attribute usage to subjects and resources beyond its authorized scope, leading to inaccurate metering, billing errors, and cross-boundary data pollution. Binding source identity at initialization time rather than per-call makes the authorization scope auditable and eliminates per-call spoofing surface.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`
 
-#### Data Persistence Guarantees and Boundaries
+### 5.5 Pluggable Storage
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-persistence-guarantees`
-
-The system does **NOT** guarantee absolute persistence of all usage events under all conditions. The system provides limited persistence guarantees with explicit boundaries between guaranteed durability (post-ingestion) and acceptable data loss (pre-ingestion, overload scenarios).
-
-**Persistence guarantee applies only AFTER successful ingestion acknowledgment** (`cpt-cf-usage-collector-nfr-exactly-once`, `cpt-cf-usage-collector-nfr-fault-tolerance`). **Before acknowledgment**, data loss is possible and acceptable under SDK buffer exhaustion, process termination, rate limiting, and priority-based load shedding (`cpt-cf-usage-collector-fr-sdk-retry`, `cpt-cf-usage-collector-fr-load-shedding`). All loss scenarios **MUST** be observable via metrics and alerts.
-
-**Design Trade-off:** This design prioritizes system availability and ingestion performance over absolute durability. The Usage Collector remains available and responsive under overload conditions, accepting billing-critical usage data while shedding lower-priority events. The alternative—blocking all ingestion until buffers clear—would cause cascading failures in usage sources and block revenue-critical operations.
-
-**Rationale**: Explicit acknowledgment of persistence boundaries prevents false assumptions about data durability and sets correct expectations for operators and downstream consumers.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-developer`
-
-#### Pluggable Storage Plugin Framework
+#### Pluggable Storage Backend
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-pluggable-storage`
 
-The system **MUST** support pluggable storage backends (ClickHouse, TimescaleDB, custom) via backend plugins. Each plugin implements the full write-path interface for its backend. This follows the platform's gateway pattern where the Usage Collector gateway delegates to the active plugin discovered via the types registry.
+The system **MUST** support pluggable storage backends. Each plugin provides persistence and query capabilities for its specific backend (ClickHouse, TimescaleDB). The operator selects the active backend via configuration.
 
-**Rationale**: Pluggable storage avoids lock-in to a specific database technology and allows operators to choose the backend that best fits their retention and performance needs.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-storage-backend`
+- **Rationale**: Pluggable storage avoids lock-in and allows operators to choose the backend that fits their needs.
+- **Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-storage-backend`
+
+### 5.6 Usage Query & Aggregation
+
+#### Aggregated Usage Query
+
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-query-aggregation`
+
+The system **MUST** provide an API for querying aggregated usage data. Queries **MUST** support:
+- Filtering by tenant (mandatory, derived from SecurityContext), time range (mandatory), and optionally by usage type, subject (subject ID and subject type), resource (resource ID and resource type), and source
+- Server-side aggregation functions: SUM, COUNT, MIN, MAX, AVG
+- Grouping by any combination of: time bucket (e.g., hourly, daily), usage type, subject, resource, and source
+
+The system **MUST** authorize each query via the platform PDP. The PDP decision determines whether the caller is permitted to query usage data; PDP-returned constraints are applied as additional query filters before execution. The system **MUST** fail closed on authorization failures.
+
+- **Rationale**: Downstream consumers (billing, dashboards) need aggregated views without fetching and processing raw records. Filter and grouping dimensions enable billing breakdowns (e.g., tokens per model per day) and per-subject chargeback without requiring consumers to process raw records.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-consumer`, `cpt-cf-usage-collector-actor-tenant-admin`
+
+#### Raw Usage Query
+
+- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-query-raw`
+
+The system **MUST** provide an API for querying raw usage records with cursor-based pagination. Queries **MUST** support filtering by tenant (mandatory, derived from SecurityContext), time range (mandatory), and optionally by usage type, subject (subject ID and subject type), and resource (resource ID and resource type).
+
+The system **MUST** authorize each query via the platform PDP using decision and constraint enforcement, identical to the aggregation query path.
+
+- **Rationale**: Some consumers need access to individual records for auditing, debugging, or dispute resolution.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-consumer`, `cpt-cf-usage-collector-actor-tenant-admin`
+
+### 5.7 Retention Policy Management
 
 #### Retention Policy Management
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-retention-policies`
 
-The system **MUST** support configurable retention policies (global, per-tenant, per-usage-type) with automated enforcement.
+The system **MUST** support configurable retention policies at three scopes: global (applies to all records), per-tenant, and per-usage-type. When multiple policies match a record, the most-specific scope wins: per-usage-type > per-tenant > global.
 
-**Rationale**: Retention policies balance storage costs with compliance and operational needs.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`
+The system **MUST** enforce a global default retention policy. When no policy matches a record, the global default applies. The system **MUST** reject requests to delete the global default policy.
 
-#### Storage Health Monitoring
+Retention enforcement **MUST** permanently delete expired records (hard delete). The `inactive` status is reserved for operator-initiated amendments and **MUST NOT** be used by retention enforcement.
 
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-storage-health`
+- **Rationale**: Retention policies balance storage costs with compliance and operational needs. Different usage types may have different regulatory retention requirements. Explicit precedence rules and a mandatory global default ensure no record has undefined retention behavior.
+- **Actors**: `cpt-cf-usage-collector-actor-platform-operator`
 
-The system **MUST** monitor storage plugin health, buffer records during failures, retry with backoff, and alert on persistent issues.
-
-**Rationale**: Storage failures must not result in data loss; buffering and retry ensure durability.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-storage-backend`
-
-### 5.5 Backfill & Amendment
-
-#### Late-Arriving Event Handling
-
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-late-events`
-
-The system **MUST** accept usage events with timestamps within a configurable grace period (default 24 hours, configurable per tenant and per usage type) via the standard ingestion path, applying normal deduplication and schema validation.
-
-**Rationale**: In distributed systems, clock skew, batch processing delays, and asynchronous architectures cause events to routinely arrive after their actual timestamp. A grace period allows these events to be processed without requiring explicit backfill operations.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-operator`
+### 5.8 Backfill & Amendment
 
 #### Backfill API
 
 - [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-backfill-api`
 
-The system **MUST** provide a backfill API that allows operators to retroactively submit historical usage data for a specific time range (scoped to a single tenant and usage type). The backfill operation archives all events that exist in the range at the time the operation begins, then persists the provided replacement events. The operation **MUST** be transactionally atomic: if the persist step fails after archiving, the operation **MUST** be rolled back so that no partial change is visible to consumers.
+The system **MUST** provide a backfill API that allows operators to bulk-insert historical usage records for a specific time range (scoped to a single tenant and usage type). Backfill is purely additive: existing records in the target range are not modified.
 
-Real-time ingestion **MUST** continue uninterrupted during a backfill operation. Real-time events that arrive in the target range during or after the backfill are recorded normally and are not affected by the backfill. Backfill and real-time ingestion operate independently on the same range.
+Real-time ingestion **MUST** continue uninterrupted during a backfill operation. Real-time events that arrive in the target range during or after the backfill are recorded normally and are not affected by the backfill. The backfill API **MUST** be isolated from the real-time ingestion path with independent rate limits and lower processing priority to prevent backfill operations from degrading real-time ingestion performance.
 
-The backfill API **MUST** be isolated from the real-time ingestion path with independent rate limits and lower processing priority to prevent backfill operations from degrading real-time ingestion performance.
-
-**Rationale**: When usage data is lost due to outages, pipeline failures, or misconfigured sources, operators need a mechanism to retroactively submit corrected data for an entire time range. Keeping backfill and real-time ingestion independent avoids any interruption to ongoing usage reporting and eliminates the need for conflict resolution logic — the backfill corrects what existed at correction time, and the system continues recording new events without interference.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-usage-source`
+- **Rationale**: When usage data is lost due to outages, pipeline failures, or misconfigured sources, operators need a mechanism to retroactively submit the missing records. Keeping backfill and real-time ingestion independent avoids any interruption to ongoing usage reporting.
+- **Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-usage-source`
 
 #### Individual Event Amendment
 
 - [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-event-amendment`
 
-The system **MUST** support amending individual usage events (updating properties except tenant ID and timestamp) and deprecating individual events (marking them as inactive while retaining them for audit). Downstream consumers **MUST** be able to distinguish active from deprecated records when querying.
+The system **MUST** support amending individual usage events (updating properties except tenant ID and timestamp) and deactivating individual events (marking them as inactive while retaining them for audit). Downstream consumers **MUST** be able to distinguish active from inactive records when querying.
 
-**Interaction with backfill**: If a backfill operation targets a time range that contains previously amended events, the backfill **MUST** archive the amended events along with all other events in that range. Amendment history is not preserved — the backfill's replacement events become the sole active record. This means backfill unconditionally supersedes any prior amendments within its range, keeping the correction model simple: amendments are for surgical fixes to individual events, while backfill is a wholesale replacement that starts from a clean slate.
-
-**Rationale**: Not all corrections require full timeframe backfill. Individual event amendments handle cases like incorrect resource attribution or value errors on specific events.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`
+- **Rationale**: Not all corrections require full timeframe backfill. Individual event amendments handle cases like incorrect resource attribution or value errors on specific events.
+- **Actors**: `cpt-cf-usage-collector-actor-platform-operator`
 
 #### Backfill Time Boundaries
 
@@ -311,26 +348,9 @@ The system **MUST** support amending individual usage events (updating propertie
 
 The system **MUST** enforce configurable time boundaries for backfill operations: a maximum backfill window (default 90 days) beyond which backfill requests are rejected, and a future timestamp tolerance (default 5 minutes) to account for clock drift. Backfill requests exceeding the maximum window **MUST** require elevated authorization.
 
-**Rationale**: Unbounded backfill creates risks for data integrity and billing accuracy. Time boundaries constrain the blast radius of backfill operations while allowing legitimate corrections. Different limits for automated retry (grace period) vs. operator-initiated backfill (90 days) match different use cases. The 5-minute future tolerance follows Stripe's pattern for handling clock drift in distributed systems.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`
+- **Rationale**: Unbounded backfill creates risks for data integrity and billing accuracy. Time boundaries constrain the blast radius of backfill operations while allowing legitimate corrections.
+- **Actors**: `cpt-cf-usage-collector-actor-platform-operator`
 
-#### Backfill Event Archival
-
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-backfill-archival`
-
-When a backfill operation replaces events in a time range, the system **MUST** archive (not delete) the replaced events. Archived events **MUST** remain queryable for audit purposes via the usage-query module (`cpt-cf-usage-query-fr-query-api`) but **MUST** be clearly distinguishable from active records so that downstream consumers can exclude them from their processing.
-
-**Rationale**: Permanent deletion of replaced events destroys audit trail and makes it impossible to investigate billing disputes or reconstruct historical state.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`
-
-#### Backfill Audit Trail
-
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-backfill-audit`
-
-Every backfill operation **MUST** produce an immutable audit record containing: operator identity, initiation timestamp, affected time range, affected tenant ID (backfills are scoped to a single tenant), number of events added/replaced/deprecated, reason or justification, and whether the operation affected an already-invoiced period.
-
-**Rationale**: Backfill operations are high-risk changes to billing-critical data. Comprehensive audit records are essential for dispute resolution, compliance, and operational visibility.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`
 
 #### Metadata Exposure
 
@@ -338,386 +358,407 @@ Every backfill operation **MUST** produce an immutable audit record containing: 
 
 The system **MUST** expose per-source and per-tenant metadata — including event counts, latest event timestamps (watermarks), and ingestion statistics — via API, enabling external reconciliation and observability systems to detect gaps and perform integrity checks.
 
-**Rationale**: While reconciliation logic is out of scope for UC, exposing the raw metadata needed for gap detection enables external systems to build reconciliation workflows. This keeps UC focused while not blocking operational integrity monitoring.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-monitoring-system`
+- **Rationale**: While reconciliation logic is out of scope for the Usage Collector, exposing the raw metadata needed for gap detection enables external systems to build reconciliation workflows.
+- **Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-monitoring-system`
 
-### 5.6 Type System
+### 5.9 Usage Type System
 
 #### Usage Type Validation
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-type-validation`
 
-The system **MUST** validate all usage records against registered type schemas, rejecting invalid records with actionable error messages.
+The system **MUST** validate all usage records against their registered type schema before any record is accepted for delivery, rejecting invalid records immediately with actionable error messages.
 
-**Rationale**: Schema validation prevents corrupt or malformed data from entering the system.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-types-registry`
+- **Rationale**: Schema validation prevents corrupt or malformed data from entering the system, ensuring downstream consumers operate on well-structured data. Immediate rejection surfaces errors to the caller before any domain operation is committed.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-types-registry`
 
-#### Custom Unit Registration
+#### Custom Measuring Unit Registration
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-custom-units`
 
-The system **MUST** allow registration of custom measuring units via API without code changes.
+The system **MUST** allow platform operators to register custom measuring units via API without code changes or service redeployment.
 
-Primary use cases: AI/LLM token metering (input/output tokens, custom credit units), compute metering (vCPU-hours, memory-GB-hours, GPU-hours), API request metering (calls by tenant and endpoint), storage metering (GB-hours across tiers), network transfer (bytes ingress/egress).
+Primary use cases: AI/LLM token metering (input/output tokens, custom credit units), compute metering (vCPU-hours, GPU-hours), API request metering (calls by tenant and endpoint), storage metering (GB-hours across tiers), and network transfer (bytes ingress/egress).
 
-When a custom measuring unit is registered, the platform operator **MUST** also configure the authorization policies that declare which sources are permitted to emit records of this type (`cpt-cf-usage-collector-fr-ingestion-authorization`).
+When a custom measuring unit is registered, the platform operator **MUST** also configure the authorization policies that declare which sources are permitted to emit records of this type.
 
-**Rationale**: New resource types (AI tokens, GPU-hours) must be meterable without service redeployment.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`
+- **Rationale**: New resource types (AI tokens, GPU-hours) must be meterable without service redeployment. Custom unit registration enables rapid onboarding of new usage types as the platform evolves.
+- **Actors**: `cpt-cf-usage-collector-actor-platform-operator`
 
-### 5.7 Rate Limiting
+### 5.10 Audit Events
 
-#### Per-Tenant Ingestion Rate Limiting
+#### Audit Event Emission
 
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-tenant-rate-limit`
+- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-audit`
 
-The system **MUST** enforce per-tenant ingestion rate limits with independently configurable sustained rate (events per second) and burst size parameters. Requests exceeding the rate limit **MUST** be rejected with an appropriate rate limit error.
+The system **MUST** emit a structured audit event to the platform `audit_service` for every operator-initiated write operation (backfill, amendment, deactivation). Each event **MUST** include the operator identity, tenant, timestamp, operation type, operation-specific context, and a mandatory operator-supplied justification. The Usage Collector **MUST NOT** store audit data locally — audit storage, retention, and deletion semantics are owned by `audit_service`.
 
-**Rationale**: Without per-tenant rate limiting, a single misbehaving or high-volume tenant can exhaust ingestion capacity and degrade service for all other tenants. Burst tolerance is required because usage event emission is inherently bursty (e.g., a batch job completing and emitting thousands of records at once).
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-operator`
+Routine ingestion and read operations are not audited via `audit_service`.
 
-#### Per-Source Rate Limiting
+- **Rationale**: Operator-initiated mutations are high-risk changes to billing-critical data. Emitting to the platform `audit_service` provides a consistent, centralized audit trail across all platform modules.
+- **Actors**: `cpt-cf-usage-collector-actor-platform-operator`
 
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-source-rate-limit`
+### 5.11 Rate Limiting
 
-The system **MUST** enforce per-source rate limits within each tenant, keyed by the `(subject_id, subject_type)` source identity derived from SecurityContext — the same identity used for ingestion authorization (`cpt-cf-usage-collector-fr-ingestion-authorization`). This prevents a single usage source (e.g., a misconfigured LLM Gateway) from consuming the tenant's entire ingestion quota. Per-source limits **MUST** be configurable independently of the tenant-level limit.
+#### Per-Source, Per-Tenant Emission Rate Limiting
 
-**Rationale**: Tenant-level rate limits alone do not prevent a single noisy source from starving other sources within the same tenant. Per-source limits provide fault isolation within a tenant's service portfolio.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-operator`
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-rate-limiting`
 
-#### Multi-Dimensional Rate Limits
+The system **MUST** enforce configurable per-(source module, tenant) rate limits on usage record emission to prevent any single source from flooding the outbox with a single tenant's records.
 
-- [ ] `p3` - **ID**: `cpt-cf-usage-collector-fr-multi-dimensional-limits`
+Rate limits are configured by the platform operator. Each configuration entry specifies a source module identity, a tenant ID, an emission quota (maximum records permitted), and a rate limit window duration. An operator **MAY** configure a default quota per source module that applies to all tenants for which no explicit per-tenant configuration exists; if neither applies, no rate limit is enforced for that (source, tenant) pair.
 
-The system **MUST** enforce rate limits across multiple dimensions simultaneously: events per second, bytes per second, maximum batch size (events per request), and maximum record size (bytes per event). All dimensions **MUST** pass for a request to be accepted.
+When a source exceeds its configured emission quota for a given tenant within the current window, the emission **MUST** be rejected with an actionable error before any record is accepted for delivery. The system **MUST** surface rate-limit rejections via operational monitoring.
 
-**Rationale**: Single-dimension rate limits are insufficient; a tenant could comply with events/sec limits while submitting oversized payloads that exhaust network or storage bandwidth. Multi-dimensional limits protect all resource types (CPU for event processing, network for payload transfer, storage for persistence).
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-operator`
+Rate limit enforcement **MUST NOT** degrade ingestion latency for emissions within quota.
 
-#### Rate Limit Configuration and Overrides
+Rate limit enforcement provides a best-effort flood prevention guarantee: individual emissions that observe an exhausted quota are rejected, but a small number of concurrent emissions may slip past the limit under high concurrency. This is acceptable for flood prevention; hard-counted accounting is the responsibility of downstream consumers.
 
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-rate-limit-config`
-
-The system **MUST** support rate limit configuration with system-wide defaults and per-tenant overrides. Per-tenant overrides **MUST** be hot-reloadable without service restart. Unspecified fields in overrides **MUST** inherit from the system defaults.
-
-**Rationale**: Different tenants have different throughput needs based on their workload profile. Hot-reloadable overrides enable operators to respond to capacity issues or tenant requests without service disruption.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`
-
-#### Rate Limit Response Format
-
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-rate-limit-response`
-
-When rate limits are exceeded, the system **MUST** respond with a rate limit error and include metadata indicating when the client can retry. The system **MUST** provide rate limit status information on all API responses to enable clients to monitor their quota consumption. Rate limit error responses **MUST** communicate:
-
-- The recommended delay before the client should retry.
-- The total request allowance for the current rate limit window.
-- The remaining budget within the current window.
-- The time at which the current window resets.
-
-This information **MUST** be available across all supported transports (HTTP, gRPC, native Rust API). Clients **MUST** treat missing or unparseable values conservatively (i.e., assume the limit is exhausted and apply a default backoff). The specific field names, header names, status codes, and encoding formats are defined in the API contract documentation.
-
-**Rationale**: Rate limit metadata enables clients to track quota consumption and schedule retries, reducing wasted requests against an already-exhausted quota. Making this information transport-agnostic ensures clients can integrate regardless of protocol.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-developer`
-
-#### SDK Retry and Buffering on Rate Limit
-
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-sdk-retry`
-
-The SDK **MUST** buffer usage events in a bounded in-memory queue and retry with exponential backoff and jitter on rate limit errors and backfill conflict errors, honoring the retry delay communicated in the rate limit response (`cpt-cf-usage-collector-fr-rate-limit-response`) when present. Under buffer exhaustion or sustained overload, the SDK will drop oldest events and **MUST** emit observable loss signals (event drop counts, drop rate, buffer utilization) tagged with sufficient context (usage type, tenant, drop reason) and **MUST** trigger alerts when drop rate exceeds configurable thresholds. The SDK **MUST NOT** block the calling service due to rate limiting.
-
-**Loss Conditions**: Data loss at the SDK level is acceptable under the following conditions:
-- Buffer exhaustion: The in-memory queue reaches capacity and new events arrive before older events can be successfully retried
-- Sustained overload: Rate limiting persists beyond the SDK's retry window and buffer capacity
-- Process termination: The SDK process crashes or is terminated before buffered events are flushed
-
-When loss occurs, the SDK **MUST** expose observable loss signals (drop count, drop rate, and buffer utilization), tagged with sufficient context to identify the affected usage type, tenant, and cause. Operators **MUST** configure alerts on sustained drops (e.g., >1% drop rate over 5 minutes). The specific metric names and tag keys are defined in the DESIGN documentation.
-
-**Rationale**: Usage sources generate events regardless of collector availability. The SDK must absorb temporary rate limiting transparently, retrying without burdening the caller. Exponential backoff with jitter prevents synchronized retry bursts across sources. Non-blocking behavior is critical because usage emission must not degrade the source service's primary function. Explicit loss conditions with observability enable operators to detect and remediate issues (e.g., increase rate limits, scale collectors, reduce event volume) rather than silently losing data.
-**Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-developer`, `cpt-cf-usage-collector-actor-platform-operator`
-
-#### Priority-Based Load Shedding
-
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-load-shedding`
-
-The system **MUST** support priority classification of usage event types (e.g., billing-critical counters vs. analytics metrics) and, when operating under sustained overload beyond rate limits, **MUST** preferentially accept higher-priority events while shedding lower-priority ones. The priority classification **MUST** be configurable per usage type.
-
-**Rationale**: Under extreme load, indiscriminate rejection causes billing-critical data loss. Priority-based load shedding ensures that the most business-critical usage data (which affects revenue accuracy) is preserved even when the system cannot accept all traffic.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-usage-source`
-
-#### Rate Limit Observability
-
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-rate-limit-observability`
-
-The system **MUST** expose per-tenant and per-source rate limit consumption as metrics (current usage vs. limit, rejection counts, throttle duration) for operator dashboards. The system **MUST** emit alerts when tenants approach configured warning thresholds (e.g., 75%, 90% of capacity).
-
-**Rationale**: Operators need visibility into rate limit utilization to proactively adjust limits before tenants experience rejections. Approaching-limit alerts enable capacity planning.
-**Actors**: `cpt-cf-usage-collector-actor-platform-operator`, `cpt-cf-usage-collector-actor-monitoring-system`
+- **Rationale**: A misbehaving or misconfigured source can flood the delivery queue with a single high-volume tenant's records, degrading ingestion for all sources and overwhelming downstream processing. Per-(source, tenant) limits with immediate rejection protect the system without imposing overhead on compliant sources.
+- **Actors**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-operator`
 
 ## 6. Non-Functional Requirements
 
 ### 6.1 Module-Specific NFRs
 
+#### Query Latency
+
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-query-latency`
+
+Aggregation queries over a 30-day range for a single tenant **MUST** complete within 500ms at p95.
+
+- **Threshold**: 500ms p95 for 30-day single-tenant aggregation
+- **Rationale**: Interactive dashboard and billing queries need timely responses.
+- **Architecture Allocation**: See DESIGN.md
+
 #### High Availability
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-availability`
 
-The system **MUST** maintain 99.95% monthly availability for usage collection endpoints.
+The system **MUST** maintain 99.95% monthly availability for usage ingestion endpoints.
 
-**Threshold**: 99.95% uptime per calendar month
-**Rationale**: Usage collection is on the critical path for all billable operations.
+- **Threshold**: 99.95% uptime per calendar month
+- **Rationale**: Usage collection is on the critical path for all billable operations.
+- **Architecture Allocation**: See DESIGN.md
 
 #### Ingestion Throughput
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-throughput`
 
-The system **MUST** support sustained ingestion of at least 600,000 usage records per minute (10,000 events per second) under normal operation.
+The system **MUST** sustain ingestion of at least 10,000 usage records per second under normal operation.
 
-**Threshold**: >= 600,000 records/minute (10,000 events/sec) sustained
-**Rationale**: High-volume services (LLM Gateway, API Gateway) generate significant event throughput.
+- **Threshold**: ≥ 10,000 records/sec sustained
+- **Rationale**: High-volume services (LLM Gateway, API Gateway) generate significant event throughput; the ingestion path must not become a bottleneck.
+- **Architecture Allocation**: See DESIGN.md
 
 #### Ingestion Latency
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-ingestion-latency`
 
-The system **MUST** complete usage record ingestion within 200ms (p95) under normal load.
+The system **MUST** complete usage record ingestion within 200ms at p95 under normal load.
 
-**Threshold**: p95 <= 200ms
-**Rationale**: Low ingestion latency prevents blocking in usage source services.
+- **Threshold**: p95 ≤ 200ms
+- **Rationale**: Low ingestion latency prevents blocking in usage source services.
+- **Architecture Allocation**: See DESIGN.md
 
-#### Query/Retention Isolation
+#### Workload Isolation
 
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-nfr-query-isolation`
+- [ ] `p2` - **ID**: `cpt-cf-usage-collector-nfr-workload-isolation`
 
-The system **MUST** ensure that retention enforcement jobs do not degrade ingestion latency. Retention workloads **MUST** be isolated from the ingestion path such that retention job execution maintains ingestion p95 latency within the `cpt-cf-usage-collector-nfr-ingestion-latency` threshold (200ms). Query operations are served by the usage-query module.
+The system **MUST** ensure that retention enforcement jobs and aggregation query workloads do not degrade ingestion latency. These workloads **MUST** be isolated from the ingestion path such that concurrent execution maintains ingestion p95 latency within the `cpt-cf-usage-collector-nfr-ingestion-latency` threshold.
 
-**Threshold**: Ingestion p95 latency remains ≤200ms during concurrent retention operations
-**Rationale**: Retention is a batch-processing workload that can compete for storage resources with the latency-sensitive ingestion path. Without isolation, retention cleanup could degrade ingestion performance, blocking usage sources.
-
-#### Exactly-Once Semantics
-
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-exactly-once`
-
-The system **MUST** guarantee exactly-once processing for all usage records successfully ingested by the API; zero usage records lost or duplicated after ingestion under normal operation. A record is considered **successfully ingested** only once the collector has **durably persisted** the record to storage **and** returned an acknowledgment (HTTP 2xx or gRPC OK) to the SDK. If the collector acknowledges a batch before durable persistence completes and a crash occurs, those records are **NOT** covered by the exactly-once guarantee and must be treated as SDK-level failures per `cpt-cf-usage-collector-fr-sdk-retry`. This guarantee applies to the service layer (collector, storage plugins) but does **NOT** apply to SDK-level drops caused by buffer exhaustion or sustained overload as defined in `cpt-cf-usage-collector-fr-sdk-retry`.
-
-**Threshold**: Zero data loss or duplication after successful API ingestion under normal operation
-**Rationale**: Duplicate or missing records directly impact billing accuracy. The exactly-once guarantee begins when the collector durably persists a record and returns success (HTTP 2xx/gRPC OK); acknowledged records are guaranteed to be queryable by downstream consumers (billing, quota enforcement). SDK-level drops before acknowledgment are observable via metrics and alerts, enabling operators to address capacity or configuration issues.
-
-#### Audit Trail
-
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-audit-trail`
-
-The system **MUST** preserve immutable audit records for all usage data including source, timestamps, and any corrections.
-
-**Threshold**: 100% of usage operations audited
-**Rationale**: Audit trails are required for billing disputes and compliance.
+- **Threshold**: Ingestion p95 latency remains ≤ 200ms during concurrent query and retention operations
+- **Rationale**: Retention and aggregation are batch or analytical workloads that can compete for storage resources with the latency-sensitive ingestion path.
+- **Architecture Allocation**: See DESIGN.md
 
 #### Authentication Required
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-authentication`
 
-The system **MUST** require authentication (OAuth 2.0, mTLS, or API key) for all API operations.
+The system **MUST** require authentication for all API operations. Unauthenticated requests **MUST** be rejected before any operation is performed.
 
-**Threshold**: Zero unauthenticated API access
-**Rationale**: Usage data is sensitive and must be protected.
+- **Threshold**: Zero unauthenticated API access
+- **Rationale**: Usage data is billing-sensitive; unauthenticated access is a security violation.
+- **Architecture Allocation**: See DESIGN.md
 
 #### Authorization Enforcement
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-authorization`
+- [ ] `p2` - **ID**: `cpt-cf-usage-collector-nfr-authorization`
 
-The system **MUST** enforce authorization for read/write operations based on tenant context and usage type permissions.
+The system **MUST** enforce authorization for all read and write operations based on the caller's authenticated identity, tenant context, and usage type permissions.
 
-**Threshold**: Zero unauthorized data access
-**Rationale**: Authorization prevents unauthorized usage data manipulation.
+- **Threshold**: Zero unauthorized data access or write
+- **Rationale**: Authorization prevents unauthorized usage data manipulation and cross-tenant data leakage.
+- **Architecture Allocation**: See DESIGN.md
 
 #### Horizontal Scalability
 
 - [ ] `p2` - **ID**: `cpt-cf-usage-collector-nfr-scalability`
 
-The system **MUST** scale horizontally to handle increased load without architectural changes.
+The system **MUST** scale horizontally to handle increased ingestion and query load without architectural changes.
 
-**Threshold**: Linear throughput scaling with added instances
-**Rationale**: Usage volume grows with platform adoption.
+- **Threshold**: Linear throughput scaling with added instances
+- **Rationale**: Usage volume grows with platform adoption; vertical scaling is insufficient for sustained growth.
+- **Architecture Allocation**: See DESIGN.md
 
 #### Storage Fault Tolerance
 
 - [ ] `p2` - **ID**: `cpt-cf-usage-collector-nfr-fault-tolerance`
 
-The system **MUST** buffer usage records during storage backend failures and recover without data loss. This guarantee applies to records successfully accepted by the ingestion API; SDK-level drops due to buffer exhaustion before ingestion are covered by `cpt-cf-usage-collector-fr-sdk-retry`.
+Once a usage record has been durably captured by the delivery mechanism, the system **MUST** ensure it is eventually persisted to the storage backend and available for querying, even under storage backend failures. The system **MUST** buffer and retry persistence operations during storage outages without data loss.
 
-**Threshold**: Zero data loss during storage backend failures for records accepted by the collector
-**Rationale**: Storage outages must not result in lost usage data after successful ingestion. The service layer must buffer and retry to ensure durability.
+- **Threshold**: Zero data loss for durably captured records during storage backend failures
+- **Rationale**: Storage outages must not result in lost usage data for records already accepted by the delivery mechanism.
+- **Architecture Allocation**: See DESIGN.md
 
-#### Configurable Retention
+#### Recovery Time
+
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-recovery`
+
+The system **MUST** resume normal ingestion and make all durably captured records available for querying within 15 minutes of storage backend recovery.
+
+- **Threshold**: RTO ≤ 15 minutes from storage backend recovery
+- **Rationale**: Bounded recovery time ensures downstream billing and quota systems are not blocked for extended periods after a storage outage.
+- **Architecture Allocation**: See DESIGN.md
+
+#### Recovery Point Objective
+
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-rpo`
+
+The system **MUST** guarantee zero data loss for all usage records that have been durably accepted by the SDK (`emit()` returned `Ok`). A record is durable once it is committed to the source's local outbox within the caller's database transaction. No committed record may be lost due to storage backend failures, gateway restarts, or dispatcher crashes.
+
+- **Threshold**: RPO = 0 for committed records (zero committed data loss)
+- **Rationale**: Usage records are billing-critical; any committed record that is silently lost represents an unrecoverable billing gap. The transactional outbox ensures that a record either commits to the source's local DB (and will eventually be delivered) or is never considered accepted.
+- **Architecture Allocation**: See DESIGN.md
+
+#### Configurable Retention Range
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-retention`
 
-The system **MUST** support retention periods from 7 days to 7 years depending on usage type and compliance requirements.
+The system **MUST** support retention periods from 7 days to 7 years, selectable per usage type and per tenant.
 
-**Threshold**: Configurable retention from 7 days to 7 years
-**Rationale**: Different usage types have different compliance and operational retention needs.
+- **Threshold**: Configurable retention from 7 days to 7 years
+- **Rationale**: Different usage types have different compliance and operational retention requirements; a fixed retention period is insufficient.
+- **Architecture Allocation**: See DESIGN.md
 
 #### Graceful Degradation
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-graceful-degradation`
 
-The system **MUST** continue accepting usage records even if downstream consumers (billing, monitoring) are unavailable.
+The system **MUST** continue accepting and persisting usage records even if downstream consumers (billing, monitoring) are unavailable.
 
-**Threshold**: Zero ingestion failures due to downstream consumer unavailability
-**Rationale**: Usage collection must not be blocked by consumer outages.
+- **Threshold**: Zero ingestion failures due to downstream consumer unavailability
+- **Rationale**: Usage collection must not be blocked by consumer outages; the collector is the source of truth and must remain operational independently.
+- **Architecture Allocation**: See DESIGN.md
+
+### 6.2 Data Governance
+
+**Data Steward**: Platform Engineering team owns the usage data schema, ingestion policies, and retention rules for the Usage Collector. The data steward is responsible for maintaining usage type definitions, authorizing metric namespaces per source module, and setting global retention policy.
+
+**Data Classification**: Usage records contain numeric measurements, metric names, timestamps, and tenant-scoped opaque identifiers (tenant ID, subject ID, resource ID). No natural-person PII is stored directly. Records are classified as **Platform Operational Data** — internal, business-sensitive, restricted to authenticated platform actors.
+
+**Data Ownership**:
+
+| Data | Owner | Custodian |
+|------|-------|-----------|
+| Usage records (metric values, timestamps) | The tenant identified by `tenant_id` in each record | Usage Collector module (storage) |
+| Retention policy configuration | Platform Operator | Usage Collector module (enforcer) |
+| Usage type schemas and measuring unit definitions | Platform Engineering | types-registry module |
+| Audit events for operator-initiated writes | Platform Engineering | audit_service module |
+| Outbox rows (pre-delivery records) | Source module (until delivered) | modkit-db infrastructure |
+
+**Retention**: Governed by configurable retention policies (global, per-tenant, per-usage-type) as defined in `cpt-cf-usage-collector-fr-retention-policies`. The global default policy MUST be set by the platform operator at deployment time; it cannot be deleted.
+
+**Deletion**: Retention enforcement performs hard deletes — records are permanently removed from the storage backend when their retention period expires. The deletion is not reversible. Operator-initiated deactivation sets `status = inactive` but retains the record; permanent deletion is only via retention enforcement.
+
+### 6.3 NFR Exclusions
+
+The following commonly applicable NFR categories are not applicable to this module:
+
+- **Safety (ISO/IEC 25010:2023 §4.2.9)**: Not applicable — the Usage Collector is a server-side data API with no physical interaction, no safety-critical operations, and no ability to cause harm to people, property, or the environment.
+- **Accessibility and Usability (UX)**: Not applicable — the Usage Collector exposes no user-facing UI. It provides a developer SDK and a server-side API consumed exclusively by platform services and internal systems.
+- **Internationalization / Localization**: Not applicable — the module exposes no user-facing text, labels, or locale-sensitive output.
+- **Privacy by Design (GDPR Art. 25)**: Not applicable as a standalone module requirement. Subject IDs stored by the Usage Collector are opaque internal platform identifiers; PII management is the responsibility of the platform identity layer. See note in §5.4 (Subject Attribution).
+- **Regulatory Compliance (GDPR, HIPAA, PCI DSS, SOX)**: Not applicable as a standalone module requirement — this is an internal platform infrastructure module. This module handles no payment card data (PCI DSS N/A), no healthcare records (HIPAA N/A), and no financial reporting data (SOX N/A). Platform-level regulatory obligations are governed at the platform level.
 
 ## 7. Public Library Interfaces
 
 ### 7.1 Public API Surface
 
-#### Usage Ingestion SDK
+#### Usage Collector SDK Trait
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-interface-sdk`
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-interface-sdk-trait`
 
-**Type**: Client library
-**Stability**: stable
-**Description**: Client-side SDK with automatic batching for high-throughput usage emission. Primary ingestion path for platform services. Provides Rust API (in-process) and gRPC transports.
-**Breaking Change Policy**: Major version bump required
-
-#### HTTP API
-
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-interface-http-api`
-
-**Type**: HTTP/REST API
-**Stability**: stable
-**Description**: HTTP API for usage record ingestion and administration. Supports external integrations and simple client scenarios.
-**Breaking Change Policy**: Major version bump required
+- **Type**: Programmatic SDK (language-native client interface)
+- **Stability**: unstable (v0)
+- **Description**: Public interface for emitting usage records and querying aggregated data; technical interface type and crate naming defined in DESIGN.md
+- **Breaking Change Policy**: Unstable during initial development; will stabilize in future version
 
 ### 7.2 External Integration Contracts
 
-#### Usage Collector Plugin Contract
+#### Storage Plugin Contract
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-contract-plugin`
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-contract-storage-plugin`
 
-**Direction**: required from client
-**Protocol/Format**: Rust trait / plugin interface
-**Compatibility**: Backward-compatible within major version; plugins implement a defined trait for write-path operations (record persistence, deduplication storage, retention enforcement). Each storage backend provides a corresponding plugin.
-
-#### Types Registry Contract
-
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-contract-types-registry`
-
-**Direction**: required from client
-**Protocol/Format**: Internal API
-**Compatibility**: Schema validation contract; UC depends on Types Registry for unit and type definitions.
+- **Direction**: required from plugin implementor
+- **Protocol/Format**: Rust trait implemented by each storage backend plugin
+- **Compatibility**: Plugin contract versioned with the module; plugins must match the module's major version
 
 ## 8. Use Cases
 
-### UC: High-Volume Usage Emission via SDK
+#### Emit Usage Records
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-usecase-sdk-emission`
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-usecase-emit`
 
-**Actor**: `cpt-cf-usage-collector-actor-usage-source`, `cpt-cf-usage-collector-actor-platform-developer`
+**Actor**: `cpt-cf-usage-collector-actor-usage-source`
 
 **Preconditions**:
-- Usage type registered in Types Registry
+- Actor is authenticated with a valid SecurityContext containing tenant identity
+- A scoped SDK client has been initialized with the source module's identity
+- Authorization policies are configured declaring which usage types the source module is permitted to emit
 
 **Main Flow**:
-1. Service calls SDK to record usage event
-2. SDK queues event in memory
-3. SDK batches events (by count or time threshold)
-4. SDK sends batch to UC
-5. UC validates each record against type schema
-6. UC persists to configured storage backend via the active plugin
-7. SDK receives acknowledgment
+1. Usage source initializes a scoped SDK client, providing its module identity as the emission scope
+2. Usage source emits usage records via the scoped client
+3. The system checks the emission: verifies the source module is authorized to report the target usage types and that any attributed resource and subject fall within its authorized scope; validates the record against the registered usage type schema; and checks the emission count against the configured rate limit for the (source module, tenant) pair. Any failure is returned immediately to the caller before any record is accepted for delivery.
+4. Records are durably captured with at-least-once delivery guarantee
+5. Records become available for querying in the Usage Collector
 
 **Postconditions**:
-- Usage records persisted with tenant/resource attribution; available for query by downstream consumers via usage-query module
+- Authorized, valid, within-quota records are persisted in the storage backend and available for aggregation queries
+- Duplicate records (by idempotency key) are silently ignored
 
-### UC: Configure Custom Measuring Unit
+**Alternative Flows**:
+- **Authorization denied**: System returns an error immediately; no record is accepted for delivery
+- **Schema invalid**: System returns an actionable error immediately; no record is accepted for delivery
+- **Rate limit exceeded**: System returns an actionable error immediately; no record is accepted for delivery
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-usecase-custom-unit`
+#### Query Aggregated Usage
+
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-usecase-query-aggregated`
+
+**Actor**: `cpt-cf-usage-collector-actor-usage-consumer`, `cpt-cf-usage-collector-actor-tenant-admin`
+
+**Preconditions**:
+- Actor is authenticated with a valid SecurityContext
+
+**Main Flow**:
+1. Consumer sends an aggregation query specifying time range, aggregation function, and grouping
+2. System derives tenant ID from SecurityContext
+3. System returns aggregated results scoped to the tenant
+
+**Postconditions**:
+- Consumer receives aggregated usage data scoped to their tenant
+
+**Alternative Flows**:
+- **No data in range**: System returns empty result set (not an error)
+
+#### Register Custom Usage Type
+
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-usecase-configure-unit`
 
 **Actor**: `cpt-cf-usage-collector-actor-platform-operator`
 
 **Preconditions**:
-- Unit name is unique
+- Actor is authenticated with a valid SecurityContext with operator-level permissions
+- The usage type name is unique in the Types Registry
 
 **Main Flow**:
-1. Operator defines unit schema (name, type: counter/gauge, base unit)
-2. Operator submits via API
-3. UC validates unit definition
-4. UC registers unit with Types Registry
-5. UC confirms registration
+1. Operator defines the usage type: a unique name, the metric kind (`counter` or `gauge`), and a unit label (e.g. `bytes`, `requests`, `vCPU-hours`)
+2. Operator submits the definition via the API
+3. System validates the definition against schema constraints
+4. System registers the usage type with the Types Registry
+5. Operator configures authorization policies declaring which source modules are permitted to emit records of this type
+6. System confirms successful registration
 
 **Postconditions**:
-- New unit immediately available for usage collection; sources can emit records with new unit type
+- The new usage type is immediately available for ingestion; sources can emit records using its name
+- Authorization policies are in effect; unauthorized sources are rejected when attempting to emit records of this type
 
-### UC: Backfill Usage After Outage
-
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-usecase-backfill-after-outage`
-
-**Actor**: `cpt-cf-usage-collector-actor-platform-operator`
-
-**Preconditions**:
-- Gap detected (by external reconciliation system or operator investigation)
-- Replacement usage data available from secondary source (infrastructure metrics, API gateway logs, or source service replay)
-
-**Main Flow**:
-1. Operator identifies gap (via external reconciliation system alerts or manual investigation)
-2. Operator prepares replacement events from secondary source
-3. Operator submits backfill request specifying time range, tenant, and replacement events
-4. UC validates time range is within backfill window
-5. UC archives existing events in the time range (if any)
-6. UC validates and persists replacement events with backfill idempotency namespace
-7. UC creates audit record for the backfill operation
-
-**Postconditions**:
-- Gap filled with corrected data; archived events retained for audit; downstream consumers can query corrected raw records via usage-query module
+**Alternative Flows**:
+- **Duplicate name**: System rejects registration with an actionable error; no type is created
+- **Invalid definition**: System returns a validation error; no type is created
 
 ## 9. Acceptance Criteria
 
-- [ ] All billable platform services emit usage through UC
-- [ ] Usage records can be attributed to specific subjects (users, service accounts) within a tenant
-- [ ] Custom unit registration completes in less than 5 minutes without code changes
-- [ ] High-volume services can emit 10,000+ events per second without blocking
-- [ ] 99.95%+ monthly availability maintained
-- [ ] Zero data loss or duplication after successful ingestion (usage records accepted by the collector API are persisted exactly once)
-- [ ] SDK buffer drops (pre-ingestion) are observable via loss metrics and trigger alerts when drop rate exceeds configurable thresholds (as defined in `cpt-cf-usage-collector-fr-sdk-retry`)
-- [ ] Backfill API can restore missing usage data for any time range within the backfill window
-- [ ] Zero data permanently deleted during backfill operations (archive-only)
-- [ ] Usage metadata (event counts, watermarks) is available via API for external reconciliation systems
-- [ ] A single tenant exceeding its rate limit does not degrade ingestion latency for other tenants
-- [ ] Rate limit configuration changes take effect without service restart
-- [ ] Usage records can carry optional extensible metadata (JSON object) that is persisted as-is and returned in query results
-- [ ] Records with metadata exceeding the configured size limit (default 8 KB) are rejected with an actionable error
+- [ ] Usage records emitted by sources are eventually available for querying (at-least-once delivery)
+- [ ] Duplicate records with the same idempotency key result in a single stored record
+- [ ] Counter records with negative values are rejected at ingestion
+- [ ] Gauge records are stored as-is without monotonicity constraints
+- [ ] Usage records are attributed to the correct tenant, derived from SecurityContext
+- [ ] Usage records can be attributed to a specific resource (resource ID and type)
+- [ ] Usage records can be attributed to a specific subject (subject ID and type), derived from SecurityContext
+- [ ] Authorization failures are surfaced immediately to the caller; no record is persisted on denial
+- [ ] A source module that exceeds its configured emission quota for a given tenant within the current rate limit window is rejected with an actionable error before any record is accepted for delivery
+- [ ] Rate limit configuration can be set per (source module, tenant) pair; a default per-source quota applies when no tenant-specific entry exists
+- [ ] Rate limit enforcement does not degrade ingestion latency for emissions within quota
+- [ ] Tenant isolation is enforced: a query for tenant A never returns tenant B's data
+- [ ] Aggregation queries (SUM, COUNT, MIN, MAX, AVG) return correct results for a given tenant and time range, with correct filtering by usage type, subject, and resource when specified
+- [ ] Aggregation results can be grouped by any combination of time bucket, usage type, subject, resource, and source
+- [ ] Raw usage queries support filtering by usage type, subject, and resource in addition to tenant and time range
+- [ ] Query authorization is enforced via PDP decision and constraint enforcement; unauthorized queries are rejected and PDP-returned constraints narrow the result scope
+- [ ] The module works with both ClickHouse and TimescaleDB plugins without code changes to the core module
+- [ ] Metadata attached to a usage record is persisted as-is and returned in query results without modification
+- [ ] Usage records with metadata exceeding the configured size limit are rejected with an actionable error
+- [ ] Retention policies can be configured at global, per-tenant, and per-usage-type granularity; the global default policy cannot be deleted
+- [ ] When multiple retention policies match a record, the most-specific scope is applied (per-usage-type > per-tenant > global)
+- [ ] Retention enforcement permanently deletes expired records; expired records are not marked inactive
+- [ ] Real-time ingestion continues uninterrupted during a backfill operation
+- [ ] Backfill inserts historical records without modifying existing records in the target range
+- [ ] Backfill requests exceeding the maximum window require elevated authorization
+- [ ] Individual usage events can be amended or deactivated; inactive events remain queryable for audit
+- [ ] Per-source and per-tenant metadata (event counts, latest event timestamps, ingestion statistics) is accessible via API and enables external systems to detect data gaps
+- [ ] All usage records are validated against their registered type schema before any record is accepted for delivery; invalid records are rejected immediately with actionable error messages
+- [ ] Custom measuring units can be registered via API without code changes or service redeployment
+- [ ] The system maintains 99.95% monthly availability for ingestion endpoints
+- [ ] The system sustains ingestion of at least 10,000 records/sec under normal load without degradation
+- [ ] Usage record ingestion completes within 200ms at p95 under normal load
+- [ ] Aggregation queries over a 30-day range for a single tenant complete within 500ms at p95 under normal load
+- [ ] Ingestion p95 latency remains ≤ 200ms during concurrent aggregation queries and retention enforcement workloads
+- [ ] Every operator-initiated write operation (backfill, amendment, deactivation) emits a structured audit event to the platform `audit_service` with the required common fields and operation-specific context; justification is required and included in every such event
+- [ ] All API operations require authentication; unauthenticated requests are rejected before any operation is performed
+- [ ] Authorization is enforced on all read and write operations; unauthorized requests are rejected and no data is exposed or modified
+- [ ] Throughput scales linearly as additional instances are added
+- [ ] Durably captured records are eventually persisted to the storage backend and available for querying after storage backend recovery
+- [ ] Retention periods can be configured from 7 days to 7 years per usage type and per tenant
+- [ ] Ingestion continues uninterrupted when downstream consumers (billing, monitoring) are unavailable
 
 ## 10. Dependencies
 
-| Dependency | Description | Criticality |
-|------------|-------------|-------------|
-| Storage Backend (TimescaleDB or ClickHouse) | At least one storage backend available in the platform | p1 |
-| Types Registry | Schema validation for usage types, custom measuring units, and source-to-usage-type authorization bindings | p1 |
-| Platform Auth Infrastructure | Authentication and authorization infrastructure (OAuth 2.0, mTLS) | p1 |
+| Dependency                | Description                                       | Criticality |
+| ------------------------- | ------------------------------------------------- | ----------- |
+| modkit-db                 | Durable event persistence infrastructure          | p1          |
+| SecurityContext           | Tenant and subject identity derivation            | p1          |
+| authz-resolver            | Platform PDP for ingestion authorization          | p1          |
+| ClickHouse or TimescaleDB | At least one storage backend must be available     | p1          |
+| types-registry            | Usage type schema registration and validation      | p1          |
+| audit_service             | Platform audit event ingestion                    | p1          |
 
 ## 11. Assumptions
 
-- At least one storage backend (TimescaleDB or ClickHouse) is available in the platform
-- Types Registry service is available for schema validation
-- Platform authentication/authorization infrastructure exists
-- High-volume consumers (Billing, Monitoring) integrate primarily via the usage-query module's aggregation API
+| Assumption | Owner | Validation |
+|------------|-------|------------|
+| The modkit-db durable event persistence infrastructure is available as shared infrastructure | Platform Infrastructure | Verified at module bootstrapping; usage-collector module fails to start if modkit-db outbox table is not present |
+| At least one storage backend plugin (ClickHouse or TimescaleDB) is deployed alongside the module | Platform Infrastructure / Operator | Verified at gateway startup via GTS plugin resolution; gateway fails readiness check if no active plugin resolves |
+| Ingestion volume is moderate; client-side SDK batching is not needed initially | Platform Engineering | Revisit if `outbox_pending_rows` sustained backlog exceeds 10× normal throughput; SDK batching ADR to be authored if threshold is reached |
+| The types-registry module is deployed and available for usage type schema registration and validation | Platform Engineering | Verified at gateway startup via health check; gateway fails readiness check if types-registry is unreachable |
+| The platform `audit_service` is available to receive structured audit events | Platform Infrastructure | Audit emission failures are best-effort (non-blocking); sustained failures are surfaced via `usage_audit_emit_total{result="failed"}` alert |
 
 ## 12. Risks
 
-| Risk | Impact | Mitigation |
-|------|--------|------------|
-| Storage backend unavailability | Usage records lost during outage | Buffering with retry and backoff |
-| High ingestion volume exceeds capacity | Usage sources rejected; delayed billing data | Horizontal scaling; SDK-side batching and buffering; per-tenant rate limiting |
-| Schema evolution breaks existing sources | Usage sources fail validation after type changes | Backward-compatible schema evolution; versioned type schemas |
-| Cross-tenant data leakage | Security and compliance violation | Fail-closed authorization; tenant isolation at all layers |
-| Insufficient usage metadata | External reconciliation systems cannot detect gaps if UC does not expose adequate metadata | Expose per-source event counts, watermarks, and ingestion statistics via dedicated API |
-| Backfill data quality | Incorrect replacement data worsens the gap instead of fixing it | Full schema validation on backfill events; archive-not-delete allows rollback; audit trail enables investigation |
-| Noisy-neighbor ingestion | A single tenant or source exhausts ingestion capacity, degrading service for all tenants | Hierarchical rate limiting (global, per-tenant, per-source); priority-based load shedding |
-| Rate limit misconfiguration | Limits set too low cause SDK buffer exhaustion and event drops (as defined in `cpt-cf-usage-collector-fr-sdk-retry`); limits set too high provide no overload protection | System defaults with per-tenant hot-reloadable overrides; rate limit observability and approaching-limit alerts; SDK drop metrics and alerts enable operators to detect and remediate capacity issues |
-| Retry storms after rate limiting | Synchronized client retries after a rate limit event amplify load | SDK enforces exponential backoff with jitter; rate limit responses provide explicit retry delay guidance (`cpt-cf-usage-collector-fr-rate-limit-response`) |
+| Risk                                                              | Impact                          | Mitigation                                                       |
+| ----------------------------------------------------------------- | ------------------------------- | ---------------------------------------------------------------- |
+| Delivery mechanism becomes a bottleneck under high ingestion volume | Increased latency, delivery lag | Monitor delivery backlog; scale in future phase                  |
+| Storage backend latency affects query performance                 | Slow dashboard/billing queries  | NFR threshold (500ms p95); consider pre-computed rollups later    |
+| Permanently failed deliveries accumulate without operator attention | Data gaps in storage backend    | Operational monitoring and alerting on failed delivery count      |
+| Optimistic rate limit enforcement allows a small burst above quota under high concurrency | Momentary outbox overfill | Acceptable for flood prevention; burst magnitude bounded by concurrent emission degree; monitoring surfaces sustained limit violations |
 
 ## 13. Open Questions
 
-- Retention policy enforcement mechanism (TTL vs. scheduled cleanup)
-- Exact SDK batching defaults (count threshold, time threshold)
-- Default rate limit values for system-wide defaults and per-source defaults
-- Specific metadata fields and API shape for metadata exposure (to support external reconciliation)
+No open questions.
+
+## 14. Traceability
+
+- **Design**: [DESIGN.md](./DESIGN.md)
+- **ADRs**: [ADR/](./ADR/)
+- **Features**: [features/](./features/)
