@@ -369,8 +369,9 @@ Multi-tenant hierarchy with sharing modes (`private`/`inherit`/`enforce`) per co
 | Auth | Override if `inherit`; forced if `enforce` |
 | Rate Limits | `min(ancestor, descendant)` — stricter always wins |
 | Plugins | Concatenate: `ancestor.plugins + descendant.plugins` |
-| Tags | Union (add-only); descendants cannot remove inherited tags |
 | CORS | Union origins if `inherit`; forced if `enforce` |
+
+Tags do not have a sharing mode — they always use add-only union semantics: `effective_tags = union(ancestor_tags, descendant_tags)`. Descendants cannot remove inherited tags.
 
 Alias resolution walks tenant hierarchy from descendant to root; closest match wins (shadowing). Enforced ancestor constraints are never bypassed by shadowing.
 
