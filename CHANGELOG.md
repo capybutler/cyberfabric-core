@@ -9,6 +9,93 @@ release-plz updates this file in the Release PR.
 
 ## [Unreleased]
 
+## [0.1.4](https://github.com/cyberfabric/cyberfabric-core/compare/cf-static-tr-plugin-v0.1.3...cf-static-tr-plugin-v0.1.4) - 2026-03-05
+
+### Added
+
+- centralize module initialization logging in `HostRuntime` (by @fluiderson) - #845
+
+### Contributors
+
+* @fluiderson
+
+## [0.1.0](https://github.com/cyberfabric/cyberfabric-core/releases/tag/cf-static-credstore-plugin-v0.1.0) - 2026-03-05
+
+### Added
+
+- centralize module initialization logging in `HostRuntime` (by @fluiderson) - #845
+- *(oagw)* wire credstore SDK into OAGW, replacing InMemoryCredentialResolver (by @refur-nfn)
+- *(credstore)* add static-credstore-plugin module (by @refur-nfn)
+
+### Other
+
+- Merge pull request #806 from refur-nfn/feat/credstore-test-coverage (by @Artifizer) - #806
+
+### Contributors
+
+* @Artifizer
+* @fluiderson
+* @refur-nfn
+
+## [0.1.2](https://github.com/cyberfabric/cyberfabric-core/compare/cf-static-authz-plugin-v0.1.1...cf-static-authz-plugin-v0.1.2) - 2026-03-05
+
+### Added
+
+- centralize module initialization logging in `HostRuntime` (by @fluiderson) - #845
+
+### Contributors
+
+* @fluiderson
+
+## [0.1.2](https://github.com/cyberfabric/cyberfabric-core/compare/cf-static-authn-plugin-v0.1.1...cf-static-authn-plugin-v0.1.2) - 2026-03-05
+
+### Added
+
+- centralize module initialization logging in `HostRuntime` (by @fluiderson) - #845
+
+### Contributors
+
+* @fluiderson
+
+## [0.1.4](https://github.com/cyberfabric/cyberfabric-core/compare/cf-single-tenant-tr-plugin-v0.1.3...cf-single-tenant-tr-plugin-v0.1.4) - 2026-03-05
+
+### Added
+
+- centralize module initialization logging in `HostRuntime` (by @fluiderson) - #845
+
+### Contributors
+
+* @fluiderson
+
+## [0.3.0](https://github.com/cyberfabric/cyberfabric-core/compare/cf-modkit-http-v0.2.14...cf-modkit-http-v0.3.0) - 2026-03-05
+
+### Other
+
+- Set AllowInsecureHttp by default in modkit-http config, add deny_insecure_http method for TLS enforcement. (by @genericaccount-de) - #868
+- *(cargo)* unify TLS stack and clean up SeaORM/sqlx feature wiring (by @MikeFalcon77)
+
+### Contributors
+
+* @genericaccount-de
+* @MikeFalcon77
+
+## [0.3.0](https://github.com/cyberfabric/cyberfabric-core/compare/cf-modkit-v0.2.14...cf-modkit-v0.3.0) - 2026-03-05
+
+### Added
+
+- *(mini-chat)* implement CRUD for /v1/chats (by @aviator5)
+
+### Other
+
+- Merge pull request #719 from genericaccount-de/feature/REAL-163-prometheus-metrics (by @MikeFalcon77) - #719
+- Add metrics recorder with cardinality control and ability to export data, REAL-163 (by @genericaccount-de) - #719
+
+### Contributors
+
+* @aviator5
+* @MikeFalcon77
+* @genericaccount-de
+
 ## [0.1.3](https://github.com/cyberfabric/cyberfabric-core/compare/cf-static-tr-plugin-v0.1.2...cf-static-tr-plugin-v0.1.3) - 2026-02-26
 
 ### Other
