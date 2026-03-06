@@ -11,23 +11,22 @@ use crate::models::{PolicySnapshot, PolicyVersionInfo, UserLimits};
 /// delegates policy queries to the selected plugin.
 #[async_trait]
 pub trait MiniChatModelPolicyPluginClientV1: Send + Sync {
-    /// Get the current policy version for a tenant.
+    /// Get the current policy version for a user.
     async fn get_current_policy_version(
         &self,
-        tenant_id: Uuid,
+        user_id: Uuid,
     ) -> Result<PolicyVersionInfo, MiniChatModelPolicyPluginError>;
 
     /// Get the policy snapshot for a given version.
     async fn get_policy_snapshot(
         &self,
-        tenant_id: Uuid,
+        user_id: Uuid,
         policy_version: u64,
     ) -> Result<PolicySnapshot, MiniChatModelPolicyPluginError>;
 
     /// Get per-user credit allocations for a specific policy version.
     async fn get_user_limits(
         &self,
-        tenant_id: Uuid,
         user_id: Uuid,
         policy_version: u64,
     ) -> Result<UserLimits, MiniChatModelPolicyPluginError>;

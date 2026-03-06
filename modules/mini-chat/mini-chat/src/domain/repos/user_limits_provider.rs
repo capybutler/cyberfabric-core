@@ -15,7 +15,6 @@ pub trait UserLimitsProvider: Send + Sync {
     /// Get per-user credit allocations for a specific policy version.
     async fn get_limits(
         &self,
-        tenant_id: Uuid,
         user_id: Uuid,
         policy_version: u64,
     ) -> Result<UserLimits, DomainError>;

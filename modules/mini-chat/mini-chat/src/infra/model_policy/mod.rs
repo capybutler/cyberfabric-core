@@ -75,16 +75,16 @@ impl ModelPolicyGateway {
 impl ModelResolver for ModelPolicyGateway {
     async fn resolve_model(
         &self,
-        tenant_id: Uuid,
+        user_id: Uuid,
         model: Option<String>,
     ) -> Result<String, DomainError> {
         let plugin = self.get_policy_plugin().await?;
         let version_info = plugin
-            .get_current_policy_version(tenant_id)
+            .get_current_policy_version(user_id)
             .await
             .map_err(|e| DomainError::internal(e.to_string()))?;
         let snapshot = plugin
-            .get_policy_snapshot(tenant_id, version_info.policy_version)
+            .get_policy_snapshot(user_id, version_info.policy_version)
             .await
             .map_err(|e| DomainError::internal(e.to_string()))?;
 
@@ -126,20 +126,20 @@ impl ModelResolver for ModelPolicyGateway {
 impl PolicySnapshotProvider for ModelPolicyGateway {
     async fn get_snapshot(
         &self,
-        tenant_id: Uuid,
+        user_id: Uuid,
         policy_version: u64,
     ) -> Result<PolicySnapshot, DomainError> {
         let plugin = self.get_policy_plugin().await?;
         plugin
-            .get_policy_snapshot(tenant_id, policy_version)
+            .get_policy_snapshot(user_id, policy_version)
             .await
             .map_err(|e| DomainError::internal(e.to_string()))
     }
 
-    async fn get_current_version(&self, tenant_id: Uuid) -> Result<u64, DomainError> {
+    async fn get_current_version(&self, user_id: Uuid) -> Result<u64, DomainError> {
         let plugin = self.get_policy_plugin().await?;
         let info = plugin
-            .get_current_policy_version(tenant_id)
+            .get_current_policy_version(user_id)
             .await
             .map_err(|e| DomainError::internal(e.to_string()))?;
         Ok(info.policy_version)
@@ -150,13 +150,12 @@ impl PolicySnapshotProvider for ModelPolicyGateway {
 impl UserLimitsProvider for ModelPolicyGateway {
     async fn get_limits(
         &self,
-        tenant_id: Uuid,
         user_id: Uuid,
         policy_version: u64,
     ) -> Result<UserLimits, DomainError> {
         let plugin = self.get_policy_plugin().await?;
         plugin
-            .get_user_limits(tenant_id, user_id, policy_version)
+            .get_user_limits(user_id, policy_version)
             .await
             .map_err(|e| DomainError::internal(e.to_string()))
     }

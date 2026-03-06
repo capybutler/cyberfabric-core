@@ -237,15 +237,15 @@ impl<QR: QuotaUsageRepository + 'static> QuotaService<QR> {
         // 1. Resolve policy
         let policy_version = self
             .policy_provider
-            .get_current_version(input.tenant_id)
+            .get_current_version(input.user_id)
             .await?;
         let snapshot = self
             .policy_provider
-            .get_snapshot(input.tenant_id, policy_version)
+            .get_snapshot(input.user_id, policy_version)
             .await?;
         let user_limits = self
             .limits_provider
-            .get_limits(input.tenant_id, input.user_id, policy_version)
+            .get_limits(input.user_id, policy_version)
             .await?;
 
         // 2. Estimate tokens
@@ -456,7 +456,7 @@ impl<QR: QuotaUsageRepository> QuotaService<QR> {
         // Load snapshot for policy_version_applied (never current)
         let snapshot = self
             .policy_provider
-            .get_snapshot(input.tenant_id, input.policy_version_applied as u64)
+            .get_snapshot(input.user_id, input.policy_version_applied as u64)
             .await?;
 
         let catalog_entry = snapshot
@@ -729,7 +729,6 @@ mod tests {
 
     fn default_limits() -> UserLimits {
         UserLimits {
-            tenant_id: Uuid::nil(),
             user_id: Uuid::nil(),
             policy_version: 1,
             standard: TierLimits {
@@ -745,7 +744,7 @@ mod tests {
 
     fn default_snapshot() -> PolicySnapshot {
         PolicySnapshot {
-            tenant_id: Uuid::nil(),
+            user_id: Uuid::nil(),
             policy_version: 1,
             model_catalog: vec![
                 make_model("gpt-5", ModelTier::Premium, true, true),
@@ -755,9 +754,8 @@ mod tests {
         }
     }
 
-    fn default_periods() -> Vec<(PeriodType, time::Date)> {
-        let today = time::Date::from_calendar_date(2026, time::Month::March, 5).unwrap();
-        let month_start = time::Date::from_calendar_date(2026, time::Month::March, 1).unwrap();
+    fn default_periods(today: time::Date) -> Vec<(PeriodType, time::Date)> {
+        let month_start = today.replace_day(1).unwrap();
         vec![
             (PeriodType::Daily, today),
             (PeriodType::Monthly, month_start),
@@ -770,7 +768,8 @@ mod tests {
     fn premium_available_returns_allow() {
         let snapshot = default_snapshot();
         let limits = default_limits();
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -793,7 +792,8 @@ mod tests {
         let mut limits = default_limits();
         // Set premium daily limit very low so it's exhausted
         limits.premium.limit_daily_credits_micro = 0;
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -815,7 +815,8 @@ mod tests {
     fn standard_selected_skips_premium() {
         let snapshot = default_snapshot();
         let limits = default_limits();
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -838,7 +839,8 @@ mod tests {
         let mut limits = default_limits();
         limits.premium.limit_daily_credits_micro = 0;
         limits.standard.limit_daily_credits_micro = 0;
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -857,7 +859,8 @@ mod tests {
         let mut snapshot = default_snapshot();
         snapshot.kill_switches.disable_premium_tier = true;
         let limits = default_limits();
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -879,7 +882,8 @@ mod tests {
         let mut snapshot = default_snapshot();
         snapshot.kill_switches.force_standard_tier = true;
         let limits = default_limits();
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -902,7 +906,8 @@ mod tests {
         // Disable the selected premium model
         snapshot.model_catalog[0].global_enabled = false;
         let limits = default_limits();
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -925,7 +930,8 @@ mod tests {
         // Disable the standard model (index 1 = gpt-5-mini)
         snapshot.model_catalog[1].global_enabled = false;
         let limits = default_limits();
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -947,7 +953,8 @@ mod tests {
             m.global_enabled = false;
         }
         let limits = default_limits();
-        let periods = default_periods();
+        let today = OffsetDateTime::now_utc().date();
+        let periods = default_periods(today);
         let ctx = CascadeContext {
             snapshot: &snapshot,
             user_limits: &limits,
@@ -1014,6 +1021,7 @@ mod tests {
         reserve_tokens: i64,
         reserved_credits_micro: i64,
         path: SettlementPath,
+        today: time::Date,
     ) -> SettlementInput {
         SettlementInput {
             tenant_id: Uuid::nil(),
@@ -1025,12 +1033,17 @@ mod tests {
             reserved_credits_micro,
             minimal_generation_floor_applied: 50,
             settlement_path: path,
-            period_starts: default_periods(),
+            period_starts: default_periods(today),
         }
     }
 
     /// Pre-populate `quota_usage` rows so `settle()` can decrement them.
-    async fn seed_reserve(db: &DbProvider, model_tier: ModelTier, reserved_credits_micro: i64) {
+    async fn seed_reserve(
+        db: &DbProvider,
+        model_tier: ModelTier,
+        reserved_credits_micro: i64,
+        today: time::Date,
+    ) {
         use crate::domain::repos::IncrementReserveParams;
         use crate::domain::repos::QuotaUsageRepository as QURepo;
 
@@ -1044,7 +1057,7 @@ mod tests {
         };
 
         for bucket in &buckets {
-            for (period_type, period_start) in &default_periods() {
+            for (period_type, period_start) in &default_periods(today) {
                 repo.increment_reserve(
                     &conn,
                     &scope,
@@ -1070,8 +1083,9 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
-        seed_reserve(&db, ModelTier::Premium, 10_000).await;
+        seed_reserve(&db, ModelTier::Premium, 10_000, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1084,6 +1098,7 @@ mod tests {
                 input_tokens: 800,
                 output_tokens: 200,
             },
+            today,
         );
 
         let outcome = svc.settle(&conn, &scope, input).await.unwrap();
@@ -1102,8 +1117,9 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
-        seed_reserve(&db, ModelTier::Premium, 10_000).await;
+        seed_reserve(&db, ModelTier::Premium, 10_000, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1117,6 +1133,7 @@ mod tests {
                 input_tokens: 800,
                 output_tokens: 250,
             },
+            today,
         );
 
         let outcome = svc.settle(&conn, &scope, input).await.unwrap();
@@ -1132,8 +1149,9 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
-        seed_reserve(&db, ModelTier::Premium, 10_000).await;
+        seed_reserve(&db, ModelTier::Premium, 10_000, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1147,6 +1165,7 @@ mod tests {
                 input_tokens: 1000,
                 output_tokens: 500,
             },
+            today,
         );
 
         let outcome = svc.settle(&conn, &scope, input).await.unwrap();
@@ -1163,8 +1182,9 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
-        seed_reserve(&db, ModelTier::Premium, 10_000).await;
+        seed_reserve(&db, ModelTier::Premium, 10_000, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1174,6 +1194,7 @@ mod tests {
             2000,   // reserve_tokens
             10_000, // reserved_credits_micro
             SettlementPath::Estimated,
+            today,
         );
 
         let outcome = svc.settle(&conn, &scope, input).await.unwrap();
@@ -1194,9 +1215,10 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
         // Seed enough for two settlements
-        seed_reserve(&db, ModelTier::Premium, 20_000).await;
+        seed_reserve(&db, ModelTier::Premium, 20_000, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1208,6 +1230,7 @@ mod tests {
                 2000,
                 10_000,
                 SettlementPath::Estimated,
+                today,
             )
         };
 
@@ -1224,8 +1247,9 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
-        seed_reserve(&db, ModelTier::Premium, 500).await;
+        seed_reserve(&db, ModelTier::Premium, 500, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1237,6 +1261,7 @@ mod tests {
             100,
             500,
             SettlementPath::Estimated,
+            today,
         );
         input.max_output_tokens_applied = 200;
         input.minimal_generation_floor_applied = 50;
@@ -1255,8 +1280,9 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
-        seed_reserve(&db, ModelTier::Premium, 10_000).await;
+        seed_reserve(&db, ModelTier::Premium, 10_000, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1266,6 +1292,7 @@ mod tests {
             2000,
             10_000,
             SettlementPath::Released,
+            today,
         );
 
         let outcome = svc.settle(&conn, &scope, input).await.unwrap();
@@ -1282,8 +1309,9 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
-        seed_reserve(&db, ModelTier::Premium, 10_000).await;
+        seed_reserve(&db, ModelTier::Premium, 10_000, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1296,6 +1324,7 @@ mod tests {
                 input_tokens: 500,
                 output_tokens: 500,
             },
+            today,
         );
 
         let outcome = svc.settle(&conn, &scope, input).await.unwrap();
@@ -1513,6 +1542,7 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
         // Step 1: preflight
         let decision = svc
@@ -1561,7 +1591,7 @@ mod tests {
                 input_tokens: 500,
                 output_tokens: 200,
             },
-            period_starts: default_periods(),
+            period_starts: default_periods(today),
         };
 
         let outcome = svc.settle(&conn, &scope, settle_input).await.unwrap();
@@ -1600,6 +1630,7 @@ mod tests {
         snapshot.kill_switches.force_standard_tier = true;
 
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
         // Step 1: preflight — should downgrade to standard
         let decision = svc
@@ -1654,7 +1685,7 @@ mod tests {
                 input_tokens: 500,
                 output_tokens: 200,
             },
-            period_starts: default_periods(),
+            period_starts: default_periods(today),
         };
 
         let outcome = svc.settle(&conn, &scope, settle_input).await.unwrap();
@@ -1688,8 +1719,9 @@ mod tests {
         let db = mock_db_provider(db_raw);
         let snapshot = default_snapshot();
         let svc = make_test_service(Arc::clone(&db), snapshot, 1.10);
+        let today = OffsetDateTime::now_utc().date();
 
-        seed_reserve(&db, ModelTier::Standard, 10_000).await;
+        seed_reserve(&db, ModelTier::Standard, 10_000, today).await;
 
         let conn = db.conn().unwrap();
         let scope = AccessScope::for_tenant(Uuid::nil());
@@ -1702,6 +1734,7 @@ mod tests {
                 input_tokens: 500,
                 output_tokens: 500,
             },
+            today,
         );
 
         let outcome = svc.settle(&conn, &scope, input).await.unwrap();

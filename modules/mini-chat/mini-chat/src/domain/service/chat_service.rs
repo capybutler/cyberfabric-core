@@ -72,7 +72,7 @@ impl<CR: ChatRepository + 'static> ChatService<CR> {
 
         let model = self
             .model_resolver
-            .resolve_model(tenant_id, new.model)
+            .resolve_model(ctx.subject_id(), new.model)
             .await?;
 
         let now = OffsetDateTime::now_utc();

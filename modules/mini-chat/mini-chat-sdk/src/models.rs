@@ -2,10 +2,10 @@ use serde::{Deserialize, Serialize};
 use time::OffsetDateTime;
 use uuid::Uuid;
 
-/// Current policy version metadata for a tenant.
+/// Current policy version metadata for a user.
 #[derive(Debug, Clone)]
 pub struct PolicyVersionInfo {
-    pub tenant_id: Uuid,
+    pub user_id: Uuid,
     pub policy_version: u64,
     pub generated_at: OffsetDateTime,
 }
@@ -13,7 +13,7 @@ pub struct PolicyVersionInfo {
 /// Full policy snapshot for a given version, including the model catalog.
 #[derive(Debug, Clone)]
 pub struct PolicySnapshot {
-    pub tenant_id: Uuid,
+    pub user_id: Uuid,
     pub policy_version: u64,
     pub model_catalog: Vec<ModelCatalogEntry>,
     pub kill_switches: KillSwitches,
@@ -66,7 +66,6 @@ pub enum ModelTier {
 /// NOT part of the immutable shared `PolicySnapshot` (DESIGN.md §5.2.6).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct UserLimits {
-    pub tenant_id: Uuid,
     pub user_id: Uuid,
     pub policy_version: u64,
     pub standard: TierLimits,

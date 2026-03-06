@@ -121,7 +121,7 @@ pub struct MockModelResolver;
 impl ModelResolver for MockModelResolver {
     async fn resolve_model(
         &self,
-        _tenant_id: Uuid,
+        _user_id: Uuid,
         model: Option<String>,
     ) -> Result<String, DomainError> {
         let catalog = [("gpt-5.2", true), ("gpt-5-mini", false)];
@@ -215,13 +215,13 @@ impl MockPolicySnapshotProvider {
 impl PolicySnapshotProvider for MockPolicySnapshotProvider {
     async fn get_snapshot(
         &self,
-        _tenant_id: Uuid,
+        _user_id: Uuid,
         _policy_version: u64,
     ) -> Result<PolicySnapshot, DomainError> {
         Ok(self.snapshot.lock().unwrap().clone())
     }
 
-    async fn get_current_version(&self, _tenant_id: Uuid) -> Result<u64, DomainError> {
+    async fn get_current_version(&self, _user_id: Uuid) -> Result<u64, DomainError> {
         Ok(self.snapshot.lock().unwrap().policy_version)
     }
 }
@@ -244,7 +244,6 @@ impl MockUserLimitsProvider {
 impl UserLimitsProvider for MockUserLimitsProvider {
     async fn get_limits(
         &self,
-        _tenant_id: Uuid,
         _user_id: Uuid,
         _policy_version: u64,
     ) -> Result<UserLimits, DomainError> {

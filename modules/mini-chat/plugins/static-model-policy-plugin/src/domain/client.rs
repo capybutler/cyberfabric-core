@@ -12,10 +12,10 @@ use super::service::Service;
 impl MiniChatModelPolicyPluginClientV1 for Service {
     async fn get_current_policy_version(
         &self,
-        tenant_id: Uuid,
+        user_id: Uuid,
     ) -> Result<PolicyVersionInfo, MiniChatModelPolicyPluginError> {
         Ok(PolicyVersionInfo {
-            tenant_id,
+            user_id,
             policy_version: 1,
             generated_at: OffsetDateTime::now_utc(),
         })
@@ -23,14 +23,14 @@ impl MiniChatModelPolicyPluginClientV1 for Service {
 
     async fn get_policy_snapshot(
         &self,
-        tenant_id: Uuid,
+        user_id: Uuid,
         policy_version: u64,
     ) -> Result<PolicySnapshot, MiniChatModelPolicyPluginError> {
         if policy_version != 1 {
             return Err(MiniChatModelPolicyPluginError::NotFound);
         }
         Ok(PolicySnapshot {
-            tenant_id,
+            user_id,
             policy_version,
             model_catalog: self.catalog.clone(),
             kill_switches: self.kill_switches.clone(),
@@ -39,7 +39,6 @@ impl MiniChatModelPolicyPluginClientV1 for Service {
 
     async fn get_user_limits(
         &self,
-        tenant_id: Uuid,
         user_id: Uuid,
         policy_version: u64,
     ) -> Result<UserLimits, MiniChatModelPolicyPluginError> {
@@ -47,7 +46,6 @@ impl MiniChatModelPolicyPluginClientV1 for Service {
             return Err(MiniChatModelPolicyPluginError::NotFound);
         }
         Ok(UserLimits {
-            tenant_id,
             user_id,
             policy_version,
             standard: self.default_standard_limits.clone(),
