@@ -45,6 +45,24 @@ Chosen option: "Stateless instances with database state", because it enables sim
 * Bad, because database becomes scaling bottleneck (write throughput limit)
 * Bad, because no request coalescing or in-memory optimizations
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Stateless instances with database state
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Stateful instances with sticky sessions
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Redis cache layer
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
@@ -57,7 +75,7 @@ Chosen option: "Stateless instances with database state", because it enables sim
 * `cpt-cf-chat-engine-nfr-response-time` - Routing latency < 100ms despite database queries
 
 **Design Elements**:
-* `cpt-cf-chat-engine-topology-cloud` - Kubernetes deployment with 3+ replicas
+* cpt-cf-chat-engine-topology-cloud - Kubernetes deployment with 3+ replicas
 * `cpt-cf-chat-engine-constraint-single-database` - Database provides shared state
 * All components designed as stateless services
 

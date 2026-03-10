@@ -4,6 +4,8 @@ Updated:  2026-03-06 by Constructor Tech
 
 ## 1. Overview
 
+### 1.1 Purpose
+
 **Purpose**: Chat Engine is a Gateway module (CyberFabric ModKit) that manages session lifecycle and message routing between clients and Backend Plugin modules.
 
 Chat Engine provides a unified interface for building conversational applications by abstracting session management, message history persistence, and flexible message processing. The system acts as an intermediary layer that handles the complexity of session state, message tree structures, and backend integration, allowing application developers to focus on building user experiences and backend plugin developers to focus on message processing logic.
@@ -17,12 +19,16 @@ The system supports various conversation patterns including traditional linear c
 - **Backend Plugin Developers** - Implement custom message processing logic (AI, rule-based, human-in-the-loop) that integrates with Chat Engine
 - **End Users** (indirect) - Use applications built on Chat Engine, experiencing responsive conversational interfaces
 
+### 1.2 Background / Problem Statement
+
 **Key Problems Solved**:
 - **Session Management Complexity**: Eliminates the need for each application to implement session lifecycle, message history persistence, and state management from scratch
 - **Message Routing Flexibility**: Decouples message processing logic from infrastructure, enabling easy switching between different backend implementations (automated, custom logic, human operators)
 - **Conversation Variants**: Provides built-in support for message regeneration and branching conversations, enabling users to explore alternative responses without losing conversation history
 - **Multi-Backend Support**: Allows seamless switching between different message processing backends mid-conversation, enabling hybrid approaches like starting with AI and escalating to human support
 - **Plugin Extensibility**: Predefined domain model schemas (message types, content types, event types, error types) are designed as base schemas that plugin vendors can extend via GTS, enabling custom scenarios — custom content rendering, domain-specific events, vendor error taxonomies — without modifying Chat Engine core
+
+### 1.3 Goals (Business Outcomes)
 
 **Success Criteria**:
 - Message routing latency < 100ms (p95) excluding backend processing time
@@ -43,7 +49,7 @@ The system supports various conversation patterns including traditional linear c
 - Message tree navigation and variant selection
 - Extensible domain model schemas — plugin vendors can define custom message types, content types, event types, and error types on top of the predefined base schemas, enabling custom scenarios without forking Chat Engine core (see FR-021)
 
-### Glossary
+### 1.4 Glossary
 
 | Term | Definition |
 |------|------------|
@@ -125,7 +131,54 @@ Plugin modules are co-located within the same CyberFabric server process and cal
 **Role**: Persistent storage for sessions, messages, message tree structures, and metadata. Supports ACID transactions to ensure data integrity and consistency.
 <!-- fdd-id-content -->
 
-## 3. Functional Requirements
+#### Chat Engine System
+
+**ID**: `cpt-cf-chat-engine-actor-system`
+
+**Role**: The Chat Engine service itself, acting as orchestrator for session lifecycle events, background tasks (retention policy enforcement, session archival), and automated system operations.
+
+#### Tenant Administrator
+
+**ID**: `cpt-cf-chat-engine-actor-tenant-admin`
+
+**Role**: Administrative user responsible for configuring session types, retention policies, and plugin assignments at the tenant level.
+
+## 3. Operational Concept & Environment
+
+> Chat Engine operates as a stateless ModKit gateway module within the CyberFabric platform. No module-specific environment constraints beyond platform defaults.
+
+## 4. Scope
+
+### 4.1 In Scope
+
+- Session lifecycle management (create, delete, retrieve)
+- Message routing to backend plugins with real-time streaming
+- Message variant preservation (regeneration, branching)
+- File attachment references in messages
+- Session type switching mid-conversation
+- Session export (JSON, Markdown, TXT)
+- Session sharing via links with read-only and branching access
+- Message search within sessions and across sessions
+- Message tree navigation and variant selection
+- Extensible domain model schemas — plugin vendors can define custom message types, content types, event types, and error types on top of the predefined base schemas, enabling custom scenarios without forking Chat Engine core (see FR-021)
+
+### 4.2 Out of Scope
+
+
+<!-- fdd-id-content -->
+The following are explicitly out of scope for Chat Engine:
+- Message content processing, analysis, or moderation (handled by backend plugins)
+- User authentication and identity management (handled by client applications)
+- File upload/download implementation (handled by external file storage service)
+- UI rendering and conversation visualization (handled by client applications)
+- Rate limiting per user or organization (handled by client applications or API gateway)
+- Billing, usage tracking, and quota management (separate service)
+- Real-time collaboration features (multiple users in same session)
+- Message encryption at rest (delegated to database service)
+- Content delivery network (CDN) integration for file serving
+<!-- fdd-id-content -->
+
+## 5. Functional Requirements
 
 #### FR-001: Create Session
 
@@ -598,7 +651,164 @@ The system **SHOULD** provide extensible, versioned base schemas for all core do
 **Actors**: `cpt-cf-chat-engine-actor-backend-plugin`, `cpt-cf-chat-engine-actor-tenant-admin`
 <!-- fdd-id-content -->
 
-## 4. Use Cases
+## 6. Non-Functional Requirements
+
+#### NFR-001: Response Time
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-response-time`
+
+<!-- fdd-id-content -->
+Message routing latency must be less than 100ms at p95, measured from receiving client message to forwarding to backend plugin (excluding backend processing time). Session creation must complete within 200ms at p95, including database write and backend notification.
+<!-- fdd-id-content -->
+
+#### NFR-002: Availability
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-availability`
+
+<!-- fdd-id-content -->
+System must maintain 99.9% uptime for session management operations (create, retrieve, delete sessions). During backend plugin failures, the system must support degraded mode with read-only access to session history. Planned maintenance windows must be scheduled during low-traffic periods with advance notice.
+<!-- fdd-id-content -->
+
+#### NFR-003: Scalability
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-scalability`
+
+<!-- fdd-id-content -->
+System must support at least 10,000 concurrent active sessions per instance. Message throughput must support at least 1,000 messages per second per instance. System must support horizontal scaling by adding instances without shared state constraints.
+<!-- fdd-id-content -->
+
+#### NFR-004: Data Persistence
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-data-persistence`
+
+<!-- fdd-id-content -->
+All messages must be persisted to database before sending acknowledgment to client. Zero message loss is required during system failures, network interruptions, or backend failures. Database writes must use ACID transactions to ensure consistency.
+<!-- fdd-id-content -->
+
+#### NFR-005: Streaming Performance
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-streaming`
+
+<!-- fdd-id-content -->
+Streaming latency overhead (time between receiving chunk from backend and forwarding to client) must be less than 10ms at p95. First byte of streamed response must arrive at client within 200ms of backend starting to stream. Streaming must support backpressure to handle slow clients.
+<!-- fdd-id-content -->
+
+#### NFR-006: Authentication
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-authentication`
+
+<!-- fdd-id-content -->
+System must authenticate all client requests using JWT bearer tokens. Each token must carry `client_id`, `user_id`, and `tenant_id` claims, all extracted server-side and never accepted from request body. Session access must be restricted to the owning user (`user_id` match) within the owning tenant (`tenant_id` match), or to share token holders for read-only access. All data queries must be scoped by `tenant_id` to ensure tenant isolation.
+<!-- fdd-id-content -->
+
+#### NFR-007: Data Integrity
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-data-integrity`
+
+<!-- fdd-id-content -->
+Message tree structure must maintain referential integrity at all times. Orphaned messages (messages with non-existent parent) are not allowed. Parent-child relationships must be immutable once created. Database constraints must enforce tree structure integrity.
+<!-- fdd-id-content -->
+
+#### NFR-008: Backend Isolation
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-backend-isolation`
+
+<!-- fdd-id-content -->
+Webhook backend failures must not affect other sessions using different backends. Request timeout must be configurable per session type with a default of 30 seconds. Backend errors must be isolated and logged without cascading to other system components.
+<!-- fdd-id-content -->
+
+#### NFR-009: File Size Limits
+
+- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-file-size`
+
+<!-- fdd-id-content -->
+System must enforce file size limits with a default of 10MB per individual file. Total attachments per message must be limited to 50MB. File size validation occurs at client upload time (enforced by file storage service) and limits are configurable per session type.
+<!-- fdd-id-content -->
+
+#### NFR-010: Search Performance
+
+- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-search`
+
+<!-- fdd-id-content -->
+Session history search must return results within 1 second at p95 for sessions with up to 10,000 messages. Cross-session search must return results within 3 seconds at p95 for clients with up to 1,000 sessions. Search must support pagination for large result sets.
+<!-- fdd-id-content -->
+
+#### NFR-011: WebSocket Performance
+
+- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-websocket-performance`
+
+<!-- fdd-id-content -->
+When WebSocket is enabled, connection establishment must complete within 500ms at p95. Message routing latency over WebSocket must be less than 50ms at p95 (lower than HTTP's 100ms target). Heartbeat interval must be 30 seconds with automatic reconnection using exponential backoff (maximum 60 seconds). The system must support at least 5,000 concurrent WebSocket connections per instance.
+<!-- fdd-id-content -->
+
+#### NFR-012: WebSocket Reliability
+
+- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-websocket-reliability`
+
+<!-- fdd-id-content -->
+When WebSocket is enabled, connections must support automatic reconnection with state restoration after network interruptions. Message delivery guarantees must match HTTP protocol (at-least-once for operations, exactly-once for streaming). The system must handle graceful connection closure with pending operation completion or cancellation. Connection timeout must be 5 minutes for idle connections, configurable per deployment.
+<!-- fdd-id-content -->
+
+#### NFR-013: Message History Handling
+
+- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-message-history`
+
+<!-- fdd-id-content -->
+System must support sessions with up to 10,000 messages without performance degradation. Message history forwarding to backend plugins must complete within 2 seconds at p95 for sessions with 1,000 messages. Backends must implement conversation memory management strategies when approaching their processing capacity limits. System must provide message count and estimated processing metrics in session metadata to help backends make memory management decisions.
+<!-- fdd-id-content -->
+
+#### NFR-014: Lifecycle Operation Performance
+
+- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-lifecycle-performance`
+
+<!-- fdd-id-content -->
+Lifecycle operations (soft delete, restore, archive) must complete within 500ms at p95 for sessions with up to 10,000 messages. Hard delete operations may take up to 5 seconds at p95 for large sessions. Restoration must preserve complete session state including message tree structure, metadata, and file references. Lifecycle state transitions must be atomic.
+<!-- fdd-id-content -->
+
+#### NFR-015: Retention Policy Enforcement SLA
+
+- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-retention-sla`
+
+<!-- fdd-id-content -->
+Automatic retention policy enforcement must run at least daily. Sessions must transition to permanent deletion within 24 hours of reaching their retention period expiry. Policy processing must handle at least 10,000 sessions per run without impacting production query performance (p95 latency increase <10%). Failed operations must retry and alert on repeated failures.
+<!-- fdd-id-content -->
+
+#### NFR-016: Recovery Requirements
+
+- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-recovery`
+
+<!-- fdd-id-content -->
+Recovery objectives for Chat Engine persistent data:
+
+- **RPO (Recovery Point Objective)**: ≤ 5 minutes — maximum acceptable data loss window in the event of a catastrophic failure
+- **RTO (Recovery Time Objective)**: ≤ 30 minutes — maximum acceptable downtime before service is restored to degraded mode; ≤ 2 hours for full recovery
+- **Backup frequency**: Session and message data must be backed up at minimum every 5 minutes via continuous WAL shipping or equivalent
+- **Backup retention**: Backups must be retained for at least 30 days
+- **Point-in-time recovery**: Database must support point-in-time recovery to any point within the backup retention window
+- **Atomic lifecycle transitions**: All session lifecycle state transitions must be ACID-compliant; partial transitions are not acceptable
+<!-- fdd-id-content -->
+
+#### NFR-017: Developer Experience
+
+- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-developer-experience`
+
+<!-- fdd-id-content -->
+Chat Engine's primary users are Application Developers and Backend Plugin Developers. Integration quality is a core product metric:
+
+- **Time-to-first-message**: A developer familiar with REST APIs must be able to send a first message within ≤ 30 minutes of reading the API documentation, without prior Chat Engine knowledge
+- **Error response quality**: All API errors must return structured responses with: machine-readable error code, human-readable message, and actionable remediation hint
+- **API documentation**: A complete OpenAPI specification must be published and kept up-to-date with every API change
+- **Webhook contract documentation**: Webhook backend developers must have a documented contract covering all event types, payload schemas, and expected response formats
+- **Client SDK**: At minimum one reference client SDK must be provided (language TBD) demonstrating session creation, message exchange, and streaming
+<!-- fdd-id-content -->
+
+## 7. Public Library Interfaces
+
+See [api/README.md](../api/README.md) for the public HTTP REST and Webhook API specifications.
+
+See [schemas/README.md](../schemas/README.md) for JSON schema definitions.
+
+## 8. Use Cases
 
 #### UC-001: Create Session and Send First Message
 
@@ -853,162 +1063,53 @@ The system **SHOULD** provide extensible, versioned base schemas for all core do
 - **All retries exhausted** (if retry configured for session type): System marks session backend as degraded; client can still read history (degraded mode per `cpt-cf-chat-engine-nfr-availability`)
 <!-- fdd-id-content -->
 
-## 5. Non-functional Requirements
+## 9. Acceptance Criteria
 
-#### NFR-001: Response Time
+**Success Criteria**:
+- Message routing latency < 100ms (p95) excluding backend processing time
+- 99.9% uptime for session management operations
+- Support for 10,000 concurrent sessions per instance
+- Zero message loss during backend failures
+- First message response time < 200ms from session creation
 
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-response-time`
+## 10. Dependencies
 
-<!-- fdd-id-content -->
-Message routing latency must be less than 100ms at p95, measured from receiving client message to forwarding to backend plugin (excluding backend processing time). Session creation must complete within 200ms at p95, including database write and backend notification.
-<!-- fdd-id-content -->
+| Dependency | Description | Criticality |
+|------------|-------------|-------------|
+| File Storage Service | External file storage for message attachments | p1 |
+| Database Service | PostgreSQL for session and message persistence | p1 |
+| Backend Plugin modules | Message processing implementations | p1 |
 
-#### NFR-002: Availability
+## 11. Assumptions
 
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-availability`
-
-<!-- fdd-id-content -->
-System must maintain 99.9% uptime for session management operations (create, retrieve, delete sessions). During backend plugin failures, the system must support degraded mode with read-only access to session history. Planned maintenance windows must be scheduled during low-traffic periods with advance notice.
-<!-- fdd-id-content -->
-
-#### NFR-003: Scalability
-
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-scalability`
 
 <!-- fdd-id-content -->
-System must support at least 10,000 concurrent active sessions per instance. Message throughput must support at least 1,000 messages per second per instance. System must support horizontal scaling by adding instances without shared state constraints.
+Key assumptions underlying this PRD:
+- Webhook backends are always HTTP-accessible from Chat Engine instances
+- Client applications handle all UI rendering of message trees and conversation visualization
+- File storage service provides signed URL access with configurable expiration
+- Database service supports ACID transactions and can handle write loads from concurrent sessions
+- Network between Chat Engine and backend plugins is reliable (same region/VPC preferred)
+- Client applications handle user authentication and pass validated client IDs to Chat Engine
+- Webhook backends have reasonable response times (<30 seconds for most operations)
 <!-- fdd-id-content -->
 
-#### NFR-004: Data Persistence
+## 12. Risks
 
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-data-persistence`
-
-<!-- fdd-id-content -->
-All messages must be persisted to database before sending acknowledgment to client. Zero message loss is required during system failures, network interruptions, or backend failures. Database writes must use ACID transactions to ensure consistency.
-<!-- fdd-id-content -->
-
-#### NFR-005: Streaming Performance
-
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-streaming`
 
 <!-- fdd-id-content -->
-Streaming latency overhead (time between receiving chunk from backend and forwarding to client) must be less than 10ms at p95. First byte of streamed response must arrive at client within 200ms of backend starting to stream. Streaming must support backpressure to handle slow clients.
+Identified risks and mitigation strategies:
+- **Backend Plugin Latency**: Slow backends directly impact user experience. Mitigation: configurable timeouts per session type, monitoring and alerting for slow backends, consider caching for idempotent operations.
+- **Database Contention**: High message volume may cause database write contention and slow queries. Mitigation: read replicas for query operations, connection pooling, query optimization, consider sharding by client ID.
+- **Message Tree Complexity**: Deep branching (many variants or deep trees) may impact query performance and UI rendering. Mitigation: implement depth limits, pagination for variant navigation, database indexing on parent relationships.
+- **File Storage Costs**: Unrestricted file attachments may lead to high storage costs. Mitigation: enforce file size limits, implement retention policies, consider compression for certain file types.
+- **Session Abandonment**: Large numbers of inactive sessions may consume database resources. Mitigation: implement session cleanup policies, archive old sessions, monitor active session metrics.
 <!-- fdd-id-content -->
 
-#### NFR-006: Authentication
-
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-authentication`
-
-<!-- fdd-id-content -->
-System must authenticate all client requests using JWT bearer tokens. Each token must carry `client_id`, `user_id`, and `tenant_id` claims, all extracted server-side and never accepted from request body. Session access must be restricted to the owning user (`user_id` match) within the owning tenant (`tenant_id` match), or to share token holders for read-only access. All data queries must be scoped by `tenant_id` to ensure tenant isolation.
-<!-- fdd-id-content -->
-
-#### NFR-007: Data Integrity
-
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-data-integrity`
-
-<!-- fdd-id-content -->
-Message tree structure must maintain referential integrity at all times. Orphaned messages (messages with non-existent parent) are not allowed. Parent-child relationships must be immutable once created. Database constraints must enforce tree structure integrity.
-<!-- fdd-id-content -->
-
-#### NFR-008: Backend Isolation
-
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-backend-isolation`
-
-<!-- fdd-id-content -->
-Webhook backend failures must not affect other sessions using different backends. Request timeout must be configurable per session type with a default of 30 seconds. Backend errors must be isolated and logged without cascading to other system components.
-<!-- fdd-id-content -->
-
-#### NFR-009: File Size Limits
-
-- [ ] `p1` - **ID**: `cpt-cf-chat-engine-nfr-file-size`
-
-<!-- fdd-id-content -->
-System must enforce file size limits with a default of 10MB per individual file. Total attachments per message must be limited to 50MB. File size validation occurs at client upload time (enforced by file storage service) and limits are configurable per session type.
-<!-- fdd-id-content -->
-
-#### NFR-010: Search Performance
-
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-search`
-
-<!-- fdd-id-content -->
-Session history search must return results within 1 second at p95 for sessions with up to 10,000 messages. Cross-session search must return results within 3 seconds at p95 for clients with up to 1,000 sessions. Search must support pagination for large result sets.
-<!-- fdd-id-content -->
-
-#### NFR-011: WebSocket Performance
-
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-websocket-performance`
-
-<!-- fdd-id-content -->
-When WebSocket is enabled, connection establishment must complete within 500ms at p95. Message routing latency over WebSocket must be less than 50ms at p95 (lower than HTTP's 100ms target). Heartbeat interval must be 30 seconds with automatic reconnection using exponential backoff (maximum 60 seconds). The system must support at least 5,000 concurrent WebSocket connections per instance.
-<!-- fdd-id-content -->
-
-#### NFR-012: WebSocket Reliability
-
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-websocket-reliability`
-
-<!-- fdd-id-content -->
-When WebSocket is enabled, connections must support automatic reconnection with state restoration after network interruptions. Message delivery guarantees must match HTTP protocol (at-least-once for operations, exactly-once for streaming). The system must handle graceful connection closure with pending operation completion or cancellation. Connection timeout must be 5 minutes for idle connections, configurable per deployment.
-<!-- fdd-id-content -->
-
-#### NFR-013: Message History Handling
-
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-message-history`
-
-<!-- fdd-id-content -->
-System must support sessions with up to 10,000 messages without performance degradation. Message history forwarding to backend plugins must complete within 2 seconds at p95 for sessions with 1,000 messages. Backends must implement conversation memory management strategies when approaching their processing capacity limits. System must provide message count and estimated processing metrics in session metadata to help backends make memory management decisions.
-<!-- fdd-id-content -->
-
-#### NFR-014: Lifecycle Operation Performance
-
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-lifecycle-performance`
-
-<!-- fdd-id-content -->
-Lifecycle operations (soft delete, restore, archive) must complete within 500ms at p95 for sessions with up to 10,000 messages. Hard delete operations may take up to 5 seconds at p95 for large sessions. Restoration must preserve complete session state including message tree structure, metadata, and file references. Lifecycle state transitions must be atomic.
-<!-- fdd-id-content -->
-
-#### NFR-015: Retention Policy Enforcement SLA
-
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-retention-sla`
-
-<!-- fdd-id-content -->
-Automatic retention policy enforcement must run at least daily. Sessions must transition to permanent deletion within 24 hours of reaching their retention period expiry. Policy processing must handle at least 10,000 sessions per run without impacting production query performance (p95 latency increase <10%). Failed operations must retry and alert on repeated failures.
-<!-- fdd-id-content -->
-
-#### NFR-016: Recovery Requirements
-
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-recovery`
-
-<!-- fdd-id-content -->
-Recovery objectives for Chat Engine persistent data:
-
-- **RPO (Recovery Point Objective)**: ≤ 5 minutes — maximum acceptable data loss window in the event of a catastrophic failure
-- **RTO (Recovery Time Objective)**: ≤ 30 minutes — maximum acceptable downtime before service is restored to degraded mode; ≤ 2 hours for full recovery
-- **Backup frequency**: Session and message data must be backed up at minimum every 5 minutes via continuous WAL shipping or equivalent
-- **Backup retention**: Backups must be retained for at least 30 days
-- **Point-in-time recovery**: Database must support point-in-time recovery to any point within the backup retention window
-- **Atomic lifecycle transitions**: All session lifecycle state transitions must be ACID-compliant; partial transitions are not acceptable
-<!-- fdd-id-content -->
-
-#### NFR-017: Developer Experience
-
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-nfr-developer-experience`
-
-<!-- fdd-id-content -->
-Chat Engine's primary users are Application Developers and Backend Plugin Developers. Integration quality is a core product metric:
-
-- **Time-to-first-message**: A developer familiar with REST APIs must be able to send a first message within ≤ 30 minutes of reading the API documentation, without prior Chat Engine knowledge
-- **Error response quality**: All API errors must return structured responses with: machine-readable error code, human-readable message, and actionable remediation hint
-- **API documentation**: A complete OpenAPI specification must be published and kept up-to-date with every API change
-- **Webhook contract documentation**: Webhook backend developers must have a documented contract covering all event types, payload schemas, and expected response formats
-- **Client SDK**: At minimum one reference client SDK must be provided (language TBD) demonstrating session creation, message exchange, and streaming
-<!-- fdd-id-content -->
-
-## 6. Additional Context
+## 13. Additional Context
 
 #### Integration with Backend Plugins
 
-**ID**: `cpt-cf-chat-engine-prd-context-webhook-integration`
 
 <!-- fdd-id-content -->
 Backend plugins receive session context (session metadata, capabilities, message history) and return responses. Backends are responsible for all message processing logic, enabling flexible implementations including automated chat (e.g. LLMs), rule-based systems, human-in-the-loop support, or hybrid approaches. The backend contract is designed to be implementation-agnostic, allowing easy experimentation with different processing approaches.
@@ -1016,7 +1117,6 @@ Backend plugins receive session context (session metadata, capabilities, message
 
 #### Message Tree Structure
 
-**ID**: `cpt-cf-chat-engine-prd-context-message-tree`
 
 <!-- fdd-id-content -->
 Messages form a tree structure where each message (except the root) references a parent message. This tree structure enables conversation branching and message variant preservation. Multiple sibling messages with the same parent represent variants (alternative responses). The client application is responsible for rendering the tree structure in UI and providing navigation controls. The system maintains tree integrity but does not enforce a specific UI representation.
@@ -1024,7 +1124,6 @@ Messages form a tree structure where each message (except the root) references a
 
 #### Message Visibility Control
 
-**ID**: `cpt-cf-chat-engine-prd-context-message-visibility`
 
 <!-- fdd-id-content -->
 Messages can be selectively hidden from users or backend plugins using visibility flags:
@@ -1042,7 +1141,6 @@ These flags enable flexible message handling patterns:
 
 #### Conversation Memory Management
 
-**ID**: `cpt-cf-chat-engine-prd-context-memory-management`
 
 <!-- fdd-id-content -->
 Chat Engine forwards complete message history to backend plugins by default, enabling backends to implement their own memory management strategies. For long conversations that exceed backend processing capacity, backends should implement strategies such as sliding windows, summarization, or importance filtering.
@@ -1064,7 +1162,6 @@ Common strategies include sending only recent messages (sliding window), summari
 
 #### Session Lifecycle State Flow
 
-**ID**: `cpt-cf-chat-engine-prd-context-lifecycle-flow`
 
 <!-- fdd-id-content -->
 Sessions and messages progress through four lifecycle states that control visibility, accessibility, and storage optimization:
@@ -1096,7 +1193,6 @@ The system notifies backend plugins of all lifecycle transitions (`session.soft_
 
 #### Retention Policy Design Philosophy
 
-**ID**: `cpt-cf-chat-engine-prd-context-retention-philosophy`
 
 <!-- fdd-id-content -->
 Retention policies enable automated data lifecycle management while balancing user safety, storage costs, and compliance requirements. The design prioritizes safety and flexibility over aggressive data deletion.
@@ -1131,54 +1227,8 @@ Retention policies enable automated data lifecycle management while balancing us
 - **User data (GDPR)**: Moderate thresholds, automatic cleanup for data minimization
 <!-- fdd-id-content -->
 
-#### Assumptions
-
-**ID**: `cpt-cf-chat-engine-prd-context-assumptions`
-
-<!-- fdd-id-content -->
-Key assumptions underlying this PRD:
-- Webhook backends are always HTTP-accessible from Chat Engine instances
-- Client applications handle all UI rendering of message trees and conversation visualization
-- File storage service provides signed URL access with configurable expiration
-- Database service supports ACID transactions and can handle write loads from concurrent sessions
-- Network between Chat Engine and backend plugins is reliable (same region/VPC preferred)
-- Client applications handle user authentication and pass validated client IDs to Chat Engine
-- Webhook backends have reasonable response times (<30 seconds for most operations)
-<!-- fdd-id-content -->
-
-#### Out of Scope (Non-Goals)
-
-**ID**: `cpt-cf-chat-engine-prd-context-non-goals`
-
-<!-- fdd-id-content -->
-The following are explicitly out of scope for Chat Engine:
-- Message content processing, analysis, or moderation (handled by backend plugins)
-- User authentication and identity management (handled by client applications)
-- File upload/download implementation (handled by external file storage service)
-- UI rendering and conversation visualization (handled by client applications)
-- Rate limiting per user or organization (handled by client applications or API gateway)
-- Billing, usage tracking, and quota management (separate service)
-- Real-time collaboration features (multiple users in same session)
-- Message encryption at rest (delegated to database service)
-- Content delivery network (CDN) integration for file serving
-<!-- fdd-id-content -->
-
-#### Risks
-
-**ID**: `cpt-cf-chat-engine-prd-context-risks`
-
-<!-- fdd-id-content -->
-Identified risks and mitigation strategies:
-- **Backend Plugin Latency**: Slow backends directly impact user experience. Mitigation: configurable timeouts per session type, monitoring and alerting for slow backends, consider caching for idempotent operations.
-- **Database Contention**: High message volume may cause database write contention and slow queries. Mitigation: read replicas for query operations, connection pooling, query optimization, consider sharding by client ID.
-- **Message Tree Complexity**: Deep branching (many variants or deep trees) may impact query performance and UI rendering. Mitigation: implement depth limits, pagination for variant navigation, database indexing on parent relationships.
-- **File Storage Costs**: Unrestricted file attachments may lead to high storage costs. Mitigation: enforce file size limits, implement retention policies, consider compression for certain file types.
-- **Session Abandonment**: Large numbers of inactive sessions may consume database resources. Mitigation: implement session cleanup policies, archive old sessions, monitor active session metrics.
-<!-- fdd-id-content -->
-
 #### Privacy by Design
 
-**ID**: `cpt-cf-chat-engine-prd-context-privacy`
 
 <!-- fdd-id-content -->
 Chat Engine processes user messages and user identifiers on behalf of client applications. Privacy requirements are embedded by design:
@@ -1202,7 +1252,6 @@ Chat Engine processes user messages and user identifiers on behalf of client app
 
 #### Data Ownership
 
-**ID**: `cpt-cf-chat-engine-prd-context-data-ownership`
 
 <!-- fdd-id-content -->
 **Data Controller**: The client application that creates sessions and sends messages. The client application is responsible for obtaining user consent and establishing the legal basis for processing message content.
@@ -1216,7 +1265,7 @@ Chat Engine processes user messages and user identifiers on behalf of client app
 **Third-Party Processors**: Webhook backends receive message content from Chat Engine. Client applications are responsible for ensuring their backend plugins also operate under appropriate data processing agreements.
 <!-- fdd-id-content -->
 
-## 7. Intentional Exclusions
+## 14. Intentional Exclusions
 
 The following checklist categories are **not applicable** to this PRD. Each is explicitly excluded with reasoning to distinguish intentional omission from oversight.
 
@@ -1232,3 +1281,10 @@ The following checklist categories are **not applicable** to this PRD. Each is e
 | **Deployment Requirements (OPS-PRD-001)** | Deferred | Deployment environment, release cadence, and rollback policies are defined in the CyberFabric platform-level PRD and infrastructure documentation. Chat Engine inherits these. |
 | **Monitoring Requirements (OPS-PRD-002)** | Deferred | Alerting, dashboards, and log retention are governed by the CyberFabric platform observability standards. Chat Engine must emit standard structured logs and metrics — specifics defined in DESIGN. |
 | **Industry Standards (COMPL-PRD-002)** | Partial | Applicable standards are referenced inline: GDPR (Art. 17, 25), CCPA, and ACID transaction guarantees. No formal certification (ISO 27001, SOC 2) is currently required. |
+
+## 15. Traceability
+
+- **Design**: [DESIGN.md](./DESIGN.md)
+- **ADRs**: [ADR/](./ADR/)
+- **Features**: [features/](./features/)
+- **Decomposition**: [DECOMPOSITION.md](./DECOMPOSITION.md)

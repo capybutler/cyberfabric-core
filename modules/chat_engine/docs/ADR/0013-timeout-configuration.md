@@ -46,10 +46,28 @@ Chosen option: "Per-session-type timeout in database", because it enables backen
 * Bad, because timeout may abort long-valid processing (no progress tracking)
 * Bad, because client cannot override for specific requests
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Per-session-type timeout in database
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Global timeout
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Client-specified timeout
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
-* `cpt-cf-chat-engine-webhook-integration` - Enforces timeout per backend
+* `cpt-cf-chat-engine-component-webhook-integration` - Enforces timeout per backend
 * `cpt-cf-chat-engine-actor-developer` - Configures timeout per session type
 
 **Requirements**:
@@ -57,7 +75,7 @@ Chosen option: "Per-session-type timeout in database", because it enables backen
 
 **Design Elements**:
 * `cpt-cf-chat-engine-entity-session-type` - timeout field (INTEGER, CHECK 1-300)
-* `cpt-cf-chat-engine-db-table-session-types` - timeout column with constraints
+* `cpt-cf-chat-engine-dbtable-session-types` - timeout column with constraints
 
 **Related ADRs**:
 * ADR-0006 (Webhook Protocol) - HTTP timeout for backend requests

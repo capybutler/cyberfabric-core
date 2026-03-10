@@ -75,7 +75,7 @@ Confirmed when switching `session_type_id` causes the next message to be routed 
 **Actors**:
 * `cpt-cf-chat-engine-actor-client` - Initiates session type switching
 * `cpt-cf-chat-engine-actor-backend-plugin` - New plugin receives full history
-* `cpt-cf-chat-engine-session-management` - Updates session_type_id
+* `cpt-cf-chat-engine-component-session-management` - Updates session_type_id
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-switch-session-type` - Switch to different backend mid-conversation

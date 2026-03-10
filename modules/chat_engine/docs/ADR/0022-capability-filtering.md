@@ -46,6 +46,24 @@ Chosen option: "enabled_capabilities array per message", because it provides per
 * Bad, because invalid capability IDs or type mismatches rejected (error handling complexity)
 * Bad, because capability defaults not enforced (client must specify values explicitly)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: enabled_capabilities array per message
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Session-level toggle
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Implicit capabilities
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:

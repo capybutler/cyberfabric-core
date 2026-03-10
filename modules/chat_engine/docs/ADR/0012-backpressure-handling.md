@@ -46,10 +46,28 @@ Chosen option: "Per-stream buffer with limit and pause", because it prevents mem
 * Bad, because buffer management adds overhead (~5% CPU)
 * Bad, because no prioritization (all streams treated equally)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Per-stream buffer with limit and pause
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Unbounded buffering
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Drop chunks
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
-* `cpt-cf-chat-engine-response-streaming` - Implements buffer and backpressure logic
+* `cpt-cf-chat-engine-component-response-streaming` - Implements buffer and backpressure logic
 * `cpt-cf-chat-engine-actor-backend-plugin` - Paused via HTTP/2 flow control
 * `cpt-cf-chat-engine-actor-client` - Slow consumption triggers backpressure
 
@@ -59,7 +77,7 @@ Chosen option: "Per-stream buffer with limit and pause", because it prevents mem
 
 **Design Elements**:
 * `cpt-cf-chat-engine-design-context-backpressure` - Implementation details (10MB limit, HTTP/2 flow control)
-* `cpt-cf-chat-engine-response-streaming` - Buffer management per stream
+* `cpt-cf-chat-engine-component-response-streaming` - Buffer management per stream
 
 **Related ADRs**:
 * ADR-0003 (Streaming Architecture) - Streaming design depends on backpressure handling

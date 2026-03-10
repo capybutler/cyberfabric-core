@@ -47,12 +47,30 @@ Chosen option: "Cryptographic share token with separate table", because it provi
 * Bad, because no token refresh mechanism (expired = generate new)
 * Bad, because share_tokens table grows unbounded (cleanup needed)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Cryptographic share token with separate table
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Signed session_id JWT
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Publicly readable sessions
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-client` - Creates share token, shares URL with recipients
 * `cpt-cf-chat-engine-actor-end-user` - Accesses shared session via token
-* `cpt-cf-chat-engine-session-management` - Generates tokens, validates access
+* `cpt-cf-chat-engine-component-session-management` - Generates tokens, validates access
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-share-session` - Generate token, recipients view and branch
@@ -60,7 +78,7 @@ Chosen option: "Cryptographic share token with separate table", because it provi
 
 **Design Elements**:
 * `cpt-cf-chat-engine-entity-share-token` - Cryptographic token, session mapping, metadata
-* `cpt-cf-chat-engine-db-table-share-tokens` - ShareToken table with constraints
+* cpt-cf-chat-engine-db-table-share-tokens - ShareToken table with constraints
 * Sequence diagram S10 (Share Session)
 
 **Related ADRs**:

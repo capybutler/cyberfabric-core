@@ -46,10 +46,28 @@ Chosen option: "HTTP POST with chunked streaming", because it provides simple in
 * Bad, because backends cannot push updates after response completes
 * Bad, because network interruptions terminate request (no automatic retry)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: HTTP POST with chunked streaming
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: WebSocket bidirectional
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Message queue (async)
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
-* `cpt-cf-chat-engine-actor-webhook-backend` - Receives HTTP POST, responds with streaming
+* `cpt-cf-chat-engine-actor-backend-plugin` - Receives HTTP POST, responds with streaming
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-send-message` - Forward message to webhook with streaming response
@@ -58,7 +76,7 @@ Chosen option: "HTTP POST with chunked streaming", because it provides simple in
 * `cpt-cf-chat-engine-nfr-streaming` - Streaming performance requirements
 
 **Design Elements**:
-* `cpt-cf-chat-engine-webhook-integration` - Chat Engine's HTTP client functionality for invoking webhooks
+* `cpt-cf-chat-engine-component-webhook-integration` - Chat Engine's HTTP client functionality for invoking webhooks
 * `cpt-cf-chat-engine-constraint-sync-webhooks` - Design constraint mandating synchronous protocol
 * `cpt-cf-chat-engine-entity-session-type` - Stores webhook_url and timeout per backend
 * `cpt-cf-chat-engine-design-context-circuit-breaker` - Circuit breaker implementation per backend

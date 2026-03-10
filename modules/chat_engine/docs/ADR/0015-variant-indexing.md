@@ -46,11 +46,29 @@ Chosen option: "0-based variant_index", because it provides intuitive sequential
 * Bad, because no semantic meaning (index 0 not necessarily "best")
 * Bad, because reordering requires UPDATE (change all indices)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: 0-based variant_index
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: UUID-based ordering
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Timestamp-based ordering
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-client` - Requests next/previous variant, displays position
-* `cpt-cf-chat-engine-message-processing` - Calculates variant_index for new variants
+* `cpt-cf-chat-engine-component-message-processing` - Calculates variant_index for new variants
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-navigate-variants` - Query API returns position metadata
@@ -58,7 +76,7 @@ Chosen option: "0-based variant_index", because it provides intuitive sequential
 
 **Design Elements**:
 * `cpt-cf-chat-engine-entity-message` - variant_index field (INTEGER, 0-based)
-* `cpt-cf-chat-engine-db-table-messages` - Unique constraint (session_id, parent_message_id, variant_index)
+* `cpt-cf-chat-engine-dbtable-messages` - Unique constraint (session_id, parent_message_id, variant_index)
 
 **Related ADRs**:
 * ADR-0014 (Message Variants with Index and Active Flag) - variant_index is core field for variants

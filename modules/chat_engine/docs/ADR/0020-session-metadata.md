@@ -48,11 +48,29 @@ Chosen option: "JSONB metadata column", because it enables schema-free extensibi
 * Bad, because complex queries less efficient than normalized columns
 * Bad, because type validation at application level (not database level)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: JSONB metadata column
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Fixed columns
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Metadata table
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-client` - Sets session metadata (title, tags, custom fields)
-* `cpt-cf-chat-engine-session-management` - Manages metadata updates
+* `cpt-cf-chat-engine-component-session-management` - Manages metadata updates
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-search-sessions` - Search includes session metadata (title, tags)
@@ -60,7 +78,7 @@ Chosen option: "JSONB metadata column", because it enables schema-free extensibi
 
 **Design Elements**:
 * `cpt-cf-chat-engine-entity-session` - metadata field (JSONB)
-* `cpt-cf-chat-engine-db-table-sessions` - metadata column with GIN index
+* `cpt-cf-chat-engine-dbtable-sessions` - metadata column with GIN index
 * HTTP GET /sessions/{id} returns metadata
 
 **Related ADRs**:

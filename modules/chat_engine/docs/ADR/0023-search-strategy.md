@@ -47,11 +47,29 @@ Chosen option: "PostgreSQL tsvector with GIN indexes", because it provides built
 * Bad, because index updates add write latency (~5ms per message)
 * Bad, because cross-language stemming limited (English default)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: PostgreSQL tsvector with GIN indexes
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Elasticsearch
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Simple LIKE queries
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-client` - Submits search queries, receives ranked results
-* `cpt-cf-chat-engine-message-search` - Executes full-text queries
+* `cpt-cf-chat-engine-component-message-search` - Executes full-text queries
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-search-session` - Session-scoped full-text search
@@ -59,7 +77,7 @@ Chosen option: "PostgreSQL tsvector with GIN indexes", because it provides built
 * `cpt-cf-chat-engine-nfr-search` - Performance requirements (1s session, 3s cross-session)
 
 **Design Elements**:
-* `cpt-cf-chat-engine-db-table-messages` - Full-text index on content field
+* `cpt-cf-chat-engine-dbtable-messages` - Full-text index on content field
 * `cpt-cf-chat-engine-design-context-search` - Implementation details (tsvector, GIN, ts_rank_cd)
 * HTTP POST /sessions/{id}/search and POST /search endpoints
 

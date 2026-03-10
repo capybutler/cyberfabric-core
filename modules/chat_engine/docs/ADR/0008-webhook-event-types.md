@@ -44,11 +44,29 @@ Chosen option: "Typed events with event field", because it provides clear type d
 * Bad, because event schema validation more complex (discriminated union)
 * Bad, because misrouted events not caught at URL routing level
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Typed events with event field
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Separate endpoints per event
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Generic events with action hints
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-backend-plugin` - Receives typed events, routes internally
-* `cpt-cf-chat-engine-webhook-integration` - Constructs event payloads with correct type
+* `cpt-cf-chat-engine-component-webhook-integration` - Constructs event payloads with correct type
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-create-session` - session.created event
@@ -60,7 +78,7 @@ Chosen option: "Typed events with event field", because it provides clear type d
 
 **Design Elements**:
 * Webhook API specification (Section 3.3.2 of DESIGN.md) defines all event schemas
-* `cpt-cf-chat-engine-webhook-integration` - Event payload construction
+* `cpt-cf-chat-engine-component-webhook-integration` - Event payload construction
 
 **Related ADRs**:
 * ADR-0006 (Webhook Protocol) - HTTP protocol carrying these events

@@ -43,6 +43,24 @@ Chosen option: "Immutable tree with parent_message_id", because it provides natu
 * Bad, because calculating active path requires following is_active flags
 * Bad, because re-parenting messages is impossible (by design, ensuring immutability)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Immutable tree with parent_message_id
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Mutable linked list
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Graph structure with edge table
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:

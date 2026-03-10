@@ -46,11 +46,29 @@ Chosen option: "Circuit breaker per session_type_id", because it isolates backen
 * Bad, because circuit state not shared across Chat Engine instances (per-instance circuit)
 * Bad, because configuration complexity (threshold, timeout, recovery time tuning)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Circuit breaker per session_type_id
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Global circuit breaker
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: No circuit breaker (simple timeouts)
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
-* `cpt-cf-chat-engine-webhook-integration` - Implements circuit breaker logic
-* `cpt-cf-chat-engine-actor-webhook-backend` - Health monitored by circuit breaker
+* `cpt-cf-chat-engine-component-webhook-integration` - Implements circuit breaker logic
+* `cpt-cf-chat-engine-actor-backend-plugin` - Health monitored by circuit breaker
 
 **Requirements**:
 * `cpt-cf-chat-engine-nfr-backend-isolation` - Backend failures must not cascade

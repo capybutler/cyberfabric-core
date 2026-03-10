@@ -74,6 +74,10 @@ Chosen option: "HTTP with chunked streaming (NDJSON)", because it provides a sin
 * Bad, because clients must poll for updates if needed
 * Bad, because authentication token sent with every request
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
 ## Protocol Details
 
 ### Authentication
@@ -126,6 +130,24 @@ All requests use JWT Bearer token authentication.
 
 Clients cancel streaming by closing the HTTP connection. In browsers, this is done using AbortController with the fetch API. In other clients (Python, etc.), the HTTP request can be closed/cancelled directly. When the connection is closed, the server detects the disconnection and terminates the streaming process.
 
+## Pros and Cons of the Options
+
+### Option 1: HTTP REST + WebSocket split
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: HTTP with chunked streaming (NDJSON)
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: HTTP/2 Server-Sent Events (SSE)
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 4: gRPC streaming
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
@@ -141,7 +163,7 @@ Clients cancel streaming by closing the HTTP connection. In browsers, this is do
 
 **Design Elements**:
 * HTTP server - Handles both CRUD and streaming operations
-* `cpt-cf-chat-engine-response-streaming` - Manages HTTP chunked streaming
+* `cpt-cf-chat-engine-component-response-streaming` - Manages HTTP chunked streaming
 * HTTP REST API specification (Section 3.3.1 of DESIGN.md)
 * Webhook API specification (Section 3.3.3 of DESIGN.md)
 

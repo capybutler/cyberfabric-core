@@ -44,21 +44,39 @@ Chosen option: "Zero business logic (pure routing)", because it decouples infras
 * Bad, because Chat Engine cannot provide value-added services (e.g., automatic translation)
 * Bad, because debugging requires looking at backend logs (Chat Engine doesn't inspect content)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Zero business logic (pure routing)
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Enrichment layer
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Smart routing
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-backend-plugin` - Responsible for ALL message processing logic
 
 **Design Elements**:
-* `cpt-cf-chat-engine-webhook-integration` - Chat Engine's HTTP proxy functionality with timeout/circuit breaker
+* `cpt-cf-chat-engine-component-webhook-integration` - Chat Engine's HTTP proxy functionality with timeout/circuit breaker
 
 **Requirements**:
 * All functional requirements assume Chat Engine routes without processing
 * `cpt-cf-chat-engine-nfr-response-time` - Minimal overhead from routing (< 100ms)
 
 * `cpt-cf-chat-engine-principle-zero-business-logic` - Design principle codifying this decision
-* `cpt-cf-chat-engine-webhook-integration` - Chat Engine's HTTP client functionality for pure forwarding
-* `cpt-cf-chat-engine-design-context-webhook-integration` - Backend responsibility scope
+* `cpt-cf-chat-engine-component-webhook-integration` - Chat Engine's HTTP client functionality for pure forwarding
+* `cpt-cf-chat-engine-design-context-circuit-breaker` - Backend responsibility scope
 
 **Related ADRs**:
 * ADR-0002 (Capability Model) - Backends define capabilities, not Chat Engine

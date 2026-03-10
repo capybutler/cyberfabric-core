@@ -84,7 +84,7 @@ Admin configures capabilities via Chat Engine UI/API per session type with no us
 * `cpt-cf-chat-engine-entity-session` - Stores `enabled_capabilities: Capability[]` (user-selected subset of the catalog)
 * `cpt-cf-chat-engine-entity-capability` - `Capability` schema: `{id, name, description?, type, default_value, enum_values?}` — used in both tiers
 * `cpt-cf-chat-engine-entity-capability-value` - `CapabilityValue` schema: `{id, value}` — per-message capability override (see ADR-0022)
-* `cpt-cf-chat-engine-principle-plugin-authority` - Backend plugin declares available capabilities via `on_session_type_configured` and receives user-selected values per message
+* `cpt-cf-chat-engine-principle-backend-authority` - Backend plugin declares available capabilities via `on_session_type_configured` and receives user-selected values per message
 
 **Related ADRs**:
 * ADR-0006 (Webhook Protocol) - Defines events using `enabled_capabilities`

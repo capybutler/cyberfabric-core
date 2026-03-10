@@ -50,6 +50,10 @@ Chosen option: "Separate File Storage service with UUID identifiers", because it
 * Bad, because file lifecycle management is separate from session lifecycle
 * Bad, because clients must implement upload-then-message-send flow
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
 ### UUID vs URL Approach
 
 **Decision**: Store file UUIDs instead of URLs in message records.
@@ -72,6 +76,24 @@ Chosen option: "Separate File Storage service with UUID identifiers", because it
 - Clients upload directly to file storage, receive UUIDs
 - Webhook Backends fetch files from File Storage Service API using UUIDs
 - Clients request temporary signed URLs from File Storage when displaying files
+
+## Pros and Cons of the Options
+
+### Option 1: Separate File Storage service with UUID identifiers
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Separate File Storage service with URL identifiers
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Database BLOB storage
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 4: Chat Engine file service
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
 
 ## Related Design Elements
 

@@ -47,12 +47,30 @@ Chosen option: "Parent reference with history truncation", because it preserves 
 * Bad, because active path calculation requires following is_active chain
 * Bad, because deep branching creates complex tree (performance considerations)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Parent reference with history truncation
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Copy-on-write
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Diff-based branches
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-client` - Specifies parent_message_id for branching
 * `cpt-cf-chat-engine-actor-backend-plugin` - Receives truncated history for branch
-* `cpt-cf-chat-engine-message-processing` - Loads context up to parent, validates references
+* `cpt-cf-chat-engine-component-message-processing` - Loads context up to parent, validates references
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-branch-message` - Client specifies parent, creates new branch

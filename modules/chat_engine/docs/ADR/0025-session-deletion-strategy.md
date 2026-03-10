@@ -1,127 +1,118 @@
 Created:  2026-02-06 by Constructor Tech
-Updated:  2026-03-06 by Constructor Tech
+Updated:  2026-03-10 by Constructor Tech
 # ADR-0025: Session Deletion Strategy (Soft Delete as Default)
-
-**Status**: Accepted
 
 **Date**: 2026-02-06
 
-**Decision Makers**: Architecture Team
+**Status**: accepted
 
-**Context**:
+**ID**: `cpt-cf-chat-engine-adr-session-deletion-strategy`
 
-Chat Engine needs a deletion strategy that balances multiple competing concerns:
+## Context and Problem Statement
 
-1. **User Safety**: Protect users from accidental data loss
-2. **Storage Costs**: Minimize database storage for deleted data
-3. **Compliance**: Support GDPR/CCPA right-to-erasure and data minimization
-4. **Performance**: Maintain query performance as data grows
-5. **Recovery**: Enable restoration of accidentally deleted data
+Chat Engine needs a deletion strategy that balances user safety (protection from accidental data loss), storage costs (minimizing database footprint for deleted data), compliance (GDPR/CCPA right-to-erasure), query performance as data grows, and the ability to restore accidentally deleted sessions. How should session deletion be implemented to satisfy these competing concerns?
 
-**Decision**:
+## Decision Drivers
 
-Implement **soft delete as the default deletion mechanism** with automatic hard deletion after a configurable retention period.
+* User safety: protect users from accidental, irreversible data loss
+* Storage costs: minimize database storage for logically deleted data
+* Compliance: support GDPR/CCPA right-to-erasure and data minimization principles
+* Performance: maintain query performance as soft-deleted data accumulates
+* Recovery: enable restoration of accidentally deleted sessions within a grace period
+* Auditability: emit webhook events for all lifecycle state transitions
 
-**Key Design Choices:**
+## Considered Options
 
-1. **Dual Deletion Model**:
-   - Soft delete (default): Recoverable, sets lifecycle_state=soft_deleted
-   - Hard delete (explicit): Permanent, physically removes from database
-   - SessionDeleteRequest accepts deletion_type parameter (default: soft)
+* **Option 1: Immediate hard delete** — DELETE row permanently on user request; no recovery possible
+* **Option 2: Soft delete with automatic hard delete** — set lifecycle_state=soft_deleted with configurable retention period; background job hard-deletes after grace period expires
+* **Option 3: External archival system** — move deleted sessions to external archive (S3, Glacier) for long-term storage
+* **Option 4: Soft delete only (no auto cleanup)** — keep soft-deleted sessions indefinitely; never hard-delete
 
-2. **Retention Policies**:
-   - Configurable per session type
-   - Automatic hard delete after soft_delete_retention_days
-   - Optional archival for inactive sessions
-   - Background job enforces policies daily
+## Decision Outcome
 
-3. **Lifecycle States** (4 states):
-   - active → archived → soft_deleted → hard_deleted
-   - Messages inherit state from session (cascade)
-   - Webhook notifications for all transitions
+Chosen option: **Option 2 (Soft delete with automatic hard delete)**, because it provides a recovery window for accidental deletions, satisfies compliance requirements via automatic cleanup, and keeps storage bounded — all without requiring external dependencies.
 
-4. **Recovery Window**:
-   - Sessions restorable until scheduled_hard_delete_at
-   - Explicit restore operation via POST /sessions/:id/restore
-   - Clear error messages after grace period expires
+Key design choices:
 
-**Rationale**:
+1. **Dual Deletion Model**: SessionDeleteRequest accepts a `deletion_type` parameter (default: `soft`). Soft delete sets `lifecycle_state=soft_deleted` and is recoverable. Hard delete physically removes from database and is permanent.
 
-**Why Soft Delete as Default:**
-- User safety prioritized over storage costs
-- Industry standard (Gmail, Slack, Google Drive use soft delete)
-- Accidental deletion is common user error
-- Recovery requests are frequent in production systems
-- Storage cost of soft-deleted data is minimal compared to active data
+2. **Retention Policies**: Configurable per session type via `RetentionPolicy`. Background job enforces `soft_delete_retention_days` daily, hard-deleting sessions past their grace period. Optional archival tier for inactive sessions.
 
-**Why Not Immediate Hard Delete:**
-- No recovery from accidental deletion
-- Higher support burden (users requesting data recovery)
-- Compliance issues (premature deletion before legal hold)
-- More aggressive than necessary for most use cases
+3. **Lifecycle States** (4 states): `active → archived → soft_deleted → hard_deleted`. Messages inherit state from session (cascade). Webhook notifications emitted for all transitions.
 
-**Why Retention Policies:**
-- Balances safety (grace period) with storage costs (eventual cleanup)
-- Supports compliance (automatic data minimization)
-- Flexible per session type (different retention for different use cases)
-- Reduces manual maintenance burden
+4. **Recovery Window**: Sessions are restorable until `scheduled_hard_delete_at`. Explicit restore via `POST /sessions/:id/restore`. Clear error messages after grace period expires.
 
-**Consequences**:
+### Consequences
 
-**Positive:**
-- ✅ Users protected from accidental data loss
-- ✅ Compliance-friendly (grace period + automatic cleanup)
-- ✅ Flexible per session type
-- ✅ Industry-standard behavior
-- ✅ Auditability via webhook events
+* Good, because users are protected from accidental data loss via recovery window
+* Good, because compliance-friendly with grace period followed by automatic cleanup
+* Good, because retention policies are flexible per session type
+* Good, because lifecycle state transitions are auditable via webhook events
+* Good, because follows industry standard behavior (Gmail, Slack, Google Drive)
+* Bad, because requires a background cleanup job for hard-delete enforcement
+* Bad, because slightly more storage than immediate deletion (<5% overhead typical)
+* Bad, because more complex implementation than simple DELETE (lifecycle state management)
+* Bad, because queries must filter on lifecycle_state to exclude soft-deleted sessions
 
-**Negative:**
-- ❌ Requires background job for cleanup
-- ❌ Slightly more storage than immediate deletion
-- ❌ More complex implementation than simple DELETE
-- ❌ Requires lifecycle state management
+### Confirmation
 
-**Mitigation:**
-- Background job runs during low-traffic periods
-- Storage cost is minimal (<5% overhead for typical workloads)
-- Complexity contained in session lifecycle module
-- Lifecycle state indexed for query performance
+Confirmed via design review and alignment with DESIGN.md session lifecycle implementation. Verified when:
 
-**Alternatives Considered**:
+- Soft delete sets lifecycle_state and scheduled_hard_delete_at correctly
+- Background job hard-deletes sessions past their retention period
+- Restore operation succeeds within grace period and fails after
+- All lifecycle transitions emit appropriate webhook events
+- Queries exclude soft-deleted sessions by default
 
-**Alternative 1: Immediate Hard Delete (Rejected)**
-- Simpler implementation, lower storage costs
-- Rejected: Too dangerous, no recovery from accidental deletion
-- Industry: This is uncommon pattern, users expect trash/recycle bin
+## Pros and Cons of the Options
 
-**Alternative 2: External Archival System (Rejected)**
-- Move deleted sessions to external archive service (S3, Glacier)
-- Rejected: Added complexity, slower recovery, higher latency
-- External dependency increases failure modes
+### Option 1: Immediate hard delete
 
-**Alternative 3: Soft Delete Only (No Auto Cleanup) (Rejected)**
-- Never hard delete, keep soft-deleted sessions indefinitely
-- Rejected: Violates data minimization, unbounded storage growth
-- Compliance issues (GDPR requires eventual deletion)
+DELETE row permanently on user request; no recovery possible.
 
-**Alternative 4: Dual-State Model (active/deleted) (Rejected)**
-- Only 2 states instead of 4 (active/archived/soft_deleted/hard_deleted)
-- Rejected: Cannot optimize archived sessions, no archival tier
-- Lacks flexibility for different lifecycle stages
+* Good, because simplest implementation (single DELETE statement)
+* Good, because lowest storage cost (no soft-deleted rows)
+* Bad, because no recovery from accidental deletion
+* Bad, because higher support burden (users requesting data recovery)
+* Bad, because potential compliance issues (premature deletion before legal hold)
+* Bad, because uncommon pattern — users expect trash/recycle bin behavior
 
-**Implementation Notes**:
+### Option 2: Soft delete with automatic hard delete (chosen)
 
-- Schemas already implement full lifecycle (DeletionType, LifecycleState, RetentionPolicy)
-- Session and Message entities have lifecycle_state, deleted_at, scheduled_hard_delete_at fields
-- Webhook events: session.soft_deleted, session.hard_deleted, session.restored, session.lifecycle_changed
-- Background cleanup job: cron-based, batch processing, idempotent
+Set lifecycle_state=soft_deleted with configurable retention; background job enforces cleanup.
 
-**References**:
+* Good, because recovery window protects against accidental deletion
+* Good, because automatic cleanup satisfies data minimization requirements
+* Good, because flexible retention per session type
+* Bad, because requires background job infrastructure
+* Bad, because queries must account for lifecycle_state filtering
 
-- FR-014: Session Lifecycle Management
-- FR-014a: Soft Delete Session
-- FR-014b: Hard Delete Session
-- FR-014c: Restore Soft-Deleted Session
-- FR-014e: Retention Policy Configuration
-- Schema: `/modules/chat_engine/schemas/common/LifecycleState.json`
-- Schema: `/modules/chat_engine/schemas/common/RetentionPolicy.json`
+### Option 3: External archival system
+
+Move deleted sessions to external archive service (S3, Glacier).
+
+* Good, because separates hot and cold storage tiers
+* Bad, because adds external dependency and failure modes
+* Bad, because slower recovery (must retrieve from archive)
+* Bad, because higher implementation complexity
+
+### Option 4: Soft delete only (no auto cleanup)
+
+Keep soft-deleted sessions indefinitely; never hard-delete.
+
+* Good, because simplest soft-delete implementation (no background job)
+* Bad, because violates data minimization (GDPR requires eventual deletion)
+* Bad, because unbounded storage growth over time
+
+## Related Design Elements
+
+**Requirements**:
+* `cpt-cf-chat-engine-fr-delete-session` — Soft delete as default deletion mechanism
+* `cpt-cf-chat-engine-nfr-data-integrity` — Lifecycle state transitions maintain referential integrity
+
+**Design Elements**:
+* `cpt-cf-chat-engine-dbtable-sessions` — lifecycle_state, deleted_at, scheduled_hard_delete_at columns
+
+**Related ADRs**:
+* `cpt-cf-chat-engine-adr-message-tree-structure` — Messages inherit lifecycle state from parent session (cascade)
+* `cpt-cf-chat-engine-adr-webhook-event-types` — Webhook events for lifecycle transitions (session.soft_deleted, session.hard_deleted, session.restored)

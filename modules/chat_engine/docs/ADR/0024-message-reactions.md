@@ -45,6 +45,10 @@ Chosen option: "Separate reaction table with UPSERT and fire-and-forget webhook"
 * Bad, because "none" special value creates tristate enum (like/dislike/none)
 * Bad, because no reaction history preserved (only current state stored)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
 ## Technical Design
 
 ### Database Schema
@@ -78,6 +82,20 @@ Table `message_reactions` with composite primary key (message_id, user_id). Colu
 1. Client sends reaction → Database UPSERT/DELETE → Client receives 200 OK
 2. Webhook sent asynchronously → Backend processes event → Failure logged but doesn't affect client
 
+## Pros and Cons of the Options
+
+### Option 1: Separate reaction table with UPSERT and fire-and-forget webhook
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Reaction counts in messages table
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Rich reaction system with emoji
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
@@ -85,16 +103,16 @@ Table `message_reactions` with composite primary key (message_id, user_id). Colu
 * `cpt-cf-chat-engine-actor-backend-plugin` - Receives reaction events for analytics and side effects
 
 **Requirements**:
-* `cpt-cf-chat-engine-fr-message-reactions` - Users can like/dislike messages
-* `cpt-cf-chat-engine-fr-reaction-change` - Users can change or remove their reaction
-* `cpt-cf-chat-engine-nfr-reaction-idempotency` - Multiple identical requests produce same result
+* cpt-cf-chat-engine-fr-message-reactions - Users can like/dislike messages
+* cpt-cf-chat-engine-fr-reaction-change - Users can change or remove their reaction
+* cpt-cf-chat-engine-nfr-reaction-idempotency - Multiple identical requests produce same result
 * `cpt-cf-chat-engine-nfr-data-integrity` - Composite PK enforces one reaction per user per message
 
 **Design Elements**:
 * `cpt-cf-chat-engine-entity-message-reaction` - Reaction entity with composite key
-* `cpt-cf-chat-engine-api-http-reaction` - HTTP endpoint POST /messages/{id}/reaction
-* `cpt-cf-chat-engine-webhook-message-reaction` - Webhook event message.reaction
-* `cpt-cf-chat-engine-principle-message-immutability` - Reactions don't modify messages
+* cpt-cf-chat-engine-api-http-reaction - HTTP endpoint POST /messages/{id}/reaction
+* cpt-cf-chat-engine-webhook-message-reaction - Webhook event message.reaction
+* `cpt-cf-chat-engine-principle-immutable-tree` - Reactions don't modify messages
 * Sequence diagrams: S14 (Add Message Reaction), S15 (Remove Message with Reactions)
 
 **Related ADRs**:

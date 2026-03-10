@@ -44,12 +44,30 @@ Chosen option: "Close HTTP connection", because it provides immediate cancellati
 * Bad, because no explicit acknowledgment (implicit via disconnection)
 * Bad, because backend must handle connection close gracefully
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Close HTTP connection
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: HTTP DELETE request
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: HTTP timeout
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-client` - Closes HTTP connection on user action
-* `cpt-cf-chat-engine-response-streaming` - Detects connection close, saves partial response
-* `cpt-cf-chat-engine-webhook-integration` - Cancels HTTP request to backend
+* `cpt-cf-chat-engine-component-response-streaming` - Detects connection close, saves partial response
+* `cpt-cf-chat-engine-component-webhook-integration` - Cancels HTTP request to backend
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-stop-streaming` - Cancel streaming, save partial response with incomplete flag

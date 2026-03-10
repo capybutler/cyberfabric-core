@@ -44,6 +44,24 @@ Chosen option: "Streaming-first with HTTP chunked transfer", because it minimize
 * Bad, because partial responses require special handling if connection drops
 * Bad, because backpressure management adds complexity (buffer limits, flow control)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Streaming-first with HTTP chunked transfer
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Buffered responses
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Optional streaming
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
@@ -57,7 +75,7 @@ Chosen option: "Streaming-first with HTTP chunked transfer", because it minimize
 * `cpt-cf-chat-engine-nfr-response-time` - Overall routing latency < 100ms
 
 **Design Elements**:
-* `cpt-cf-chat-engine-response-streaming` - Chat Engine's HTTP chunked streaming and backpressure functionality
+* `cpt-cf-chat-engine-component-response-streaming` - Chat Engine's HTTP chunked streaming and backpressure functionality
 * `cpt-cf-chat-engine-principle-streaming` - Design principle mandating streaming-first
 * `cpt-cf-chat-engine-design-context-backpressure` - Implementation details for flow control
 

@@ -44,6 +44,24 @@ Chosen option: "Recreation = variant (sibling), Branch = child", because it pres
 * Bad, because implementation differs (variant_index calculation vs parent_message_id assignment)
 * Bad, because switching between operations not obvious (user might want to convert)
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: Recreation = variant (sibling), Branch = child
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Both create children
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Recreation = update
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:

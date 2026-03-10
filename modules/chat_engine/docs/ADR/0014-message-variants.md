@@ -46,11 +46,29 @@ Chosen option: "variant_index + is_active flags", because it provides determinis
 * Bad, because deleting variants leaves gaps in variant_index sequence
 * Bad, because is_active is session-level concept but stored per message
 
+### Confirmation
+
+Confirmed via design review and alignment with DESIGN.md implementation.
+
+## Pros and Cons of the Options
+
+### Option 1: variant_index + is_active flags
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 2: Separate variants table
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
+### Option 3: Version field with timestamps
+
+See "Considered Options" and "Consequences" above for trade-off analysis.
+
 ## Related Design Elements
 
 **Actors**:
 * `cpt-cf-chat-engine-actor-client` - Navigates variants, requests position metadata
-* `cpt-cf-chat-engine-message-processing` - Assigns variant_index, manages is_active
+* `cpt-cf-chat-engine-component-message-processing` - Assigns variant_index, manages is_active
 
 **Requirements**:
 * `cpt-cf-chat-engine-fr-recreate-response` - Creates new variant with incremented variant_index
@@ -59,7 +77,7 @@ Chosen option: "variant_index + is_active flags", because it provides determinis
 
 **Design Elements**:
 * `cpt-cf-chat-engine-entity-message` - variant_index and is_active fields
-* `cpt-cf-chat-engine-db-table-messages` - Unique constraint enforcing variant integrity
+* `cpt-cf-chat-engine-dbtable-messages` - Unique constraint enforcing variant integrity
 
 **Related ADRs**:
 * ADR-0001 (Message Tree Structure) - Variants are siblings in tree
