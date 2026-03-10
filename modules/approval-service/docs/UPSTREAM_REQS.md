@@ -21,8 +21,8 @@ Register a resource as approvable within the approval workflow system.
 **Input**:
 | Field | Type | Description |
 |-------|------|-------------|
-| resource_type | string | Resource type identifier (e.g., `model`) |
-| resource_id | string | Unique resource identifier |
+| resource_type | string | Resource type identifier in GTS format (e.g., `gts.x.genai.model.model.v1~`) |
+| resource_id | UUID | Unique resource identifier |
 | tenant_id | UUID | Tenant context for the approval |
 | metadata | object | Resource-specific metadata for display/filtering |
 
@@ -43,7 +43,7 @@ Query the current approval status for a resource in tenant context.
 | Field | Type | Description |
 |-------|------|-------------|
 | resource_type | string | Resource type identifier |
-| resource_id | string | Unique resource identifier |
+| resource_id | UUID | Unique resource identifier |
 | tenant_id | UUID | Tenant context (resolves with hierarchy) |
 
 **Output**:
@@ -163,7 +163,7 @@ Event emitted when approval status changes.
 | Field | Type | Description |
 |-------|------|-------------|
 | resource_type | string | Resource type identifier |
-| resource_id | string | Resource identifier |
+| resource_id | UUID | Resource identifier |
 | tenant_id | UUID | Tenant context |
 | old_status | enum | Previous status |
 | new_status | enum | New status |

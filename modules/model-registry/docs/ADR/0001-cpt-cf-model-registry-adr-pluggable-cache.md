@@ -16,8 +16,7 @@ Model Registry must achieve <10ms P99 latency for `get_tenant_model` operations 
 * `cpt-cf-model-registry-nfr-performance` — P99 latency <10ms for model resolution
 * `cpt-cf-model-registry-nfr-scale` — Support 10K tenants, 2M models
 * `cpt-cf-model-registry-fr-cache-isolation` — Tenant data must be isolated in cache
-* Deployment flexibility — single-node to multi-node clusters
-* Vendor customization — ability to bring custom cache implementations
+* Deployment flexibility — single-node to multi-node clusters (Redis optional, DB-only viable for moderate scale)
 
 ## Considered Options
 
@@ -32,8 +31,7 @@ Chosen option: "Pluggable Cache Backend", because it provides the performance be
 
 ### Consequences
 
-* Good, because different deployment scenarios are supported (lightweight single-node, high-load clusters)
-* Good, because vendors can bring custom cache implementations
+* Good, because different deployment scenarios are supported (lightweight single-node without Redis, high-load clusters with Redis)
 * Good, because testing is simplified with in-memory backend
 * Good, because Redis provides proven horizontal scaling for production
 * Bad, because additional abstraction layer adds complexity
@@ -49,10 +47,9 @@ Chosen option: "Pluggable Cache Backend", because it provides the performance be
 
 ### Pluggable Cache Backend
 
-Cache abstraction with multiple implementations:
+Cache abstraction with compiled-in implementations selected via Cargo feature flags:
 - `RedisCache` — default for production, horizontal scaling
-- `InMemoryCache` — for lightweight deployments and testing
-- `CustomCache` — vendor-provided implementations
+- `InMemoryCache` — for lightweight deployments and testing (also valid for moderate-scale production where DB query caching suffices)
 
 TTL Strategy (common across backends):
 - Own data (tenant created): 30 minutes

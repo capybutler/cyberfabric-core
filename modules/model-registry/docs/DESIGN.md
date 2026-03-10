@@ -14,27 +14,25 @@ The design emphasizes tenant isolation with hierarchical inheritance. Providers 
 
 #### Functional Drivers
 
-| Requirement | Design Response |
-|-------------|-----------------|
-| `cpt-cf-model-registry-fr-tenant-isolation` | Tenant ID prefix in cache keys, query filters enforce tenant scope |
-| `cpt-cf-model-registry-fr-authorization` | Role-based + GTS-based access control via SecurityContext |
-| `cpt-cf-model-registry-fr-input-validation` | DTO validation in REST layer, domain validation in service |
-| `cpt-cf-model-registry-fr-cache-isolation` | Cache key format `mr:{tenant_id}:{entity}:{id}`, TTL strategy |
-| `cpt-cf-model-registry-fr-get-tenant-model` | Cache-first lookup with DB fallback, approval status check |
-| `cpt-cf-model-registry-fr-list-tenant-models` | OData pagination with capability/provider filtering |
-| `cpt-cf-model-registry-fr-model-discovery` | OAGW integration, provider plugin abstraction |
-| `cpt-cf-model-registry-fr-model-approval` | Approval Service integration, event-driven status sync |
-| `cpt-cf-model-registry-fr-provider-management` | CRUD with inheritance/shadowing support |
-| `cpt-cf-model-registry-fr-model-pricing` | AICredits cost data per tier (sync/batch/cached) |
-| `cpt-cf-model-registry-fr-auto-approval` | (P2) Approval Service criteria schema, rule evaluation delegation |
-| `cpt-cf-model-registry-fr-health-monitoring` | (P2) Health status derived from discovery calls, stored per provider |
-| `cpt-cf-model-registry-fr-alias-management` | (P2) Alias table with tenant hierarchy resolution |
-| `cpt-cf-model-registry-fr-degraded-mode` | (P2) Tiered behavior: metadata from cache, approval check fails |
-| `cpt-cf-model-registry-fr-tenant-reparenting` | (P2) Cache invalidation on `tenant.reparented` event |
-| `cpt-cf-model-registry-fr-bulk-operations` | (P2) Batch approval via Approval Service |
-| `cpt-cf-model-registry-fr-manual-trigger` | Discovery API endpoint, rate-limited |
-| `cpt-cf-model-registry-fr-user-group-approval` | (P3) Group-scoped approval restriction layer |
-| `cpt-cf-model-registry-fr-user-level-override` | (P3) User-level override takes precedence over group/tenant |
+- [ ] `p1` — `cpt-cf-model-registry-fr-tenant-isolation` — Tenant ID prefix in cache keys, query filters enforce tenant scope
+- [ ] `p1` — `cpt-cf-model-registry-fr-authorization` — Role-based + GTS-based access control via SecurityContext
+- [ ] `p1` — `cpt-cf-model-registry-fr-input-validation` — DTO validation in REST layer, domain validation in service
+- [ ] `p1` — `cpt-cf-model-registry-fr-cache-isolation` — Cache key format `mr:{tenant_id}:{entity}:{id}`, TTL strategy
+- [ ] `p1` — `cpt-cf-model-registry-fr-get-tenant-model` — Cache-first lookup with DB fallback, approval status check
+- [ ] `p1` — `cpt-cf-model-registry-fr-list-tenant-models` — OData pagination with capability/provider filtering
+- [ ] `p1` — `cpt-cf-model-registry-fr-model-discovery` — OAGW integration, provider plugin abstraction
+- [ ] `p1` — `cpt-cf-model-registry-fr-model-approval` — Approval Service integration, event-driven status sync
+- [ ] `p1` — `cpt-cf-model-registry-fr-provider-management` — CRUD with inheritance/shadowing support
+- [ ] `p1` — `cpt-cf-model-registry-fr-model-pricing` — AICredits cost data per tier (sync/batch/cached)
+- [ ] `p1` — `cpt-cf-model-registry-fr-manual-trigger` — Discovery API endpoint, rate-limited
+- [ ] `p2` — `cpt-cf-model-registry-fr-auto-approval` — Approval Service criteria schema, rule evaluation delegation
+- [ ] `p2` — `cpt-cf-model-registry-fr-health-monitoring` — Health status derived from discovery calls, stored per provider
+- [ ] `p2` — `cpt-cf-model-registry-fr-alias-management` — Alias table with tenant hierarchy resolution
+- [ ] `p2` — `cpt-cf-model-registry-fr-degraded-mode` — Tiered behavior: metadata from cache, approval check fails
+- [ ] `p2` — `cpt-cf-model-registry-fr-tenant-reparenting` — Cache invalidation on `tenant.reparented` event
+- [ ] `p2` — `cpt-cf-model-registry-fr-bulk-operations` — Batch approval via Approval Service
+- [ ] `p3` — `cpt-cf-model-registry-fr-user-group-approval` — Group-scoped approval restriction layer
+- [ ] `p3` — `cpt-cf-model-registry-fr-user-level-override` — User-level override takes precedence over group/tenant
 
 #### NFR Allocation
 
@@ -270,7 +268,7 @@ Local client implementing `ModelRegistryClient` trait. Bridges domain service to
 
 **ID**: `cpt-cf-model-registry-component-cache`
 
-Distributed cache abstraction. Handles cache key generation with tenant prefix, TTL management, and invalidation. Default backend: Redis.
+Distributed cache abstraction. Handles cache key generation with tenant prefix, TTL management, and invalidation. Backends are compiled-in via Cargo feature flags (not runtime plugins): `RedisCache` (default for production), `InMemoryCache` (for testing and lightweight single-node deployments). Deployments without Redis are supported — the in-memory backend avoids the operational overhead of a separate Redis instance while the database's own query cache provides comparable latency for moderate-scale setups. Redis becomes beneficial at high scale (10K+ tenants, 2M+ models) where cross-instance cache consistency and horizontal scaling matter.
 
 **Interface**: `get`, `set`, `delete`, `invalidate_tenant`.
 
@@ -426,8 +424,8 @@ sequenceDiagram
 
     loop For each model
         alt New Model
-            MR->>DB: INSERT model (status=pending)
-            MR->>Approval: register_approvable(model_id)
+            MR->>DB: INSERT model
+            MR->>Approval: register_approvable(model_id) [status=pending in Approval Service]
         else Existing Model
             MR->>DB: UPDATE model metadata
         else Missing Model
@@ -439,7 +437,7 @@ sequenceDiagram
     MR-->>Admin: discovery_result
 ```
 
-**Description**: Fetches models from provider API via OAGW, updates catalog (new models as pending, existing models updated, missing models deprecated), and invalidates cache.
+**Description**: Fetches models from provider API via OAGW, updates catalog (new models as pending, existing models updated, missing models deprecated), and invalidates cache for the owner tenant. Child tenants that inherit these models are **not** explicitly invalidated — they rely on the shorter TTL for inherited data (5 minutes vs 30 minutes for own data) to pick up changes. Explicitly invalidating all descendant caches would require traversing the tenant tree on every discovery run.
 
 #### Model Approval Integration
 
@@ -482,6 +480,8 @@ sequenceDiagram
 | gts_type | VARCHAR(255) | NOT NULL | GTS type identifier |
 | base_url | VARCHAR(2048) | NOT NULL | Provider API endpoint |
 | status | VARCHAR(20) | NOT NULL, DEFAULT 'active' | active, disabled |
+| managed | BOOLEAN | NOT NULL, DEFAULT false | Whether CyberFabric can manage this provider (e.g. install/unload models on ollama, lm_studio) |
+| metadata | JSONB | | Provider-specific metadata, GTS-typed (e.g. `gts.x.genai.models.provider.v1~x.genai.local.provider.v1~` for local providers with capabilities like `install_model`, `import_model`, `streaming`) |
 | discovery_enabled | BOOLEAN | NOT NULL, DEFAULT false | Discovery feature flag |
 | discovery_interval_seconds | INTEGER | | Discovery interval |
 | created_at | TIMESTAMPTZ | NOT NULL | Creation timestamp |
@@ -505,19 +505,18 @@ sequenceDiagram
 | name | VARCHAR(255) | NOT NULL | Display name |
 | description | TEXT | | Model description |
 | lifecycle_status | VARCHAR(20) | NOT NULL | production, preview, experimental, deprecated, sunset |
-| managed | BOOLEAN | NOT NULL, DEFAULT false | Whether CyberFabric can load/unload |
 | architecture | VARCHAR(64) | | Model architecture (qwen, llama, etc.) |
 | size_bytes | BIGINT | | Model size for capacity planning |
 | format | VARCHAR(32) | | Model format (gguf, mlx, safetensors, api-only) |
-| capabilities | JSONB | NOT NULL | Capability flags (text_input, image_input, etc.) |
-| limits | JSONB | | Limits (context_window, max_output_tokens, etc.) |
-| provider_cost | JSONB | | AICredits per tier (sync/batch/cached) |
+| capabilities | JSONB | NOT NULL | GTS-typed capability flags (base type `gts.x.genai.model.capabilities.v1~`), e.g. text_input, image_input, streaming |
+| limits | JSONB | | GTS-typed model limits (base type `gts.x.genai.model.limits.v1~`), e.g. context_window, max_output_tokens |
+| provider_cost | JSONB | | GTS-typed AICredits per tier (base type `gts.x.genai.model.provider_cost.v1~`), sync/batch/cached |
 | version | VARCHAR(64) | | Provider's model version |
 | deprecated_at | TIMESTAMPTZ | | Soft-delete timestamp |
 | created_at | TIMESTAMPTZ | NOT NULL | Creation timestamp |
 | updated_at | TIMESTAMPTZ | NOT NULL | Last update timestamp |
 
-**Indexes**: (tenant_id), (canonical_id) UNIQUE, (provider_id), (lifecycle_status)
+**Indexes**: (tenant_id), (tenant_id, canonical_id) UNIQUE, (provider_id), (lifecycle_status)
 
 #### Table: provider_health (P2)
 
