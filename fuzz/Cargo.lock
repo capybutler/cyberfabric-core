@@ -86,7 +86,11 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-errors"
+<<<<<<< HEAD
 version = "0.5.0"
+=======
+version = "0.5.1"
+>>>>>>> baadf109 (feat(api_gateway): add coarse grained access checks for scope enforcement)
 dependencies = [
  "http",
  "serde",
@@ -94,7 +98,11 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-errors-macro"
+<<<<<<< HEAD
 version = "0.5.0"
+=======
+version = "0.5.1"
+>>>>>>> baadf109 (feat(api_gateway): add coarse grained access checks for scope enforcement)
 dependencies = [
  "proc-macro2",
  "quote",
@@ -105,7 +113,11 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-odata"
+<<<<<<< HEAD
 version = "0.5.0"
+=======
+version = "0.5.1"
+>>>>>>> baadf109 (feat(api_gateway): add coarse grained access checks for scope enforcement)
 dependencies = [
  "base64",
  "bigdecimal",

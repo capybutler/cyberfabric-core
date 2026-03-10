@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use serde::{Deserialize, Serialize};
 
 fn default_require_auth_by_default() -> bool {
@@ -48,9 +50,16 @@ pub struct ApiGatewayConfig {
     #[serde(default)]
     pub prefix_path: String,
 
+<<<<<<< HEAD
     /// HTTP metrics settings.
     #[serde(default)]
     pub metrics: MetricsConfig,
+=======
+    /// Gateway-level scope enforcement configuration.
+    /// Allows early rejection of requests based on token scopes without calling the PDP.
+    #[serde(default)]
+    pub gateway_scope_checks: GatewayScopeChecksConfig,
+>>>>>>> f24cc0d7 (feat(api_gateway): add coarse grained access checks for scope enforcement)
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize)]
@@ -158,4 +167,44 @@ impl Default for OpenApiConfig {
             description: None,
         }
     }
+}
+
+/// Gateway-level scope enforcement configuration.
+///
+/// Enables coarse-grained early rejection of requests based on token scopes
+/// without calling the PDP. This is an optimization for performance-critical routes.
+///
+/// # Example YAML
+///
+/// ```yaml
+/// gateway_scope_checks:
+///   enabled: true
+///   routes:
+///     "/admin/*":
+///       required_scopes: ["admin"]
+///     "/events/v1/*":
+///       required_scopes: ["read:events", "write:events"]  # any of these
+/// ```
+///
+/// # Behavior
+///
+/// - If `token_scopes: ["*"]` → always pass (first-party app)
+/// - If `token_scopes` contains any of `required_scopes` → pass
+/// - Otherwise → 403 Forbidden (before PDP call)
+#[derive(Debug, Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields, default)]
+pub struct GatewayScopeChecksConfig {
+    /// Whether gateway scope enforcement is enabled.
+    pub enabled: bool,
+    /// Route patterns mapped to their scope requirements.
+    /// Patterns support glob syntax (e.g., `/admin/*`, `/events/v1/**`).
+    pub routes: HashMap<String, RouteScopeRequirement>,
+}
+
+/// Scope requirements for a specific route pattern.
+#[derive(Debug, Clone, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RouteScopeRequirement {
+    /// Required scopes for this route. Request passes if token has ANY of these scopes.
+    pub required_scopes: Vec<String>,
 }
