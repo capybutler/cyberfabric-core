@@ -246,7 +246,7 @@
         "operationId": "sendMessage",
         "tags": ["messages"],
         "summary": "Send message and receive streamed AI response",
-        "description": "Sends a user message and opens an SSE stream for the assistant response. If `request_id` matches an active generation, returns 409 Conflict (JSON, no SSE). If `request_id` matches a completed generation, replays the response as SSE (side-effect-free: no new quota reserve, no billing events).\n\nThe optional `web_search` parameter enables web search for this turn (disabled by default, backward compatible).\n\n**SSE event ordering (P1)**: `ping* delta* tool* citations? (done | error)`. `delta` and `tool` may interleave; at most one `citations` event, emitted after all `delta` events and before the terminal event.\n\nExactly one terminal event (`done` or `error`) ends the stream.\n\n**SSE event types and payloads**:\n- `event: ping` — keepalive, payload: `{}`. Clients MUST ignore.\n- `event: delta` — incremental text. Payload: `SseDeltaEvent`.\n- `event: tool` — tool activity (file_search, web_search at P1). Payload: `SseToolEvent`.\n- `event: citations` — source references (file and web). Payload: `SseCitationsEvent`.\n- `event: done` — terminal success with usage and quota_decision. Emitted for both full completions and truncated-but-successful completions (provider `response.incomplete`). Payload: `SseDoneEvent`.\n- `event: error` — terminal failure. Payload: `SseErrorEvent`.\n\nSee component schemas for payload definitions.\n\n**Pre-stream errors**: If validation, authorization, or quota preflight fails before streaming, a JSON error response with the appropriate HTTP status is returned and no SSE stream is opened.\n\n**Cancellation**: If the client disconnects mid-stream, the server cancels the in-flight provider request and applies a bounded best-effort debit for quota. No SSE error event is emitted (the stream is already broken). The Turn Status API is authoritative for final state after disconnect.",
+        "description": "Sends a user message and opens an SSE stream for the assistant response. If `request_id` matches an active generation, returns 409 Conflict (JSON, no SSE). If `request_id` matches a completed generation, replays the response as SSE (side-effect-free: no new quota reserve, no billing events).\n\nThe optional `web_search` parameter enables web search for this turn (disabled by default, backward compatible).\n\n**Attachment fields**: `attachment_ids` identifies attachments explicitly attached to this message (persisted into `message_attachments`, returned in message `attachments[]`; images included in multimodal input; documents define retrieval scope per the deterministic precedence rule when `rag_attachment_ids` is empty). `rag_attachment_ids` identifies document-only retrieval scope restriction for this turn (NOT persisted into `message_attachments`, NOT returned in message `attachments[]`; every entry MUST be `attachment_kind=document`). The same attachment ID MUST NOT appear in both arrays (rejected with 400). Omitted and empty `rag_attachment_ids` are semantically equivalent.\n\n**SSE event ordering (P1)**: `ping* delta* tool* citations? (done | error)`. `delta` and `tool` may interleave; at most one `citations` event, emitted after all `delta` events and before the terminal event.\n\nExactly one terminal event (`done` or `error`) ends the stream.\n\n**SSE event types and payloads**:\n- `event: ping` — keepalive, payload: `{}`. Clients MUST ignore.\n- `event: delta` — incremental text. Payload: `SseDeltaEvent`.\n- `event: tool` — tool activity (file_search, web_search at P1). Payload: `SseToolEvent`.\n- `event: citations` — source references (file and web). Payload: `SseCitationsEvent`.\n- `event: done` — terminal success with usage and quota_decision. Emitted for both full completions and truncated-but-successful completions (provider `response.incomplete`). Payload: `SseDoneEvent`.\n- `event: error` — terminal failure. Payload: `SseErrorEvent`.\n\nSee component schemas for payload definitions.\n\n**Pre-stream errors**: If validation, authorization, or quota preflight fails before streaming, a JSON error response with the appropriate HTTP status is returned and no SSE stream is opened.\n\n**Cancellation**: If the client disconnects mid-stream, the server cancels the in-flight provider request and applies a bounded best-effort debit for quota. No SSE error event is emitted (the stream is already broken). The Turn Status API is authoritative for final state after disconnect.",
         "requestBody": {
           "required": true,
           "content": {
@@ -254,11 +254,26 @@
               "schema": {
                 "$ref": "#/components/schemas/SendMessageRequest"
               },
-              "example": {
-                "content": "What does the document say about Q3 revenue?",
-                "request_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
-                "attachment_ids": ["c3d4e5f6-7890-4abc-def1-234567890abc"],
-                "web_search": {"enabled": false}
+              "examples": {
+                "document_scoped_retrieval": {
+                  "summary": "Retrieval scoped to specific documents via rag_attachment_ids",
+                  "value": {
+                    "content": "What does the document say about Q3 revenue?",
+                    "request_id": "f47ac10b-58cc-4372-a567-0e02b2c3d479",
+                    "rag_attachment_ids": ["c3d4e5f6-7890-4abc-def1-234567890abc"]
+                  }
+                },
+                "image_with_document_attachment": {
+                  "summary": "Image in multimodal input + document attached to message (retrieval scoped to attached document)",
+                  "value": {
+                    "content": "Compare this chart with the annual report highlights.",
+                    "request_id": "a1b2c3d4-5678-4def-9012-abcdef345678",
+                    "attachment_ids": [
+                      "aaaa1111-2222-4333-8444-555566667777",
+                      "bbbb1111-2222-4333-8444-555566667777"
+                    ]
+                  }
+                }
               }
             }
           }
@@ -684,7 +699,7 @@
         "operationId": "editTurn",
         "tags": ["turns"],
         "summary": "Edit the last user turn and regenerate response",
-        "description": "Replaces the content of the last user message and generates a new assistant response via SSE. The previous turn is soft-deleted with `replaced_by_request_id` set. Original attachment associations are preserved (copied to the new user message via `message_attachments`). Only the most recent non-deleted turn in a terminal state may be edited.",
+        "description": "Replaces the content of the last user message and generates a new assistant response via SSE. The previous turn is soft-deleted with `replaced_by_request_id` set. Original attachment associations from `attachment_ids` are preserved (copied to the new user message via `message_attachments`). `rag_attachment_ids` are NOT preserved — they are ephemeral per-turn and the edit endpoint does not accept them. Retrieval scope for the edited turn follows the normal deterministic precedence rule: if the copied `message_attachments` include documents, those documents define retrieval scope; otherwise scope defaults to all ready documents in the chat. Only the most recent non-deleted turn in a terminal state may be edited.",
         "requestBody": {
           "required": true,
           "content": {
@@ -839,7 +854,7 @@
         "operationId": "retryTurn",
         "tags": ["turns"],
         "summary": "Retry the last turn",
-        "description": "Soft-deletes the previous turn and re-submits the original user message (including any attachment associations, copied to the new user message via `message_attachments`) for a new assistant response via SSE. Only the most recent non-deleted turn in a terminal state may be retried.",
+        "description": "Soft-deletes the previous turn and re-submits the original user message (including any attachment associations from `attachment_ids`, copied to the new user message via `message_attachments`) for a new assistant response via SSE. `rag_attachment_ids` are NOT preserved — they are ephemeral per-turn and the retry endpoint does not accept them. Retrieval scope for the retried turn follows the normal deterministic precedence rule: if the copied `message_attachments` include documents, those documents define retrieval scope; otherwise scope defaults to all ready documents in the chat. Only the most recent non-deleted turn in a terminal state may be retried.",
         "responses": {
           "200": {
             "description": "SSE stream with new assistant response. Same event contract as sendMessage.",
@@ -1494,7 +1509,7 @@
       "SendMessageRequest": {
         "type": "object",
         "required": ["content"],
-        "description": "Request body for sending a message. Opens an SSE stream on success.",
+        "description": "Request body for sending a message. Opens an SSE stream on success. `attachment_ids` identifies attachments explicitly attached to this message (persisted, returned in message attachments array). `rag_attachment_ids` identifies document-only retrieval scope restriction (not persisted, not returned in message attachments array).",
         "properties": {
           "content": {
             "type": "string",
@@ -1511,7 +1526,15 @@
               "type": "string",
               "format": "uuid"
             },
-            "description": "Attachment IDs (images or documents) to include in this turn. Attachments must belong to this chat, must have status=ready, and are validated after effective model capability resolution."
+            "description": "Attachment IDs (images or documents) explicitly attached/referenced on the current user message. Persisted into `message_attachments` and returned in the message `attachments` array. Images are turn-local multimodal input only; uploaded images are not implicitly reused on later turns. Documents define retrieval scope per the deterministic precedence rule when `rag_attachment_ids` is empty. IDs MUST be unique within the array; duplicates are rejected with 400. Attachments must belong to this chat, must have status=ready, and are validated before any provider call or quota reserve."
+          },
+          "rag_attachment_ids": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "format": "uuid"
+            },
+            "description": "Document-only attachment IDs that constrain file-search scope for this turn. Retrieval-only: MUST NOT create message_attachments rows, MUST NOT appear in the message attachments array. Every entry MUST reference an attachment with attachment_kind=document (images rejected). IDs MUST be unique within the array; duplicates are rejected with 400. The same attachment ID MUST NOT appear in both `attachment_ids` and `rag_attachment_ids` (rejected with 400 invalid_request). Omitted and empty `rag_attachment_ids` are semantically equivalent. Attachments must belong to this chat, must have status=ready, and are validated before any provider call or quota reserve."
           },
           "web_search": {
             "$ref": "#/components/schemas/WebSearchOption"
@@ -1521,7 +1544,7 @@
       "EditTurnRequest": {
         "type": "object",
         "required": ["content"],
-        "description": "Request body for editing the last user turn. Original attachment associations are preserved automatically (copied via message_attachments).",
+        "description": "Request body for editing the last user turn. Original attachment associations from `attachment_ids` are preserved automatically (copied via message_attachments). `rag_attachment_ids` are NOT preserved — they are ephemeral per-turn and the edit endpoint does not accept them. Retrieval scope for the edited turn follows the normal deterministic precedence rule based on the copied `message_attachments`.",
         "properties": {
           "content": {
             "type": "string",

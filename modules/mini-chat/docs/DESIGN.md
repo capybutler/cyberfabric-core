@@ -300,13 +300,13 @@ Hard caps: token budgets (`max_input_tokens`, `max_output_tokens`) MUST remain c
 | AuditEvent | Structured event emitted to platform `audit_service`: prompt, response, user/tenant, timestamps, policy decisions, usage. Not stored locally.                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 | QuotaUsage | Per-user usage counters for rate limiting and budget enforcement. Tracks daily and monthly periods per tier in credits. Credits are computed from provider-reported token usage using the model credit multipliers in the policy snapshot. Premium models have stricter limits; standard-tier models have separate, higher limits.                                                                                                                                                                                                                                                  |
 | MessageReaction | A binary like or dislike reaction on an assistant message. One reaction per user per message. Stored for analytics and feedback collection.                                                                                                                                                                                                                                                                                                                                                                                                                                         |
-| ContextPlan | Transient object assembled per request: system prompt, summary, doc summaries, recent messages, user message, retrieval excerpts.                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| ContextPlan | Transient object assembled per request: system prompt, summary, doc summaries, recent messages, user message, retrieval excerpts. Retrieval scope is determined by the Retrieval Scope Precedence rule: `rag_attachment_ids` > document `attachment_ids` > chat-wide (see File Search Retrieval Scope).                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
 
 **Relationships**:
 - Chat -> Message: 1..\*
 - Chat -> Attachment: 0..\*
 - Chat -> ThreadSummary: 0..1
-- Message -> Attachment: 0..\* (M:N via `message_attachments` join table; user messages reference attachments submitted on that turn)
+- Message -> Attachment: 0..\* (M:N via `message_attachments` join table; user messages reference attachments from `attachment_ids` — not from `rag_attachment_ids`, which are retrieval-only and do not create `message_attachments` rows)
 - Attachment -> ChatVectorStore: belongs to (via chat_id; documents only — images are not indexed)
 - Message -> AuditEvent: 1..1 (each turn emits an audit event to platform `audit_service`)
 - Message -> MessageReaction: 0..1 (per user)
@@ -678,6 +678,7 @@ Request body:
   "content": "string",
   "request_id": "uuid (optional — client MAY provide for idempotency; server generates UUID v4 if omitted)",
   "attachment_ids": ["uuid (optional)"],
+  "rag_attachment_ids": ["uuid (optional)"],
   "web_search": { "enabled": false }
 }
 ```
@@ -724,7 +725,33 @@ impl MessageEntity {
 
 `web_search` is an optional object controlling web search for this turn. Defaults to `{ "enabled": false }` when omitted (backward compatible). When `web_search.enabled=true`, the backend includes the `web_search` tool in the provider Responses API request. The provider decides whether to invoke the tool. If the global `disable_web_search` kill switch is active, the request is rejected with HTTP 400 and error code `web_search_disabled` before opening an SSE stream.
 
-`attachment_ids` is an optional list of **attachment IDs** to include as input on the current turn. P1 supports image attachments only. When the user message is persisted, the association between the message and each referenced attachment is recorded in the `message_attachments` join table (see section 3.7). This is the single source of truth for the `attachments` array returned in `GET /v1/chats/{id}/messages` (each entry is an `AttachmentSummary` with `attachment_id`, `kind`, `filename`, `status`, `img_thumbnail`). Validation MUST ensure all of the following:
+`attachment_ids` is an optional list of **attachment IDs** (documents or images) explicitly attached/referenced on the current user message. When the user message is persisted, the association between the message and each referenced attachment is recorded in the `message_attachments` join table (see section 3.7). This is the **single source of truth** for the `attachments` array returned in `GET /v1/chats/{id}/messages` (each entry is an `AttachmentSummary` with `attachment_id`, `kind`, `filename`, `status`, `img_thumbnail`). Images from `attachment_ids` are included in multimodal model input for the current turn only. Documents from `attachment_ids` serve as both message-level UI associations and explicit retrieval scope for the turn when `rag_attachment_ids` is empty (see Retrieval Scope Precedence below). Previously uploaded image attachments MAY be re-attached on later turns via `attachment_ids`; only explicit re-attachment includes them in multimodal input — images from previous turns are never implicitly reused.
+
+`rag_attachment_ids` is an optional list of **document attachment IDs** that constrain file-search scope for the current turn only. These are request-local retrieval controls and MUST NOT create `message_attachments` rows. They MUST NOT appear in the message `attachments` array in API responses. They MUST NOT imply that the attachment was uploaded on the current turn. Every entry MUST reference an attachment with `attachment_kind=document`; image attachments MUST be rejected. Omitted `rag_attachment_ids` and empty `rag_attachment_ids: []` are semantically equivalent.
+
+**Retrieval Scope Precedence (normative, deterministic)**:
+
+1. If `rag_attachment_ids` is non-empty, it MUST define the retrieval scope for the turn.
+2. Else, if `attachment_ids` contains document attachments, those document attachments MUST define the retrieval scope for the turn.
+3. Else, retrieval scope defaults to all ready document attachments in the chat.
+
+The backend MAY include the provider `file_search` tool only when the chat has at least one ready document attachment. When included, the retrieval scope follows the precedence above. The provider/model decides whether to actually invoke the tool.
+
+**Image input scope invariant (P1)**: Image attachments affect model input only on the turn where they are explicitly included in `attachment_ids`. Uploading an image to the chat does not make it part of future model context by default. Previously uploaded images MAY be reused on later turns only via explicit re-attachment in `attachment_ids`. Images are never allowed in `rag_attachment_ids`.
+
+**P1 attachment scenarios**:
+
+- **Scenario A — upload + attach on this turn**: User uploads a file via `POST /v1/chats/{id}/attachments`, then sends the attachment ID in `attachment_ids`. Result: `message_attachments` row created; file appears in the message `attachments` array; if image, included in multimodal input; if document, defines retrieval scope for the turn (when `rag_attachment_ids` is empty).
+- **Scenario B — explicit retrieval-only reference**: User references previously uploaded document(s) (e.g., via a UI `@file` picker). UI resolves selections to chat-local `attachment_id` values and sends them in `rag_attachment_ids`. Result: NO `message_attachments` rows; NO UI attachment association; file_search scope is restricted to those document attachments only.
+- **Scenario C — implicit retrieval over the chat**: User sends a message without `rag_attachment_ids` and without documents in `attachment_ids`. If the chat has ready document attachments, the backend MAY include the `file_search` tool for the chat's vector store. Retrieval scope defaults to all ready document attachments in the chat.
+
+**P1 intentionally NOT supported** (out of scope):
+- Resolving filename references from free-form user text (e.g., "that contract PDF")
+- Fuzzy matching user text to a specific stored file
+- Multilingual filename or entity resolution
+- Hidden helper LLM call to infer intended file(s) from message text
+
+Validation MUST ensure all of the following for each `attachment_id` in **both** `attachment_ids` and `rag_attachment_ids`:
 
 - `attachments.tenant_id` matches the request security context tenant
 - `attachments.uploaded_by_user_id` matches the user who uploads attachment
@@ -732,14 +759,22 @@ impl MessageEntity {
 - `attachments.chat_id` matches the requested `chat_id`
 - `attachments.status == ready`
 
+Additionally:
+- For each `attachment_id` in `rag_attachment_ids`: `attachments.attachment_kind` MUST equal `document`. Image attachments MUST be rejected.
+- Each array MUST contain unique attachment IDs. Duplicate IDs within `attachment_ids` or within `rag_attachment_ids` MUST be rejected with HTTP 400 (`invalid_request`) before quota reserve and before any provider call.
+- The same attachment ID MUST NOT appear in both `attachment_ids` and `rag_attachment_ids` in the same request. Such requests MUST be rejected with HTTP 400 (`invalid_request`) before quota reserve and before any provider call.
+
 ##### Attachment Preflight Validation Invariant (P1)
 
-Attachment validation MUST occur before any provider request is issued and before any quota reserve is taken. For each `attachment_id` in the request:
+Attachment validation MUST occur before any provider request is issued and before any quota reserve is taken. For each `attachment_id` in **both** `attachment_ids` and `rag_attachment_ids`:
 
 - It MUST belong to the same `tenant_id` as the request security context.
 - It MUST belong to the same `user_id` as the request security context.
 - It MUST belong to the same `chat_id` as the requested chat.
 - `status` MUST equal `ready`.
+- For `rag_attachment_ids` only: `attachment_kind` MUST equal `document`.
+- Each array MUST contain unique attachment IDs (no duplicates within a single array).
+- No attachment ID may appear in both arrays simultaneously.
 
 If any of the above validations fail, the request MUST be rejected with an appropriate error before any provider call or quota reserve. No `attachment_id` validation may rely on provider-side failure.
 
@@ -1284,13 +1319,13 @@ sequenceDiagram
         AG-->>UI: 400
     end
 
-    Note over CS, DB: Preflight transaction (must commit before provider call): persist `messages` (role='user'), persist `message_attachments`, insert `chat_turns` (state='running') + quota reserve.
+    Note over CS, DB: Preflight transaction (must commit before provider call): validate attachment_ids + rag_attachment_ids (incl. no duplicates across arrays), persist `messages` (role='user'), persist `message_attachments` (from attachment_ids only; rag_attachment_ids do NOT create message_attachments), insert `chat_turns` (state='running') + quota reserve.
 
-    Note over CS, OAI: Single provider call per user turn. file_search is always enabled as a tool. web_search is included when web_search.enabled=true.
+    Note over CS, OAI: Single provider call per user turn. file_search tool included only if chat has ready document attachments; retrieval scope per precedence rule (rag_attachment_ids > document attachment_ids > chat-wide). web_search included when web_search.enabled=true.
 
-    CS->>DB: Preflight commit: Persist user msg + message_attachments + chat_turns(running) + quota reserve
+    CS->>DB: Preflight commit: Persist user msg + message_attachments (attachment_ids only) + chat_turns(running) + quota reserve
 
-    CS->>OG: POST /outbound/llm/responses:stream (tools include file_search + optionally web_search, store=user_store, filtered to chat attachments)
+    CS->>OG: POST /outbound/llm/responses:stream (tools: file_search if chat has ready docs + optionally web_search; retrieval scope per precedence rule)
     OG->>OAI: Responses API (streaming, tool calling enabled)
     OAI-->>OG: SSE tokens
     OG-->>CS: Token stream
@@ -1699,7 +1734,7 @@ Soft-delete rules:
 
 - [ ] `p1` - **ID**: `cpt-cf-mini-chat-dbtable-message-attachments`
 
-M:N join table linking messages to the attachments referenced on that message. Populated when a user message is persisted (from `attachment_ids` in the `SendMessage` request body) and when a turn is retried or edited (attachment associations are copied to the new user message). This table is the **single source of truth** for the `attachments` array (`AttachmentSummary` objects) returned in `GET /v1/chats/{id}/messages` responses.
+M:N join table linking messages to the attachments explicitly referenced on that message. Populated **only** from `attachment_ids` in the `SendMessage` request body (and when a turn is retried or edited, where attachment associations are copied to the new user message). `rag_attachment_ids` MUST NOT create rows in this table — they are retrieval-only and do not represent message-level associations. This table is the **single source of truth** for the `attachments` array (`AttachmentSummary` objects) returned in `GET /v1/chats/{id}/messages` responses.
 
 Writers MUST populate `chat_id` from the parent message's `messages.chat_id` (not from user input), and the composite foreign keys enforce that both referenced rows belong to the same chat.
 
@@ -2246,8 +2281,8 @@ A turn is a user-message + assistant-response pair identified by `request_id` in
 
 | Operation | Effect |
 |-----------|--------|
-| **Retry** | Soft-deletes the last turn (sets `deleted_at`, sets `replaced_by_request_id` to the new turn's `request_id`). Creates a new turn. The original user message content and attachment association are re-submitted to the LLM for a new assistant response. Attachment associations are **copied** from the old user message to the new user message via new `message_attachments` rows (the old rows remain on the soft-deleted message for audit). |
-| **Edit** | Soft-deletes the last turn (sets `deleted_at`, sets `replaced_by_request_id` to the new turn's `request_id`). Creates a new turn with the updated user message content and generates a new assistant response. Attachment associations are **copied** from the old user message to the new user message via new `message_attachments` rows (preserving the same attachments). |
+| **Retry** | Soft-deletes the last turn (sets `deleted_at`, sets `replaced_by_request_id` to the new turn's `request_id`). Creates a new turn. The original user message content and attachment associations are re-submitted to the LLM for a new assistant response. Attachment associations are **copied** from the old user message to the new user message via new `message_attachments` rows (the old rows remain on the soft-deleted message for audit). `rag_attachment_ids` are request-local retrieval controls that are NOT persisted and NOT copied; the retry endpoint does not accept `rag_attachment_ids`. Retrieval scope for the retried turn follows the normal precedence rule: if the copied `message_attachments` include documents, those documents define retrieval scope; else, scope defaults to all ready documents in the chat. |
+| **Edit** | Soft-deletes the last turn (sets `deleted_at`, sets `replaced_by_request_id` to the new turn's `request_id`). Creates a new turn with the updated user message content and generates a new assistant response. Attachment associations are **copied** from the old user message to the new user message via new `message_attachments` rows (preserving the same attachments). `rag_attachment_ids` are request-local retrieval controls that are NOT persisted and NOT copied; the edit endpoint does not accept `rag_attachment_ids`. Retrieval scope for the edited turn follows the normal precedence rule based on the copied `message_attachments`. |
 | **Delete** | Soft-deletes the last turn (sets `deleted_at`). No new turn is created. |
 
 #### Rules
@@ -2347,6 +2382,7 @@ These events are emitted to platform `audit_service` following the same emission
 - Per-workspace vector store aggregation
 - Full conversation history editing (editing/deleting arbitrary historical messages)
 - Thread branching or multi-version conversations
+- Automatic filename/document-reference resolution from free-form user text (P1 requires explicit `rag_attachment_ids` or `attachment_ids` resolved by the UI)
 
 ### Data Classification and Retention (P1)
 
@@ -2394,9 +2430,9 @@ On each user message, the domain service assembles a `ContextPlan` in this norma
 3. **Thread summary** — if exists, replaces older history.
 4. **Document summaries** — short descriptions of attached documents.
 5. **Recent messages** — last N messages not covered by summary (N configurable, default 6-10).
-6. **Retrieval excerpts** — file_search results from the chat's vector store (top-k chunks).
+6. **Retrieval excerpts** — file_search results from the chat's vector store (top-k chunks), scoped by the Retrieval Scope Precedence rule: if `rag_attachment_ids` is non-empty, retrieval is restricted to those documents; else if `attachment_ids` includes documents, retrieval is restricted to those documents; else retrieval covers all ready documents in the chat. Metadata filtering on `attachment_id` is applied when scope is restricted.
 7. **User message** — current turn.
-8. **Image attachments** — if the current request includes `attachment_ids`, include up to N images (configurable, default: 4) in the Responses API input content array. Images are appended to the user message content as `input_image` items with internal `provider_file_id` references (resolved from the `attachments` table; never exposed to clients). Images from previous turns are NOT re-included unless explicitly re-attached via `attachment_ids`.
+8. **Image attachments** — if the current request includes `attachment_ids` with image entries, include up to N images (configurable, default: 4) in the Responses API input content array. Images are appended to the user message content as `input_image` items with internal `provider_file_id` references (resolved from the `attachments` table; never exposed to clients). Images from previous turns are never implicitly reused; previously uploaded image attachments MAY be re-attached on later turns via `attachment_ids`, and only explicit re-attachment includes them in multimodal input. Images are never allowed in `rag_attachment_ids`.
 
 **Truncation priority** (when total exceeds `token_budget` — see Context Window Budget constraint): items are dropped in reverse order of priority. Lowest priority is truncated first:
 
@@ -2482,10 +2518,15 @@ The result is reversed to chronological order for ContextPlan assembly. K is a s
 
 ### File Search Trigger Heuristics
 
-File Search is invoked when:
-- User explicitly references documents ("in the file", "in section", "according to the document")
-- Documents are attached and the query likely relates to them
-- User requests citations or sources
+The backend MAY include the provider `file_search` tool only when the chat has at least one ready document attachment. When included, the Retrieval Scope Precedence rule (see Streaming Contract) determines the candidate document set:
+
+1. If `rag_attachment_ids` is non-empty → scope restricted to those documents (metadata filtered).
+2. Else if `attachment_ids` includes documents → scope restricted to those documents (metadata filtered).
+3. Else → scope is the full chat vector store.
+
+The provider/model decides whether to actually invoke the tool. The explicit scope (cases 1 and 2) deterministically restricts the candidate set; it does not force invocation.
+
+**P1 constraint**: the backend MUST NOT infer document references from free-form user text. All explicit retrieval scoping is via `rag_attachment_ids` or document entries in `attachment_ids`, resolved to `attachment_id` values by the UI before the request is sent.
 
 Limits: per-message file_search tool call limit is configurable per deployment (default: 2); max calls per day/user tracked in `quota_usage`.
 
@@ -2561,14 +2602,22 @@ Web search quota enforcement follows deterministic preflight checks with no retr
 
 ### File Search Retrieval Scope
 
-**Physical store**: one dedicated vector store per chat (see `chat_vector_stores` table). Created on first document upload to the chat. All document attachments in a chat are indexed in the same physical vector store.
+**Physical store**: one dedicated vector store per chat (see `chat_vector_stores` table). Created on first document upload to the chat. All document attachments in a chat are indexed in the same physical vector store. The backend MUST resolve the provider vector store from `(tenant_id, chat_id)` internally. The client MUST NOT send provider `vector_store_id` values; the public API accepts only internal `attachment_id` UUIDs.
 
-**Retrieval scope (P1)**: file search is inherently scoped to the current chat because each chat has its own vector store. No cross-chat document leakage by design.
+**Retrieval scope (P1)**: file search is inherently scoped to the current chat because each chat has its own vector store. No cross-chat document leakage by design. Within a chat, retrieval scope is determined by the Retrieval Scope Precedence rule (normative, deterministic):
+
+1. **Explicit turn-local scope via `rag_attachment_ids`**: If the request includes a non-empty `rag_attachment_ids`, file search MUST be restricted to those document attachments only. The backend applies provider-side metadata filtering using stable `attachment_id` values (indexed as metadata on each chunk — see Vector Store Scope below). Filename text MUST NOT be used as the authoritative retrieval key; `attachment_id` is the stable identity for filtering.
+2. **Explicit document attachments via `attachment_ids`**: Else, if `attachment_ids` includes document attachments, those documents MUST define the retrieval scope for the turn (same metadata filtering mechanism).
+3. **Chat-wide default scope**: Else, retrieval scope defaults to all ready document attachments in the chat (the entire chat vector store).
+
+**P1 constraint**: the backend MUST NOT attempt filename or document-reference resolution from free-form user text. All explicit retrieval scoping is via `rag_attachment_ids` or document entries in `attachment_ids`, resolved by the UI to chat-local `attachment_id` values before the request is sent.
 
 This means:
-- Chat A with documents D1, D2 → file_search queries only D1, D2 (Chat A's vector store)
+- Chat A with documents D1, D2, no explicit scope → file_search queries D1, D2 (Chat A's full vector store)
+- Chat A with `rag_attachment_ids=[D1]` → file_search queries only D1 (metadata-filtered within Chat A's vector store)
+- Chat A with `attachment_ids=[D1]` (document), no `rag_attachment_ids` → file_search queries only D1
 - Chat B with documents D3 → file_search queries only D3 (Chat B's vector store)
-- No metadata filtering needed for cross-chat isolation
+- No metadata filtering needed for cross-chat isolation; metadata filtering is used only for intra-chat turn-local scope restriction
 
 #### Vector Store Scope (P1)
 
@@ -2578,10 +2627,10 @@ One provider-hosted vector store per chat (see `chat_vector_stores` table). Crea
 
 | Metadata field | Source | Purpose |
 |---------------|--------|---------|
-| `attachment_id` | `attachments.id` | Cleanup and deduplication |
+| `attachment_id` | `attachments.id` | Turn-local retrieval filtering (via `rag_attachment_ids` / document `attachment_ids`), cleanup, and deduplication |
 | `uploaded_at` | `attachments.created_at` | Recency bias in retrieval |
 
-Physical and logical isolation are both per chat. No metadata filtering needed for cross-chat isolation.
+Physical and logical isolation are both per chat. No metadata filtering needed for cross-chat isolation. Metadata filtering on `attachment_id` is used only for intra-chat turn-local scope restriction when `rag_attachment_ids` or document `attachment_ids` are present on the request.
 
 **Tenant isolation invariants (normative)**:
 
@@ -2593,11 +2642,14 @@ Physical and logical isolation are both per chat. No metadata filtering needed f
 
 Retrieved file search excerpts are integrated into the prompt as follows:
 
-1. The domain service invokes the provider `file_search` tool on the chat's vector store (top-k similarity search).
-2. Only the returned chunks are included in the prompt — full file contents are **never** injected by default.
-3. If retrieval returns no relevant chunks, the system proceeds without file context.
-4. Retrieved chunks are subject to the token budget truncation rules in Context Plan Assembly: thread summary and system prompt always have higher priority; retrieval excerpts are truncated first when the budget is exceeded.
-5. Maximum retrieved chunks per turn and maximum retrieved tokens per turn are configurable (see RAG defaults below).
+1. The domain service determines retrieval scope per the Retrieval Scope Precedence rule: if `rag_attachment_ids` is non-empty, restrict to those documents; else if `attachment_ids` includes documents, restrict to those documents; else use the full chat vector store.
+2. The domain service invokes the provider `file_search` tool on the chat's vector store (top-k similarity search), applying `attachment_id` metadata filtering when retrieval scope is restricted.
+3. Only the returned chunks are included in the prompt — full file contents are **never** injected by default.
+4. If retrieval returns no relevant chunks, the system proceeds without file context.
+5. Retrieved chunks are subject to the token budget truncation rules in Context Plan Assembly: thread summary and system prompt always have higher priority; retrieval excerpts are truncated first when the budget is exceeded.
+6. Maximum retrieved chunks per turn and maximum retrieved tokens per turn are configurable (see RAG defaults below).
+
+Provider-side retrieval filtering MUST be based on stable `attachment_id` metadata (indexed per chunk), not on filename text. Filename may exist for UI display only.
 
 #### RAG Quality & Scale Controls (P1)
 
@@ -5080,7 +5132,7 @@ The following patterns are explicitly prohibited. Any implementation that matche
 
 **INVARIANT: user message MUST be durably persisted before the `chat_turns` row enters `running` state and before any outbound provider call.**
 
-The user message (`messages` row with `role = 'user'`) and the `message_attachments` associations MUST be committed to the database as part of the preflight transaction — the same transaction that inserts the `chat_turns` row with `state = 'running'` and records the quota reserve. This ordering guarantees:
+The user message (`messages` row with `role = 'user'`) and the `message_attachments` associations (from `attachment_ids` only; `rag_attachment_ids` MUST NOT create `message_attachments` rows) MUST be committed to the database as part of the preflight transaction — the same transaction that inserts the `chat_turns` row with `state = 'running'` and records the quota reserve. This ordering guarantees:
 
 - The user message is always available for ContextPlan assembly and replay, even after crash recovery.
 - If the preflight transaction fails (e.g. DB write error), neither the user message nor the turn record exists — the system is in a clean state and the client can retry with a new `request_id`.

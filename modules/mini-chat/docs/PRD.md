@@ -57,6 +57,7 @@ Current gaps: no native chat experience within the platform; no way to query upl
 | Web Search | An LLM tool call that retrieves information from the public web during a chat turn; explicitly enabled per request via API parameter |
 | Selected Model | The model chosen by the user (or resolved via the `is_default` premium model algorithm) at chat creation and stored in `chat.model`. Immutable for the chat lifetime. |
 | Effective Model | The model actually used for a specific turn after quota and policy evaluation. Equals the selected model unless a quota-driven downgrade or kill switch overrides it. Recorded per assistant message. |
+| RAG Attachment IDs | An optional list of chat-local document attachment IDs (`rag_attachment_ids`) sent with a message to constrain file-search scope for that turn only. Provides retrieval-only explicit scope — does not create message-attachment associations or appear in message history. When empty or omitted, document attachments in `attachment_ids` define explicit retrieval scope instead (see Retrieval Scope Precedence). |
 
 ## 2. Actors
 
@@ -93,6 +94,7 @@ This PRD uses **P1/P2** to describe phased scope. The `p1`/`p2` tags on requirem
 - Real-time streamed AI responses (SSE)
 - Persistent conversation history
 - Document upload and document-aware question answering via file search
+- Explicit per-turn retrieval scoping via `rag_attachment_ids` (retrieval-only scope) or document attachments included in `attachment_ids` (message-associated scope); deterministic precedence rule governs which mechanism takes effect
 - Document summary on upload
 - Thread summary compression for long conversations
 - Per-user credit-based rate limits across multiple periods (daily, monthly) tracked in real-time; credits are computed from provider-reported tokens using model credit multipliers from the active policy snapshot; premium models have stricter limits, standard-tier models have separate, higher limits; two-tier downgrade cascade (premium → standard); when all tiers are exhausted, the system rejects with `quota_exceeded`
@@ -125,6 +127,7 @@ This PRD uses **P1/P2** to describe phased scope. The `p1`/`p2` tags on requirem
 - Thread versioning / branching (multi-branch conversations, history forks)
 - Multi-branch recovery or resume-from-middle editing
 - Web search auto-triggering (P1 requires explicit API parameter; implicit query-based triggering is deferred)
+- Automatic filename or document-reference resolution from free-form user text (P1 requires explicit `rag_attachment_ids` or `attachment_ids` resolved by the UI)
 - URL content extraction
 - Admin configuration UI for AI policies, model selection, or provider settings (P1 uses deployment configuration; see DESIGN.md Section 2.2 constraints and emergency flags)
 - Additional quota periods beyond the P1 set (4-hourly rolling windows, weekly periods, 12h rolling windows)
@@ -169,7 +172,7 @@ The system MUST deliver AI responses as a real-time SSE stream. The user sends a
 
 **Error model (Option A)**: If request validation, authorization, or quota preflight fails before any streaming begins, the system MUST return a normal JSON error response with the appropriate HTTP status and MUST NOT open an SSE stream. If a failure occurs after streaming has started, the system MUST terminate the stream with a terminal `event: error`.
 
-The request body MAY include a client-generated `request_id` used as an idempotency key (if omitted, the server MUST generate a UUID v4); MAY include `attachment_ids` for image-bearing turns; and MAY include `web_search` to explicitly enable web search for the turn (see `cpt-cf-mini-chat-fr-web-search`). In every Message response DTO, `request_id` is always present and non-null (a required UUID). Within a normal turn, the user message and assistant response share the same `request_id` (the turn correlation key). System/background messages (e.g. `doc_summary`) carry an independently server-generated UUID v4. P1 enforces **at most one running turn per chat**: if any turn in the chat is currently `running`, the system MUST reject the new request with `409 Conflict`, regardless of the `request_id` value. Additionally, if a `chat_turns` record with `state=running` exists for the same `(chat_id, request_id)`, the system MUST reject with `409 Conflict`. If a completed generation exists for the same `(chat_id, request_id)`, the system MUST replay the completed assistant response rather than starting a new provider request. Replay MUST be side-effect-free: no new quota reserve, no quota settlement, no billing/outbox event emission.
+The request body MAY include a client-generated `request_id` used as an idempotency key (if omitted, the server MUST generate a UUID v4); MAY include `attachment_ids` for attachments (documents or images) explicitly associated with the current message; MAY include `rag_attachment_ids` for document-only retrieval scope restriction (see `cpt-cf-mini-chat-fr-file-search`); and MAY include `web_search` to explicitly enable web search for the turn (see `cpt-cf-mini-chat-fr-web-search`). In every Message response DTO, `request_id` is always present and non-null (a required UUID). Within a normal turn, the user message and assistant response share the same `request_id` (the turn correlation key). System/background messages (e.g. `doc_summary`) carry an independently server-generated UUID v4. P1 enforces **at most one running turn per chat**: if any turn in the chat is currently `running`, the system MUST reject the new request with `409 Conflict`, regardless of the `request_id` value. Additionally, if a `chat_turns` record with `state=running` exists for the same `(chat_id, request_id)`, the system MUST reject with `409 Conflict`. If a completed generation exists for the same `(chat_id, request_id)`, the system MUST replay the completed assistant response rather than starting a new provider request. Replay MUST be side-effect-free: no new quota reserve, no quota settlement, no billing/outbox event emission.
 
 Clients must not auto-retry with the same `request_id` after disconnect; recovery is via the Turn Status API (`GET /v1/chats/{chat_id}/turns/{request_id}`). A new `request_id` MUST be generated for every new user-initiated retry.
 
@@ -182,7 +185,7 @@ Clients must not auto-retry with the same `request_id` after disconnect; recover
 
 The system MUST persist all user and assistant messages. Conversation history access MUST be limited to the owning user within their tenant. On each new user message, the system MUST include relevant conversation history in the LLM context to maintain conversational coherence.
 
-The system MUST expose conversation history via `GET /v1/chats/{id}/messages` with cursor-based pagination (Page + PageInfo pattern) and OData v4 query support (`$orderby`, `$filter`, `$select`). Each message MUST include: a required `request_id` (UUID, always present and non-null — within a normal turn, user and assistant messages share the same value; system/background messages use an independently server-generated UUID v4) and a required `attachment_ids` field (always-present array of associated attachment UUIDs, empty array when none). Attachment details are not embedded; the UI fetches them individually via `GET /v1/chats/{id}/attachments/{attachment_id}` if needed.
+The system MUST expose conversation history via `GET /v1/chats/{id}/messages` with cursor-based pagination (Page + PageInfo pattern) and OData v4 query support (`$orderby`, `$filter`, `$select`). Each message MUST include: a required `request_id` (UUID, always present and non-null — within a normal turn, user and assistant messages share the same value; system/background messages use an independently server-generated UUID v4) and a required `attachments` field (always-present array of associated attachment summaries, empty array when none). The `attachments` array MUST be derived only from `message_attachments` (populated from `attachment_ids` at send time); retrieval-only references via `rag_attachment_ids` MUST NOT appear in this array. Attachment details are not embedded; the UI fetches them individually via `GET /v1/chats/{id}/attachments/{attachment_id}` if needed.
 
 **Rationale**: Multi-turn conversations require the AI to remember prior context within the same chat. Cursor pagination ensures efficient history loading for long conversations.
 **Actors**: `cpt-cf-mini-chat-actor-chat-user`
@@ -232,13 +235,17 @@ The system MUST allow users to upload image files (PNG, JPEG/JPG, WebP) to a cha
 **Rationale**: Users need to share visual content (screenshots, diagrams, photos) with the AI assistant and ask questions about what they see.
 **Actors**: `cpt-cf-mini-chat-actor-chat-user`
 
-All `attachment_ids` submitted with a message are strictly scoped to `(tenant_id, user_id, chat_id)` and validated before LLM invocation. No attachment validation may rely on provider-side failure; all checks MUST complete before any quota reserve or provider request is issued.
+All `attachment_ids` and `rag_attachment_ids` submitted with a message are strictly scoped to `(tenant_id, user_id, chat_id)` and validated before LLM invocation. Every entry in `rag_attachment_ids` MUST reference an attachment with `attachment_kind=document`. Each array MUST contain unique attachment IDs; duplicate IDs within `attachment_ids` or within `rag_attachment_ids` MUST be rejected with HTTP 400 before quota reserve and before any provider call. No attachment validation may rely on provider-side failure; all checks MUST complete before any quota reserve or provider request is issued. `rag_attachment_ids` MUST NOT create `message_attachments` rows and MUST NOT appear in the message `attachments` array in API responses.
 
 #### Document Question Answering (File Search)
 
 - [ ] `p1` - **ID**: `cpt-cf-mini-chat-fr-file-search`
 
 The system MUST support answering questions about uploaded documents by retrieving relevant excerpts during chat. On each turn, retrieval MUST be scoped to the current chat's dedicated vector store. The system MUST NOT inject full file contents into the prompt; only top-k retrieved chunks are included. File search MUST be scoped to the user's tenant. Retrieved excerpts and citations MUST be returned only to the owning user within their tenant. The system MUST enforce a configurable per-message file search call limit (default: 2 retrieval calls per message).
+
+The public API MUST distinguish between attachments explicitly attached to a message (`attachment_ids`) and attachments used only to constrain file-search scope for the current turn (`rag_attachment_ids`). Retrieval scope MUST follow this deterministic precedence: (1) if `rag_attachment_ids` is non-empty, file search MUST be restricted to those document attachments; (2) else, if document attachments are present in `attachment_ids`, those documents MUST define the retrieval scope; (3) else, retrieval scope defaults to all ready document attachments in the chat. The backend MAY include the provider `file_search` tool only when the chat has at least one ready document attachment. The backend MUST resolve the provider vector store internally from `(tenant_id, chat_id)` and MUST NOT require or accept provider vector store identifiers from clients. Provider-side retrieval filtering MUST be based on stable internal attachment identity (`attachment_id`), not on filename text. The same attachment ID MUST NOT appear in both `attachment_ids` and `rag_attachment_ids`; such requests MUST be rejected before any provider call. Omitted and empty `rag_attachment_ids` are semantically equivalent.
+
+In P1, the backend MUST NOT attempt filename or document-reference resolution from free-form user text. Fuzzy filename matching, multilingual entity resolution, and hidden helper LLM calls to infer intended files from message text are explicitly out of scope for P1.
 
 **Rationale**: The primary value of document upload is the ability to ask questions and get answers grounded in document content.
 **Actors**: `cpt-cf-mini-chat-actor-chat-user`
@@ -320,8 +327,8 @@ P1 supports retry, edit, and delete for the **last turn only**. Full message his
 
 **Supported actions (P1)**:
 
-- **Retry last turn**: Re-submit the last user message (including any `attachment_ids` for image-bearing turns) to generate a new assistant response. The previous turn is soft-deleted and a new turn is created with a fresh assistant response.
-- **Edit last user turn**: Replace the content of the last user message and regenerate the assistant response, preserving any `attachment_ids` for image-bearing turns. The previous turn is soft-deleted and a new turn is created with the updated content.
+- **Retry last turn**: Re-submit the last user message to generate a new assistant response. Original attachment associations from `attachment_ids` (images and documents) are preserved — copied to the new user message via `message_attachments`. `rag_attachment_ids` are NOT preserved (they are ephemeral per-turn); retrieval scope for the retried turn follows the normal precedence rule based on the copied `message_attachments`. The previous turn is soft-deleted and a new turn is created with a fresh assistant response.
+- **Edit last user turn**: Replace the content of the last user message and regenerate the assistant response. Original attachment associations from `attachment_ids` (images and documents) are preserved — copied to the new user message via `message_attachments`. `rag_attachment_ids` are NOT preserved (they are ephemeral per-turn); retrieval scope for the edited turn follows the normal precedence rule based on the copied `message_attachments`. The previous turn is soft-deleted and a new turn is created with the updated content.
 - **Delete last turn**: Remove the most recent turn (user message + assistant response) from the active conversation. The turn is soft-deleted.
 
 **Functional constraints**:
@@ -883,15 +890,16 @@ Provider identifiers (`provider_file_id`, `provider_response_id`, `vector_store_
 - At least one document is attached to the chat and has `ready` status
 
 **Main Flow**:
-1. User sends a message that references document content
-2. System detects that file search is needed
-3. System retrieves relevant excerpts from the tenant's document index
+1. User sends a message that references document content. The UI MAY include `rag_attachment_ids` (resolved to chat-local document `attachment_id` values via a UI file picker) to explicitly restrict retrieval scope.
+2. System determines retrieval scope using the deterministic precedence rule: if `rag_attachment_ids` is non-empty, restrict to those documents; else if `attachment_ids` includes documents, those documents define the retrieval scope; else scope defaults to all ready documents in the chat vector store.
+3. System retrieves relevant excerpts from the scoped document set within the chat's vector store
 4. System includes excerpts in the LLM context alongside conversation history
 5. System streams AI response grounded in document content
 
 **Postconditions**:
-- Response incorporates information from uploaded documents
+- Response incorporates information from uploaded documents (scoped by `rag_attachment_ids` if provided)
 - File search call counted against user quota
+- `rag_attachment_ids` does not create `message_attachments` rows; the message `attachments` array reflects only `attachment_ids`
 
 **Alternative Flows**:
 - **File search limit reached**: System proceeds without retrieval; response based on conversation context and document summaries only
