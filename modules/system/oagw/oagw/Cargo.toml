@@ -45,6 +45,7 @@ tenant-resolver-sdk = { workspace = true }
 credstore-sdk = { workspace = true }
 # CP deps
 dashmap = { workspace = true }
+psl = { workspace = true }
 thiserror = { workspace = true }
 # DP deps
 form_urlencoded = "1"
