@@ -80,13 +80,14 @@ Adheres to `cpt-cf-oagw-principle-tenant-scope` (all operations tenant-scoped vi
 
 **Success Scenarios**:
 - Upstream configuration is updated; alias is re-enforced if endpoints change
+- Alias-only update (no endpoint change) is accepted for IP-based endpoints; normalized and validated
 - Response contains the updated upstream
 
 **Error Scenarios**:
 - Upstream not found (wrong ID or tenant)
 - Validation fails (same as create)
 - Alias conflict after re-enforcement
-- Alias override rejected for hostname-based endpoints (400 Validation)
+- Alias override rejected for hostname-based endpoints (400 Validation) — applies to both endpoint-change and alias-only updates
 - Hostname→IP endpoint transition without explicit alias (400 Validation)
 
 **Steps**:
@@ -98,7 +99,10 @@ Adheres to `cpt-cf-oagw-principle-tenant-scope` (all operations tenant-scoped vi
    1. [ ] - `p1` - **RETURN** 404 Not Found - `inst-update-us-5a`
 6. [ ] - `p1` - Domain: Execute upstream validation algorithm (`cpt-cf-oagw-algo-mgmt-validate-upstream`) - `inst-update-us-6`
 7. [ ] - `p1` - **IF** server endpoints changed - `inst-update-us-7`
-   1. [x] - `p1` - Domain: Re-execute alias enforcement algorithm (`cpt-cf-oagw-algo-mgmt-enforce-alias`) - `inst-update-us-7a`
+   1. [x] - `p1` - Domain: Re-execute alias enforcement algorithm (`cpt-cf-oagw-algo-mgmt-enforce-alias`) with old/new endpoint transition rules - `inst-update-us-7a`
+   2. [ ] - `p1` - **ELSE IF** alias field provided without endpoint change - `inst-update-us-7b`
+      1. [x] - `p1` - **IF** endpoints are hostname-based AND normalized alias differs from derived value → **RETURN** 400 Validation: "alias cannot be overridden for hostname-based endpoints" - `inst-update-us-7b1`
+      2. [x] - `p1` - **ELSE** (IP-based endpoints): normalize and validate alias; accept update - `inst-update-us-7b2`
 8. [ ] - `p1` - DB: BEGIN transaction - `inst-update-us-8`
 9. [ ] - `p1` - DB: UPDATE oagw_upstream SET (updated fields) WHERE id = :uuid - `inst-update-us-9`
 10. [ ] - `p1` - DB: DELETE + re-INSERT oagw_upstream_tag for updated tags - `inst-update-us-10`
@@ -289,12 +293,17 @@ Alias behavior is determined entirely by endpoint type. Hostname-based endpoints
 4. [x] - `p1` - **IF** IP → IP (no transition) - `inst-alias-upd-4`
    1. [x] - `p1` - Retain existing alias unless user provides a new one - `inst-alias-upd-4a`
 
+**Alias-only update path** (endpoints unchanged, alias field provided):
+1. [x] - `p1` - **IF** endpoints are hostname-based (derivable) AND normalized alias differs from derived value - `inst-alias-only-1`
+   1. [x] - `p1` - **RETURN** 400 Validation: "alias cannot be overridden for hostname-based endpoints" - `inst-alias-only-1a`
+2. [x] - `p1` - **ELSE** (IP-based or exact-match with derived): normalize, validate, and accept - `inst-alias-only-2`
+
 **Derivation rules** (`compute_derived_alias`):
 - Single hostname, standard port → hostname (e.g., `api.openai.com`)
 - Single hostname, non-standard port → hostname:port (e.g., `api.openai.com:8443`)
 - Multiple hostnames, all identical → treated as single-host
-- Multiple hostnames, common domain suffix (≥2 labels) → common suffix (e.g., `vendor.com`); non-standard port appended (e.g., `vendor.com:8443`)
-- Multiple hostnames, no common suffix (only TLD in common) → `None` (explicit required)
+- Multiple hostnames, common domain suffix (≥2 labels) that is a registrable domain (i.e., has at least one label beyond the public suffix per the PSL) → common suffix (e.g., `vendor.com`); non-standard port appended (e.g., `vendor.com:8443`)
+- Multiple hostnames, common suffix is a public suffix only (e.g., `co.uk`, `com.au`) or only TLD in common → `None` (explicit required); the PSL check prevents shared public suffixes from being returned as derived aliases
 - IP addresses → `None` (explicit required)
 
 **Standard ports** (omitted from derived alias): HTTP: 80, HTTPS/WSS/WebTransport/gRPC: 443.
@@ -393,7 +402,7 @@ The system **MUST** provide REST handlers for POST, GET (list + by-ID), PUT, and
 
 - [x] `p1` - **ID**: `cpt-cf-oagw-dod-mgmt-alias-enforcement`
 
-The system **MUST** enforce alias rules based on endpoint type following `cpt-cf-oagw-algo-mgmt-enforce-alias`. Hostname-based endpoints auto-derive alias (user-provided alias is rejected). IP-based or non-derivable endpoints require explicit alias. Aliases **MUST** be normalized (ASCII lowercase, trailing dot stripped) and unique per `(tenant_id, alias)` with a database uniqueness constraint. On update, alias is re-enforced when endpoints change per the transition rules (hostname→hostname recomputes, hostname→IP requires explicit, IP→IP retains, IP→hostname recomputes). Endpoint hostnames **MUST** be validated per RFC 1123.
+The system **MUST** enforce alias rules based on endpoint type following `cpt-cf-oagw-algo-mgmt-enforce-alias`. Hostname-based endpoints auto-derive alias (user-provided alias is rejected). IP-based or non-derivable endpoints require explicit alias. Aliases **MUST** be normalized (ASCII lowercase, trailing dot stripped) and unique per `(tenant_id, alias)` with a database uniqueness constraint. On update, alias is re-enforced when endpoints change per the transition rules (hostname→hostname recomputes, hostname→IP requires explicit, IP→IP retains, IP→hostname recomputes). Alias-only updates (no endpoint change) **MUST** follow the same hostname/IP branching: hostname-based endpoints reject user-provided alias (unless it exactly matches the derived value); IP-based or non-derivable endpoints accept and normalize the new alias. Alias normalization and the `(tenant_id, alias)` uniqueness constraint apply to alias-only updates. Tests **MUST** cover the alias-only branches for both hostname-based (rejection) and IP-based (acceptance) endpoints. Endpoint hostnames **MUST** be validated per RFC 1123.
 
 **Implements**:
 - `cpt-cf-oagw-algo-mgmt-enforce-alias`

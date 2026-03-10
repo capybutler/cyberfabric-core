@@ -898,7 +898,8 @@ fn enforce_alias_update(
     let new_derived = compute_derived_alias(new_endpoints);
 
     match (old_derivable, &new_derived) {
-        // hostname → hostname: recompute.
+        // New endpoints are hostname-derivable: recompute alias.
+        // Covers hostname→hostname (recompute) and IP→hostname (old explicit alias replaced).
         (true, Some(derived)) | (false, Some(derived)) => {
             if let Some(user) = user_alias {
                 let normalized_user = normalize_alias(user);

@@ -412,7 +412,7 @@ Alias behavior is determined entirely by endpoint type. The system enforces stri
 | Hostname (no endpoint change) | Alias override **rejected** (400 Validation) |
 | IP (no endpoint change) | User may update alias freely |
 
-For multi-host endpoints with non-standard ports, the common suffix derivation intentionally drops the port — the suffix serves as a grouping label, not a connect target.
+For multi-host endpoints with non-standard ports, the common suffix derivation preserves `:port` in the alias (e.g., `us.vendor.com:8443` + `eu.vendor.com:8443` → `vendor.com:8443`). This avoids collisions between pools sharing the same domain suffix on different ports — operators should reference the `suffix:port` form when routing to these upstreams.
 
 **Alias Uniqueness**: Alias is unique **per tenant**, not globally. Database constraint: `UNIQUE (tenant_id, alias)`. Tenants can independently manage upstreams without namespace collisions. Descendants can shadow ancestor aliases for controlled customization.
 
