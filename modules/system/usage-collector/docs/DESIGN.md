@@ -6,7 +6,7 @@
 
 Usage Collector follows the ModKit Gateway + Plugins pattern. The gateway module (`usage-collector`) is the single centralized service that receives usage records, enforces tenant isolation, and delegates all storage operations to the active plugin. Backend-specific persistence and query logic for ClickHouse or TimescaleDB is encapsulated in storage plugins that register via the GTS type system and are selected by operator configuration. The gateway contains no backend-specific logic.
 
-The SDK crate (`usage-collector-sdk`) defines two trait boundaries: `UsageCollectorClientV1` for usage sources and consumers, and `UsageCollectorPluginClientV1` for storage backend implementations. When a usage source emits a record, the SDK persists it to the source's local database within the same transaction as the caller's domain operation (transactional outbox pattern). A background outbox dispatcher running in the source's process claims pending records and delivers them to the collector gateway, providing at-least-once delivery even when the collector is temporarily unavailable.
+The SDK crate (`usage-collector-sdk`) defines two trait boundaries: `UsageCollectorClientV1` for usage sources and consumers, and `UsageCollectorPluginClientV1` for storage backend implementations. When a usage source emits a record, the SDK persists it to the source's local database within the same transaction as the caller's domain operation (transactional outbox pattern). The SDK initializes and owns an `OutboxHandle` whose background pipeline automatically delivers enqueued records to the collector gateway, providing at-least-once delivery even when the collector is temporarily unavailable.
 
 Once records arrive at the gateway, they are persisted via the active storage plugin and become available for aggregation and raw queries. All operations — ingestion and query — are scoped to the authenticated tenant derived from the caller's SecurityContext. Tenant identity is never accepted from request payloads.
 
@@ -16,9 +16,9 @@ Once records arrive at the gateway, they are persisted via the active storage pl
 
 | Requirement | Design Response |
 |-------------|-----------------|
-| `cpt-cf-usage-collector-fr-ingestion` | SDK `emit()` persists record to local outbox within the caller's transaction; outbox dispatcher delivers to gateway |
+| `cpt-cf-usage-collector-fr-ingestion` | SDK `emit()` persists record to local outbox within the caller's transaction; outbox library background pipeline delivers to gateway |
 | `cpt-cf-usage-collector-fr-idempotency` | Counter records require a non-null idempotency key; `emit()` rejects counter records without one (`EmitError::MissingIdempotencyKey`) before any outbox INSERT; gauge records accept a null key; idempotency key is carried in the outbox payload; storage plugin performs idempotent upsert on non-null keys at delivery |
-| `cpt-cf-usage-collector-fr-delivery-guarantee` | Transactional outbox in source's local DB; dispatcher retries with exponential backoff; exhausted rows transitioned to dead state and surfaced via monitoring |
+| `cpt-cf-usage-collector-fr-delivery-guarantee` | Transactional outbox in source's local DB; outbox library retries with exponential backoff; messages that exhaust retry budget are moved to the dead-letter store and surfaced via monitoring |
 | `cpt-cf-usage-collector-fr-counter-semantics` | `ScopedUsageCollectorClientV1.emit()` rejects counter records with a negative value or a missing idempotency key before inserting the outbox row; delta records are stored per-event; the persistent total for a (tenant, metric) pair is the SUM of all active delta records — see §3.7 Counter Accumulation for the full strategy including plugin-level acceleration options |
 | `cpt-cf-usage-collector-fr-gauge-semantics` | Gauge records carry `metric_kind = gauge`; `emit()` applies no monotonicity validation; storage plugin stores values as-is |
 | `cpt-cf-usage-collector-fr-tenant-attribution` | SDK captures tenant ID from SecurityContext at emit time; gateway validates tenant on all inbound records |
@@ -45,17 +45,18 @@ Once records arrive at the gateway, they are persisted via the active storage pl
 | NFR ID | NFR Summary | Allocated To | Design Response | Verification Approach |
 |--------|-------------|--------------|-----------------|----------------------|
 | `cpt-cf-usage-collector-nfr-query-latency` | Aggregation queries over 30-day range complete within 500ms at p95 | Storage Plugin | Aggregation pushed down to storage engine (ClickHouse/TimescaleDB native aggregation); gateway adds no significant processing overhead | Benchmark test with 30-day synthetic dataset at p95 |
-| `cpt-cf-usage-collector-nfr-availability` | 99.95% monthly availability for ingestion endpoints | Gateway, Dispatcher | Stateless gateway enables horizontal replication; outbox dispatcher absorbs temporary gateway unavailability, preserving record capture continuity; liveness probes and graceful shutdown ensure fast instance recovery | SLO tracking on gateway uptime; synthetic availability probes on ingestion endpoint |
+| `cpt-cf-usage-collector-nfr-availability` | 99.95% monthly availability for ingestion endpoints | Gateway, SDK | Stateless gateway enables horizontal replication; the SDK's outbox pipeline absorbs temporary gateway unavailability, preserving record capture continuity; liveness probes and graceful shutdown ensure fast instance recovery | SLO tracking on gateway uptime; synthetic availability probes on ingestion endpoint |
 | `cpt-cf-usage-collector-nfr-throughput` | ≥ 10,000 records/sec sustained ingestion | Gateway, Storage Plugin | Gateway dispatches records to the storage plugin for batched idempotent upsert; plugin pushes bulk INSERTs to append-optimized storage (ClickHouse column store, TimescaleDB hypertable); stateless gateway scales horizontally | Sustained load test at 10,000 records/sec for 10 minutes; verify no records lost and no latency degradation |
 | `cpt-cf-usage-collector-nfr-ingestion-latency` | Ingestion completes within 200ms at p95 | SDK | `emit()` is a local DB INSERT within the caller's transaction — no network I/O on the critical emission path; p95 latency is bounded by local DB write speed, well within the 200ms threshold | Benchmark `emit()` p95 latency under representative concurrent load |
 | `cpt-cf-usage-collector-nfr-workload-isolation` | Ingestion p95 ≤ 200ms during concurrent query and retention workloads | Gateway, Storage Plugin | Query and retention workloads run on separate handler paths from the ingest handler; retention enforcement runs as a scheduled background task with lower priority; plugins leverage storage-native query prioritization (ClickHouse query priority classes, TimescaleDB resource groups) to prevent analytical workloads from starving ingest writes | Measure ingest p95 under concurrent aggregation queries and retention enforcement; verify it remains within `cpt-cf-usage-collector-nfr-ingestion-latency` threshold |
 | `cpt-cf-usage-collector-nfr-authentication` | Zero unauthenticated API access | Gateway | All gateway endpoints require a valid authenticated SecurityContext; unauthenticated requests are rejected by the ModKit request pipeline before any handler or plugin is invoked | Integration tests verifying all endpoints return a rejection for requests without valid authentication credentials |
 | `cpt-cf-usage-collector-nfr-authorization` | Zero unauthorized data access or write | Gateway, SDK | SDK `authorize_emit()` contacts the platform PDP before any transaction opens; gateway enforces PDP authorization on all query, backfill, amendment, and deactivation endpoints and applies returned constraints as additional query filters; system fails closed on any authorization failure (`cpt-cf-usage-collector-principle-fail-closed`) | Integration tests verifying unauthorized ingestion, query, backfill, and amendment requests are rejected with no data exposed or modified |
 | `cpt-cf-usage-collector-nfr-scalability` | Linear throughput scaling with added instances | Gateway | Gateway is stateless — all per-request state is carried in SecurityContext and request payload; horizontal scaling is achieved by adding gateway instances behind a load balancer with no coordination required | Load test demonstrating linear throughput increase as gateway instance count is increased from 1 to N |
-| `cpt-cf-usage-collector-nfr-fault-tolerance` | Zero data loss for durably captured records during storage backend failures | Dispatcher, Gateway | Outbox dispatcher retries failed gateway deliveries with exponential backoff and jitter; gateway retries plugin persist calls on transient storage errors; records durably captured in the source outbox are guaranteed to eventually reach the storage backend; rows that exhaust retry budget transition to `dead` state and are surfaced via operational monitoring | Chaos test: take storage backend offline, verify outbox rows survive and are delivered on recovery with zero data loss |
-| `cpt-cf-usage-collector-nfr-recovery` | RTO ≤ 15 minutes from storage backend recovery | Dispatcher, Gateway | Outbox dispatcher resumes delivery polling automatically once the gateway reconnects to the recovered storage plugin; gateway re-establishes plugin connection on storage recovery without restart; the RTO bound is determined by the dispatcher retry schedule — the maximum backoff ceiling MUST be configured below 15 minutes to meet this threshold | Chaos test: restore storage backend after outage, measure elapsed time from backend availability to full outbox drain and query availability; verify elapsed time ≤ 15 minutes |
+| `cpt-cf-usage-collector-nfr-fault-tolerance` | Zero data loss for durably captured records during storage backend failures | SDK, Gateway | The SDK's outbox pipeline retries failed gateway deliveries with exponential backoff; gateway retries plugin persist calls on transient storage errors; records durably captured in the source outbox are guaranteed to eventually reach the storage backend; messages that exhaust retry budget are moved to the dead-letter store and surfaced via operational monitoring | Chaos test: take storage backend offline, verify outbox rows survive and are delivered on recovery with zero data loss |
+| `cpt-cf-usage-collector-nfr-recovery` | RTO ≤ 15 minutes from storage backend recovery | SDK, Gateway | The outbox library resumes delivery automatically once the gateway becomes reachable again; gateway re-establishes plugin connection on storage recovery without restart; the RTO bound is determined by the outbox retry schedule — `backoff_max` MUST be configured below 15 minutes to meet this threshold | Chaos test: restore storage backend after outage, measure elapsed time from backend availability to full outbox drain and query availability; verify elapsed time ≤ 15 minutes |
 | `cpt-cf-usage-collector-nfr-retention` | Configurable retention from 7 days to 7 years | Storage Plugin | Retention policy configuration is managed by the gateway; plugin enforces retention via storage-native TTL expressions (ClickHouse) or scheduled deletion (TimescaleDB); policies apply at global, per-tenant, and per-usage-type scope | Test retention enforcement for each plugin: records older than the configured duration are removed within the enforcement window |
-| `cpt-cf-usage-collector-nfr-graceful-degradation` | Zero ingestion failures due to downstream consumer unavailability | SDK, Dispatcher | `emit()` writes to the source's local database within the caller's transaction — no runtime dependency on the collector or any downstream consumer; the outbox dispatcher delivers asynchronously, fully decoupling the source's emission path from collector and consumer uptime | Integration test: take the collector gateway offline; verify sources continue emitting without errors and records are delivered on gateway recovery |
+| `cpt-cf-usage-collector-nfr-graceful-degradation` | Zero ingestion failures due to downstream consumer unavailability | SDK | `emit()` writes to the source's local database within the caller's transaction — no runtime dependency on the collector or any downstream consumer; the outbox pipeline delivers asynchronously, fully decoupling the source's emission path from collector and consumer uptime | Integration test: take the collector gateway offline; verify sources continue emitting without errors and records are delivered on gateway recovery |
+| `cpt-cf-usage-collector-nfr-rpo` | RPO = 0 for all records for which `emit()` returned `Ok` | SDK | `emit()` calls `Outbox::enqueue()` within the caller's DB transaction — a record is durable the moment that transaction commits; no committed record can be lost by a subsequent gateway restart, dispatcher crash, or storage outage, because the outbox row persists independently in the source's local DB until confirmed delivered | Test: call `emit()` successfully, kill the gateway process immediately after commit, restart gateway; verify the record is delivered and queryable with no data loss |
 
 #### Key ADRs
 
@@ -71,9 +72,7 @@ Once records arrive at the gateway, they are persisted via the active storage pl
 │                    Usage Sources                               │
 │            (LLM Gateway, Compute Service, etc.)                │
 ├────────────────────────────────────────────────────────────────┤
-│  usage-collector-sdk  │  emit() trait, outbox enqueue          │
-├────────────────────────────────────────────────────────────────┤
-│  Outbox Dispatcher    │  Local DB → Collector delivery         │
+│  usage-collector-sdk  │  emit() + outbox enqueue + delivery    │
 ├────────────────────────────────────────────────────────────────┤
 │  usage-collector      │  Gateway: ingest, query, tenant iso.   │
 ├────────────────────────────────────────────────────────────────┤
@@ -88,8 +87,7 @@ Once records arrive at the gateway, they are persisted via the active storage pl
 
 | Layer | Responsibility | Technology |
 |-------|---------------|------------|
-| SDK | Public trait for emitting records; outbox enqueue in source's local DB | Rust crate (`usage-collector-sdk`), modkit-db outbox |
-| Dispatcher | Background delivery of outbox records to collector gateway | ModKit stateful lifecycle task, modkit-db outbox |
+| SDK | Emit API; outbox enqueue; owns `OutboxHandle` whose background pipeline automatically delivers records to the gateway | Rust crate (`usage-collector-sdk`), modkit-db outbox |
 | Gateway | Ingest, query, aggregation API; tenant isolation; plugin resolution | Rust crate (`usage-collector`), Axum |
 | Plugins | Backend-specific record persistence and aggregation queries | Rust crates, ClickHouse / TimescaleDB drivers |
 | External | Durable time-series storage and query execution | ClickHouse or TimescaleDB |
@@ -153,7 +151,7 @@ Any future requirement that depends on external state at emit time MUST be resol
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-constraint-outbox-infra`
 
-The SDK requires the `modkit_outbox_events` table to be present in the source's local database. Usage sources that do not have a local database managed by modkit-db cannot use the SDK directly.
+The SDK requires the modkit-db outbox schema to be present in the source's local database. The schema is installed by running `outbox_migrations()` from `modkit_db::outbox` as part of the source module's migration set. Usage sources that do not have a local database managed by modkit-db cannot use the SDK directly.
 
 #### Single Active Plugin
 
@@ -233,7 +231,6 @@ graph TD
         App[Application Code]
         SDK[usage-collector-sdk]
         LDB[(Local DB)]
-        Disp[Outbox Dispatcher]
     end
 
     subgraph Collector["Usage Collector"]
@@ -248,8 +245,8 @@ graph TD
     Consumer[Usage Consumer]
 
     App -->|emit| SDK
-    SDK -->|enqueue| LDB
-    Disp -->|claim & deliver| GW
+    SDK -->|enqueue within caller tx| LDB
+    SDK -->|"deliver (outbox pipeline)"| GW
     GW -->|write| Plugin
     Plugin -->|persist| DB
     Consumer -->|query| GW
@@ -268,48 +265,23 @@ Provides the public API for usage sources to emit records. Handles transactional
 
 ##### Responsibility scope
 
+- At SDK initialization: register the `"usage-records"` outbox queue (idempotent, 4 partitions), start the decoupled outbox pipeline with the SDK's internal delivery handler, and retain the resulting `OutboxHandle` for the process lifetime — no explicit shutdown coordination is required
 - Expose `for_module(name) -> ScopedUsageCollectorClientV1` on `UsageCollectorClientV1`; each consuming module calls this once at initialization with its compile-time `MODULE_NAME` constant
 - `ScopedUsageCollectorClientV1.authorize_emit(ctx, metric_name)` — called before any DB transaction opens; calls the platform PDP (authz constraints for the given metric), fetches the current rate limit state for the (source, tenant) pair, and retrieves the registered usage type schema for `metric_name` from types-registry; returns an opaque `EmitAuthorization` token on success or an error on denial / quota exhaustion
-- `ScopedUsageCollectorClientV1.emit(ctx, record, &EmitAuthorization)` — called inside the caller's DB transaction; validates metric semantics (rejects counter records with a negative value or a missing idempotency key), captures subject ID and type from SecurityContext, stamps source module identity, then evaluates all `EmitAuthorization` constraints in-memory in order: usage type schema validation, rate limit quota check, PDP constraint satisfaction; rejects before the outbox INSERT on any failure; on success inserts the outbox row
-- Include tenant ID, source module, metric kind, idempotency key, resource attribution, and subject attribution in the outbox payload
-- Pass optional metadata field through to the outbox payload without interpretation; enforce the configurable size limit (default 8 KB) before inserting the outbox row
+- `ScopedUsageCollectorClientV1.emit(ctx, record, &EmitAuthorization)` — called inside the caller's DB transaction; validates metric semantics (rejects counter records with a negative value or a missing idempotency key), captures subject ID and type from SecurityContext, stamps source module identity, then evaluates all `EmitAuthorization` constraints in-memory in order: usage type schema validation, rate limit quota check, PDP constraint satisfaction; rejects before the outbox enqueue on any failure; on success calls `Outbox::enqueue()` within the caller's transaction
+- Serialize the usage record (tenant ID, source module, metric kind, idempotency key, resource attribution, subject attribution) to bytes as the outbox payload with `payload_type = "usage-collector.record.v1"`
+- Pass optional metadata field through to the payload without interpretation; enforce the configurable size limit (default 8 KB) before enqueuing
+- Internally implement a `MessageHandler` that the outbox library calls for each ready message: deserialize the payload, assemble a gateway ingest request, call `persist()`, and return `HandlerResult::Success` on confirmation, `HandlerResult::Retry` on transient failure, or `HandlerResult::Reject` on permanent non-retriable failure (e.g. deserialization error, gateway 400); `backoff_max` MUST be configured below 15 minutes to satisfy `cpt-cf-usage-collector-nfr-recovery`
 
 ##### Responsibility boundaries
 
-- Does NOT deliver records to the collector — that is the dispatcher's responsibility
+- Does NOT expose the `MessageHandler` implementation as a public API or a separate component
 - Does NOT call the PDP inside an open DB transaction
 - Does NOT interact with the storage backend directly
 
 ##### Related components (by ID)
 
-- `cpt-cf-usage-collector-component-dispatcher` — consumes outbox rows produced by this component
-
-#### Outbox Dispatcher
-
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-component-dispatcher`
-
-##### Why this component exists
-
-Bridges source-local outbox persistence and the centralized collector, providing at-least-once delivery guarantee without requiring sources to be online with the collector simultaneously.
-
-##### Responsibility scope
-
-- Run as a ModKit stateful lifecycle task within the source's process
-- Claim pending outbox rows using `FOR UPDATE SKIP LOCKED` for crash-safe lease acquisition
-- Deliver claimed records to the collector gateway via the `persist()` call
-- Retry failed deliveries with exponential backoff and jitter
-- Transition rows exhausted of retries to `dead` status for operational visibility
-
-##### Responsibility boundaries
-
-- Does NOT write to the storage backend — that is the plugin's responsibility
-- Does NOT perform aggregation or raw queries
-- Does NOT make authorization or tenant validation decisions
-
-##### Related components (by ID)
-
-- `cpt-cf-usage-collector-component-sdk` — produces the outbox rows this component consumes
-- `cpt-cf-usage-collector-component-gateway` — delivery target for claimed outbox rows
+- `cpt-cf-usage-collector-component-gateway` — delivery target for outbox messages
 
 #### Gateway
 
@@ -321,19 +293,19 @@ The centralized entry point for receiving delivered records and serving aggregat
 
 ##### Responsibility scope
 
-- Accept ingest requests from outbox dispatchers
+- Accept ingest requests from the SDK's outbox delivery pipeline
 - Derive and enforce tenant ID from SecurityContext on all ingest and query operations
 - Resolve the active storage plugin via GTS
 - Expose aggregation and raw query API to usage consumers
 - Authorize each query via the platform PDP: verify the caller is permitted to query; apply PDP-returned constraints as additional query filters before delegating to the plugin
 - Delegate all storage reads and writes to the resolved plugin
 - Fail closed on authorization failures — no permissive fallback
-- Enforce configurable per-call timeout for all plugin operations (default 5 s); if a plugin call does not complete within the timeout, the gateway returns an error and does not retry within the same request — retry is delegated to the outbox dispatcher for ingest operations
+- Enforce configurable per-call timeout for all plugin operations (default 5 s); if a plugin call does not complete within the timeout, the gateway returns an error and does not retry within the same request — for ingest, retry is handled by the outbox library on the SDK side
 - Apply a circuit breaker per storage plugin instance: open the circuit after 5 consecutive plugin call failures within a 10-second window; return `503 Service Unavailable` while the circuit is open; probe with a single call after a configurable half-open interval (default 30 s)
 - Enforce configurable metadata size limit (default 8 KB) at ingest; reject oversized records before delegating to plugin
 - Validate each inbound record against the schema registered in types-registry before delegating to plugin (defense-in-depth; primary validation occurs at SDK `emit()` time before the outbox INSERT)
-- Accept operator backfill requests; validate time boundaries and authorization; write all backfill records to the gateway-local backfill outbox within a single transaction; emit `WriteAuditEvent` to `audit_service` once all records are committed to the outbox; respond `202 Accepted` to the caller
-- Run a gateway-local backfill outbox dispatcher that claims pending backfill outbox rows and delivers them to the plugin in rate-limited batches; retries with exponential backoff on plugin failure; applies independent rate limits to prevent storage backend saturation
+- Accept operator backfill requests; validate time boundaries and authorization; enqueue each backfill record as a separate outbox message via `Outbox::enqueue_batch()` within the handler transaction; emit `WriteAuditEvent` to `audit_service` once all records are committed to the outbox; respond `202 Accepted` to the caller
+- Internally implement a `MessageHandler` for the backfill outbox that the outbox library calls for each individual backfill record: deserialize the payload into a single `UsageRecord`, call `plugin.backfill_ingest()`, and return `HandlerResult::Success` on confirmation, `HandlerResult::Retry` on transient plugin failure, or `HandlerResult::Reject` on permanent failure; `backoff_max` bounds retry duration; delivery throughput to the plugin is naturally rate-limited by the outbox partition count and `msg_batch_size`
 - Expose amendment and deactivation endpoints for individual usage records; emit `WriteAuditEvent` to `audit_service` on each operation
 - Enforce configurable backfill time boundaries (max window, future tolerance); require elevated authorization for requests beyond the max window
 - Manage retention policy configuration (global, per-tenant, per-usage-type) and trigger plugin enforcement
@@ -348,7 +320,7 @@ The centralized entry point for receiving delivered records and serving aggregat
 
 ##### Related components (by ID)
 
-- `cpt-cf-usage-collector-component-dispatcher` — inbound delivery from dispatcher
+- `cpt-cf-usage-collector-component-sdk` — inbound delivery via the SDK's outbox pipeline
 - `cpt-cf-usage-collector-component-storage-plugin` — delegates all storage operations to plugin
 
 #### Storage Plugin
@@ -375,7 +347,7 @@ Provides a backend-specific implementation for persisting and querying usage rec
 ##### Responsibility boundaries
 
 - Does NOT enforce authorization — that is the gateway's responsibility
-- Does NOT implement delivery logic — that is the dispatcher's responsibility
+- Does NOT implement delivery logic — records arrive pre-delivered by the SDK's outbox pipeline
 - Does NOT contain business logic (pricing, billing, quota decisions)
 
 ##### Related components (by ID)
@@ -396,7 +368,7 @@ Provides a backend-specific implementation for persisting and querying usage rec
 | Operation | Caller | Description |
 |-----------|--------|-------------|
 | `for_module(name)` | Usage source at init | Returns a `ScopedUsageCollectorClientV1` bound to the source module's authoritative name |
-| `persist(records)` | Outbox dispatcher | Delivers a batch of records to the collector gateway; idempotent on `idempotency_key` |
+| `persist(records)` | SDK (outbox delivery handler) | Delivers a batch of records to the collector gateway; idempotent on `idempotency_key` |
 | `query_aggregated(ctx, query)` | Usage consumer | Returns aggregated usage data scoped to the authenticated tenant |
 | `query_raw(ctx, query)` | Usage consumer | Returns paginated raw usage records scoped to the authenticated tenant |
 
@@ -475,7 +447,7 @@ All endpoints are **stable** (prefixed `/v1/`). Backward compatibility is guaran
 
 | Dependency Module | Interface Used | Purpose |
 |-------------------|----------------|---------|
-| modkit-db | `modkit_db::outbox` — enqueue and dispatcher primitives | Durable outbox persistence and dispatcher lifecycle for at-least-once delivery |
+| modkit-db | `modkit_db::outbox` — `Outbox::enqueue()`, `OutboxHandle`, `outbox_migrations()`, dead-letter API | Durable outbox persistence, automatic background delivery pipeline, and dead-letter management for at-least-once delivery |
 | types-registry | GTS type system — plugin schema registration and instance resolution; types-registry SDK — usage type schema retrieval | Storage plugin discovery and instantiation at runtime; usage type schema fetching for in-memory validation at emit time (called by `ScopedUsageCollectorClientV1.authorize_emit()`) |
 | SecurityContext | Platform security primitive | Tenant identity, subject identity derivation and authorization enforcement on all operations |
 | authz-resolver | `authz-resolver-sdk` — `PolicyEnforcer` / `AuthZResolverClient` | Platform PDP for ingestion authorization; called by `ScopedUsageCollectorClientV1.authorize_emit()` to verify the source module is permitted to emit the target metrics |
@@ -542,7 +514,7 @@ sequenceDiagram
     participant PDP as authz-resolver (PDP)
     participant TR as types-registry
     participant LDB as Local DB
-    participant Disp as Outbox Dispatcher
+    participant OB as Outbox Pipeline (SDK background)
     participant GW as UC Gateway
     participant Plugin as Storage Plugin
     participant DB as ClickHouse / TimescaleDB
@@ -566,24 +538,22 @@ sequenceDiagram
     SC->>SC: validate record against schema
     SC->>SC: check quota (emission count within window limit)
     SC->>SC: evaluate PDP constraints
-    SC->>LDB: INSERT outbox row (within caller's tx)
+    SC->>LDB: Outbox::enqueue() within caller's tx
     LDB-->>SC: ok
     SC-->>App: Ok | Err(SchemaViolation | RateLimitExceeded | ConstraintViolation)
 
-    Note over Disp: Background loop
-    Disp->>LDB: SELECT ... FOR UPDATE SKIP LOCKED
-    LDB-->>Disp: pending rows
-    Disp->>GW: deliver batch
+    Note over OB: Outbox library background pipeline
+    OB->>GW: MessageHandler::handle() → persist(records)
     GW->>GW: validate SecurityContext
     GW->>Plugin: persist(records)
     Plugin->>DB: INSERT (idempotent upsert on idempotency_key)
     DB-->>Plugin: ok
     Plugin-->>GW: ok
-    GW-->>Disp: ok
-    Disp->>LDB: mark rows delivered
+    GW-->>OB: ok → HandlerResult::Success (outbox advances cursor)
+    Note over OB: On transient failure: HandlerResult::Retry → exponential backoff<br/>On permanent failure: HandlerResult::Reject → dead-letter store
 ```
 
-**Description**: At module initialization, the usage source calls `for_module()` to obtain a `ScopedUsageCollectorClientV1` bound to its platform identity. For each request that will emit usage, it calls `authorize_emit()` before opening any DB transaction — the scoped client contacts the PDP, fetches the registered usage type schema from types-registry, and fetches the current rate limit quota snapshot for the (source, tenant) pair; it returns an `EmitAuthorization` token bundling all three, or an immediate `Denied` or `RateLimitExceeded` error. Inside the caller's transaction, `emit()` validates metric semantics (rejecting negative counter values), captures subject identity from SecurityContext, then evaluates all `EmitAuthorization` constraints in-memory in order: schema validation, rate limit quota check, PDP constraint satisfaction. On any failure the outbox INSERT is skipped. On success the outbox row is inserted. A background outbox dispatcher periodically claims pending rows, delivers them to the collector gateway, and marks them delivered. On delivery failure, the dispatcher retries with exponential backoff; rows exhausted of retries are transitioned to dead state and surfaced via monitoring.
+**Description**: At module initialization, the usage source calls `for_module()` to obtain a `ScopedUsageCollectorClientV1` bound to its platform identity. For each request that will emit usage, it calls `authorize_emit()` before opening any DB transaction — the scoped client contacts the PDP, fetches the registered usage type schema from types-registry, and fetches the current rate limit quota snapshot for the (source, tenant) pair; it returns an `EmitAuthorization` token bundling all three, or an immediate `Denied` or `RateLimitExceeded` error. Inside the caller's transaction, `emit()` validates metric semantics, captures subject identity, evaluates all constraints in-memory, and on success calls `Outbox::enqueue()`. The outbox library's background pipeline then automatically picks up enqueued messages and invokes the SDK's internal `MessageHandler`. On `HandlerResult::Success` the outbox advances the partition cursor; on `HandlerResult::Retry` it applies exponential backoff and re-delivers; on `HandlerResult::Reject` it moves the message to the dead-letter store.
 
 #### Query Aggregated Usage
 
@@ -658,7 +628,6 @@ sequenceDiagram
     participant Op as Platform Operator
     participant GW as UC Gateway
     participant OB as Backfill Outbox (gateway-local)
-    participant Dispatcher as Backfill Outbox Dispatcher
     participant Plugin as Storage Plugin
     participant DB as ClickHouse / TimescaleDB
     participant AS as audit_service
@@ -666,7 +635,7 @@ sequenceDiagram
     Op->>GW: POST /usage/backfill (tenant, usage_type, range, records)
     GW->>GW: enforce time boundaries (max window, future tolerance)
     GW->>GW: verify elevated authz if range exceeds max window
-    GW->>OB: INSERT all backfill records (single transaction)
+    GW->>OB: Outbox::enqueue_batch() — one message per record (within handler transaction)
     alt outbox write fails
         OB-->>GW: error
         GW-->>Op: 500
@@ -676,23 +645,17 @@ sequenceDiagram
         GW-->>Op: 202 Accepted
     end
 
-    loop Backfill Outbox Dispatcher (background, rate-limited)
-        Dispatcher->>OB: claim pending rows (FOR UPDATE SKIP LOCKED)
-        Dispatcher->>Plugin: backfill_ingest(tenant, usage_type, records)
-        Plugin->>DB: INSERT records (idempotent upsert on idempotency_key)
-        alt persist fails
-            DB-->>Plugin: error
-            Plugin-->>Dispatcher: error
-            Dispatcher->>OB: release rows, increment retry_count
-        else persist succeeds
-            DB-->>Plugin: ok
-            Plugin-->>Dispatcher: ok
-            Dispatcher->>OB: mark rows delivered
-        end
-    end
+    Note over OB: Outbox library background pipeline (gateway-local)
+    OB->>GW: MessageHandler::handle() → single backfill record
+    GW->>Plugin: backfill_ingest(tenant, usage_type, record)
+    Plugin->>DB: INSERT records (idempotent upsert on idempotency_key)
+    DB-->>Plugin: ok
+    Plugin-->>GW: ok
+    GW-->>OB: ok → HandlerResult::Success (outbox advances cursor)
+    Note over OB: On transient failure: HandlerResult::Retry → exponential backoff<br/>On permanent failure: HandlerResult::Reject → dead-letter store
 ```
 
-**Description**: Platform operator submits a backfill request specifying tenant, usage type, time range, and historical records to insert. The gateway enforces time boundaries and requires elevated authorization for windows exceeding the configured maximum. On successful validation, the gateway writes all backfill records to a gateway-local backfill outbox in a single transaction, then emits a `WriteAuditEvent` to `audit_service` and returns `202 Accepted` to the caller. A gateway-local backfill outbox dispatcher then claims and delivers rows to the plugin in rate-limited batches, preventing storage backend saturation. The plugin bulk-inserts each batch using idempotent upsert — existing records are not modified. Real-time ingestion continues uninterrupted throughout the operation.
+**Description**: Platform operator submits a backfill request specifying tenant, usage type, time range, and historical records to insert. The gateway enforces time boundaries and requires elevated authorization for windows exceeding the configured maximum. On successful validation, the gateway enqueues all backfill records to a gateway-local backfill outbox in a single transaction, then emits a `WriteAuditEvent` to `audit_service` and returns `202 Accepted` to the caller. The outbox library's background pipeline then automatically calls the gateway's internal `MessageHandler` for each individual record. The plugin inserts each record using idempotent upsert — existing records are not modified. Real-time ingestion continues uninterrupted throughout the operation.
 
 #### Amend Individual Record
 
@@ -786,34 +749,34 @@ sequenceDiagram
 
 ### 3.7 Database schemas & tables
 
-#### Table: modkit_outbox_events (source-local)
+#### Outbox Queue (source-local)
 
 **ID**: `cpt-cf-usage-collector-dbtable-outbox`
 
-This table is owned by the `modkit-db` shared infrastructure. The Usage Collector SDK writes to it at emit time; the outbox dispatcher reads from it during delivery. The full schema is defined in the modkit-db outbox specification.
+The outbox schema is owned by the `modkit-db` shared infrastructure and installed via `outbox_migrations()` from `modkit_db::outbox` as part of the source module's migration set. The SDK interacts with the outbox exclusively through the public API: `Outbox::enqueue()` to persist a message and `Outbox` dead-letter methods for operational management. Internal table structure is an implementation detail of the outbox library and is not referenced here.
 
-**Usage Collector payload fields (stored in `payload` JSONB column)**:
+**Queue**: The SDK registers a single queue named `"usage-records"` with `Partitions::of(4)` (configurable). Queue registration is idempotent and runs at SDK initialization time via `Outbox::builder(db).queue("usage-records", Partitions::of(4)).decoupled(delivery_handler).start()`.
 
-| Column | Type | Description |
-|--------|------|-------------|
+**Payload**: Each enqueued message carries `payload_type = "usage-collector.record.v1"` and a binary payload containing the serialized usage record fields:
+
+| Field | Type | Description |
+|-------|------|-------------|
 | `tenant_id` | UUID | Tenant owning this usage record |
 | `source_module` | TEXT | Source module name from `ScopedUsageCollectorClientV1` |
 | `metric_kind` | TEXT | `"counter"` or `"gauge"` |
 | `metric` | TEXT | Name of the measured resource metric |
 | `value` | NUMERIC | Numeric measurement value |
 | `timestamp` | TIMESTAMPTZ | When the measurement occurred |
-| `idempotency_key` | TEXT | Client-provided deduplication key; NOT NULL for counter records (enforced by `emit()` before the row is inserted); nullable for gauge records |
+| `idempotency_key` | TEXT | Client-provided deduplication key; non-null for counter records (enforced by `emit()` before enqueue); nullable for gauge records |
 | `resource_id` | UUID (nullable) | Resource instance this record is attributed to |
 | `resource_type` | TEXT (nullable) | Resource type corresponding to `resource_id` |
 | `subject_id` | UUID (nullable) | Subject (user/service account) from SecurityContext |
 | `subject_type` | TEXT (nullable) | Subject type corresponding to `subject_id` |
-| `metadata` | JSONB (nullable) | Optional opaque metadata; size validated by SDK before insert (default 8 KB limit) |
+| `metadata` | JSON object (nullable) | Optional opaque metadata; size validated by SDK before enqueue (default 8 KB limit) |
 
-**PK**: `id` (BIGSERIAL, owned by modkit-db)
+**Payload invariants** (enforced by SDK before `Outbox::enqueue()` is called): `tenant_id`, `source_module`, `metric_kind`, `metric`, `value`, `timestamp` are all non-null. `idempotency_key` is non-null for counter records.
 
-**Constraints**: `tenant_id NOT NULL`, `source_module NOT NULL`, `metric_kind NOT NULL`, `metric NOT NULL`, `value NOT NULL`, `timestamp NOT NULL`
-
-**Additional info**: `locked_by` and `locked_until` columns (owned by modkit-db) support lease-based claiming by the dispatcher. `retry_count` and `status` columns track delivery progress and dead-letter state.
+**Dead letters**: Messages permanently rejected by the SDK's delivery handler (`HandlerResult::Reject`) are moved to the outbox dead-letter store by the library. Dead-letter management (replay, resolve, discard) is available via the `Outbox` dead-letter API.
 
 #### Storage Backend Tables (plugin-owned)
 
@@ -907,10 +870,10 @@ Audit events for operator-initiated writes (backfill, amendment, deactivation) a
 |--------|------|--------|-------------|
 | `usage_ingestion_total` | Counter | `tenant_id`, `usage_type`, `status` | Total ingest attempts at gateway; `status` values: `success`, `validation_error`, `dedup`, `auth_denied` |
 | `usage_ingestion_latency_ms` | Histogram | `tenant_id` | Gateway ingest handler latency at p50, p95, p99 |
-| `usage_ingestion_batch_size` | Histogram | `source_module` | Records per batch delivered by the outbox dispatcher |
-| `outbox_pending_rows` | Gauge | `source_module` | Outbox rows in `pending` or `retrying` state in the source's local DB |
-| `outbox_dead_rows_total` | Counter | `source_module` | Outbox rows transitioned to `dead` state after exhausting retry budget |
-| `outbox_delivery_attempts_total` | Counter | `source_module`, `status` | Dispatcher delivery attempts; `status` values: `success`, `failure` |
+| `usage_ingestion_batch_size` | Histogram | `source_module` | Records per batch delivered by the SDK outbox pipeline |
+| `outbox_pending_rows` | Gauge | `source_module` | Unprocessed outbox messages pending delivery in the source's local DB |
+| `outbox_dead_letters_total` | Counter | `source_module` | Messages moved to the dead-letter table after permanent delivery failure (`HandlerResult::Reject`) |
+| `outbox_delivery_attempts_total` | Counter | `source_module`, `status` | SDK delivery handler invocations by the outbox pipeline; `status` values: `success`, `failure` |
 | `outbox_delivery_latency_ms` | Histogram | `source_module` | Time from outbox row insertion to confirmed gateway delivery |
 | `usage_dedup_total` | Counter | `tenant_id` | Records deduplicated by idempotent upsert on `idempotency_key` |
 | `usage_schema_validation_errors_total` | Counter | `tenant_id`, `usage_type` | Records rejected by types-registry schema validation at gateway |
@@ -925,7 +888,7 @@ Audit events for operator-initiated writes (backfill, amendment, deactivation) a
 All log entries carry: correlation ID, `tenant_id`, operation type, and handler latency.
 
 - **Ingest**: batch size, dedup count, validation error count, `source_module`
-- **Dispatcher**: outbox row ID, delivery attempt number, backoff delay
+- **SDK delivery**: outbox message sequence, partition, delivery attempt number, backoff delay
 - **Backfill**: time range, records inserted
 - **Authorization**: operation type, PDP decision; no permission details in structured fields
 
@@ -943,7 +906,7 @@ Never logged: record metric values, metadata contents, subject or resource ident
 | Alert | Condition | Severity |
 |-------|-----------|----------|
 | Storage backend unreachable | `storage_health_status == 0` for > 30 seconds | Critical |
-| Outbox dead rows accumulating | `outbox_dead_rows_total` increasing for any `source_module` | Critical |
+| Outbox dead letters accumulating | `outbox_dead_letters_total` increasing for any `source_module` | Critical |
 | Outbox backlog growing | `outbox_pending_rows` above threshold sustained for 10 minutes | High |
 | Ingestion latency degraded | `usage_ingestion_latency_ms` p95 > 200ms sustained for 5 minutes | High |
 | Audit emit failures | `usage_audit_emit_total{result="failed"}` > 0 sustained for 5 minutes | High |
@@ -953,10 +916,12 @@ Never logged: record metric values, metadata contents, subject or resource ident
 
 The outbox pattern implementation relies on the modkit-db outbox infrastructure. Key properties:
 
-- Outbox row is inserted in the same DB transaction as the domain operation, ensuring no usage record is produced without a corresponding outbox entry
-- The dispatcher uses lease-based claiming (`locked_by`, `locked_until`) to prevent concurrent delivery attempts across dispatcher instances for the same row
-- Retry scheduling uses exponential backoff with jitter to avoid thundering herd on collector recovery
-- Rows that exhaust their retry budget are transitioned to `dead` status; these are surfaced via operational monitoring to satisfy `cpt-cf-usage-collector-fr-delivery-guarantee`
+- `Outbox::enqueue()` is called within the caller's DB transaction, ensuring no usage record is produced without a durably persisted outbox message
+- The outbox library drives the delivery background pipeline automatically once `OutboxHandle` is started; no separate polling loop or lifecycle task is needed in the SDK
+- No explicit shutdown coordination is required: the SDK and its outbox pipeline share the process lifetime; when the process exits, tokio drops all background tasks; delivery continuity is guaranteed through the persistent outbox and lease re-claiming on the next startup, not through graceful drain
+- The outbox library uses per-partition lease-based claiming (decoupled mode) to prevent concurrent delivery across multiple SDK instances for the same partition; the cancellation token fires at 80% of the lease duration to allow graceful exit before lease expiry
+- Retry uses exponential backoff (configurable `backoff_base` and `backoff_max`; default 1s–60s); `backoff_max` MUST be configured below 15 minutes to satisfy `cpt-cf-usage-collector-nfr-recovery`
+- Messages permanently rejected by the SDK's delivery handler (`HandlerResult::Reject`) are moved to the dead-letter store by the outbox library; surfaced via `outbox_dead_letters_total` monitoring to satisfy `cpt-cf-usage-collector-fr-delivery-guarantee`
 - Idempotent upsert at the storage plugin layer handles duplicate deliveries that arise from at-least-once retry semantics
 
 **Not applicable — UX architecture**: Usage Collector is a headless backend module with no user-facing interface.
@@ -971,7 +936,7 @@ The outbox pattern implementation relies on the modkit-db outbox infrastructure.
 | **Tampering** | Overwriting existing records on delivery | Idempotent upsert prevents silent overwrite; `version` field enforces optimistic concurrency on amendments; all operator-initiated writes produce a `WriteAuditEvent` to `audit_service` |
 | **Repudiation** | Operator denies issuing a backfill, amendment, or deactivation | `WriteAuditEvent` emitted to `audit_service` for every operator-initiated write; events are not stored locally to prevent local tampering (`cpt-cf-usage-collector-fr-audit`) |
 | **Information Disclosure** | Cross-tenant data access via query API | All queries scoped to the authenticated tenant from `SecurityContext`; PDP constraints applied as additional query filters; system fails closed on any authorization failure (`cpt-cf-usage-collector-principle-fail-closed`) |
-| **Denial of Service** | Outbox flooding or backfill saturation by a single source | Rate limiting enforced by `authorize_emit()` before any transaction (`cpt-cf-usage-collector-fr-rate-limiting`); independent rate limits on backfill dispatcher prevent storage saturation; dead-letter state surfaces unhealthy sources via monitoring |
+| **Denial of Service** | Outbox flooding or backfill saturation by a single source | Rate limiting enforced by `authorize_emit()` before any transaction (`cpt-cf-usage-collector-fr-rate-limiting`); independent rate limits on the backfill outbox pipeline prevent storage saturation; dead-letter state surfaces unhealthy sources via monitoring |
 | **Elevation of Privilege** | Accessing oversized backfill windows without elevated authorization | Elevated authorization required for requests exceeding the configured maximum backfill window; all authorization failures result in immediate rejection with no partial operation (`cpt-cf-usage-collector-principle-fail-closed`) |
 
 **Not applicable — Recovery architecture**: Backup strategy, point-in-time recovery, and disaster recovery for ClickHouse and TimescaleDB storage backends are governed by platform infrastructure policy and managed by the platform SRE team; this module's design does not define storage backup topology. The transactional outbox ensures that records durably captured in source outboxes can be re-delivered if storage data is restored from a backup.
@@ -985,6 +950,14 @@ The outbox pattern implementation relies on the modkit-db outbox infrastructure.
 **Not applicable — Vendor and licensing constraints**: ClickHouse and TimescaleDB Community Edition are licensed under Apache License 2.0 and impose no licensing constraints on this module's design.
 
 **Not applicable — Data residency and resource constraints**: Data residency requirements for tenant data are enforced at the platform infrastructure level, not at the module design level. Development timeline and team size are tracked in project management tooling, not in design documents.
+
+**Not applicable — Data governance (catalog, lineage, master data)**: Data ownership, data lineage, and data catalog integration are defined at the platform level in PRD §6.2 (Data Governance); no additional module-level data governance architecture is required.
+
+**Not applicable — Deployment topology**: Container strategy, orchestration, and environment promotion follow platform-wide conventions managed in the platform infrastructure repository; no module-specific deployment architecture decisions are required.
+
+**Not applicable — Documentation strategy**: API documentation, runbooks, and knowledge base follow platform-wide conventions defined in `guidelines/NEW_MODULE.md`; no module-specific documentation architecture decisions are required.
+
+**Not applicable — Testing architecture**: Test doubles for storage plugins (injected via plugin trait), `authz-resolver`, and `types-registry` (injected via SDK traits) follow the platform-wide testability pattern defined in `guidelines/NEW_MODULE.md#step-12-testing`; no module-specific testability architecture decisions are required.
 
 ## 5. Traceability
 
