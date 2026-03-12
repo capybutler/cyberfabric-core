@@ -102,6 +102,8 @@ pub struct S2sCredentialMapping {
     /// Client secret (redacted in `Debug` output).
     pub client_secret: SecretString,
     /// The identity to return when these credentials are presented.
+    /// When omitted, uses the default identity (`DEFAULT_SUBJECT_ID` / `DEFAULT_TENANT_ID`).
+    #[serde(default)]
     pub identity: IdentityConfig,
 }
 

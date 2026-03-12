@@ -1252,6 +1252,7 @@ dependencies = [
  "axum",
  "base64 0.22.1",
  "bytes",
+ "cf-authn-resolver-sdk",
  "cf-authz-resolver-sdk",
  "cf-mini-chat-sdk",
  "cf-modkit",
@@ -1270,6 +1271,7 @@ dependencies = [
  "regex",
  "sea-orm",
  "sea-orm-migration",
+ "secrecy",
  "serde",
  "serde_json",
  "thiserror 2.0.18",
@@ -1626,6 +1628,7 @@ version = "0.5.2"
 dependencies = [
  "humantime",
  "regex",
+ "secrecy",
  "serde",
  "serde_json",
  "temp-env",

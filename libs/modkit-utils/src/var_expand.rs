@@ -129,6 +129,15 @@ impl<K, V: ExpandVars, S: std::hash::BuildHasher> ExpandVars
     }
 }
 
+impl ExpandVars for secrecy::SecretString {
+    fn expand_vars(&mut self) -> Result<(), ExpandVarsError> {
+        use secrecy::ExposeSecret;
+        let expanded = expand_env_vars(self.expose_secret())?;
+        *self = secrecy::SecretString::from(expanded);
+        Ok(())
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

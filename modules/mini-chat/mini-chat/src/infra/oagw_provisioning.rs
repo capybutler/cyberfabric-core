@@ -22,28 +22,23 @@ use crate::config::ProviderEntry;
 /// [`ProviderEntry::upstream_alias`] (root) and
 /// [`ProviderTenantOverride::upstream_alias`] (per-tenant).
 ///
-/// Uses a default-tenant `SecurityContext`. If the upstream already exists
-/// (e.g. re-init), the error is logged and skipped.
+/// The caller is responsible for obtaining a valid `SecurityContext`
+/// (typically via S2S client credentials exchange).
 pub async fn register_oagw_upstreams(
     gateway: &Arc<dyn ServiceGatewayClientV1>,
+    ctx: &modkit_security::SecurityContext,
     providers: &mut HashMap<String, ProviderEntry>,
 ) -> anyhow::Result<()> {
-    let ctx = modkit_security::SecurityContext::builder()
-        .subject_tenant_id(modkit_security::constants::DEFAULT_TENANT_ID)
-        .subject_id(modkit_security::constants::DEFAULT_SUBJECT_ID)
-        .build()
-        .map_err(|e| anyhow::anyhow!("failed to build security context: {e}"))?;
-
     for (provider_id, entry) in providers.iter_mut() {
         // Register root upstream + route. Fail hard — without upstreams the
         // module cannot proxy LLM requests.
-        let upstream = create_upstream(gateway, &ctx, provider_id, entry)
+        let upstream = create_upstream(gateway, ctx, provider_id, entry)
             .await
             .ok_or_else(|| {
                 anyhow::anyhow!("OAGW upstream registration failed for provider '{provider_id}'")
             })?;
         entry.upstream_alias = Some(upstream.alias.clone());
-        register_route(gateway, &ctx, provider_id, entry, &upstream)
+        register_route(gateway, ctx, provider_id, entry, &upstream)
             .await
             .map_err(|e| {
                 anyhow::anyhow!("OAGW route registration failed for provider '{provider_id}': {e}")
@@ -63,7 +58,7 @@ pub async fn register_oagw_upstreams(
 
             let label = format!("{provider_id}[tenant={tenant_id}]");
             if let Some(alias) =
-                create_tenant_upstream(gateway, &ctx, &label, entry, tenant_id).await
+                create_tenant_upstream(gateway, ctx, &label, entry, tenant_id).await
                 && let Some(tenant_override) = entry.tenant_overrides.get_mut(tenant_id)
             {
                 tenant_override.upstream_alias = Some(alias);

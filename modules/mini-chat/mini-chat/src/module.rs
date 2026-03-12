@@ -1,6 +1,7 @@
 use std::sync::{Arc, Mutex, OnceLock};
 
 use async_trait::async_trait;
+use authn_resolver_sdk::{AuthNResolverClient, ClientCredentialsRequest};
 use authz_resolver_sdk::AuthZResolverClient;
 use mini_chat_sdk::{MiniChatAuditPluginSpecV1, MiniChatModelPolicyPluginSpecV1};
 use modkit::api::OpenApiRegistry;
@@ -9,6 +10,7 @@ use modkit::{DatabaseCapability, Module, ModuleCtx, RestApiCapability};
 use modkit_db::outbox::{Outbox, OutboxHandle, Partitions};
 use oagw_sdk::ServiceGatewayClientV1;
 use sea_orm_migration::MigrationTrait;
+use secrecy::ExposeSecret;
 use tokio_util::sync::CancellationToken;
 use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
@@ -43,7 +45,7 @@ pub const DEFAULT_URL_PREFIX: &str = "/mini-chat";
 /// The mini-chat module: multi-tenant AI chat with SSE streaming.
 #[modkit::module(
     name = "mini-chat",
-    deps = ["types-registry", "authz-resolver", "oagw"],
+    deps = ["types-registry", "authn-resolver", "authz-resolver", "oagw"],
     capabilities = [db, rest, stateful],
 )]
 pub struct MiniChatModule {
@@ -57,6 +59,8 @@ pub struct MiniChatModule {
 /// State needed to register OAGW upstreams in `start()` (after GTS is ready).
 struct OagwDeferred {
     gateway: Arc<dyn ServiceGatewayClientV1>,
+    authn: Arc<dyn AuthNResolverClient>,
+    client_credentials: crate::config::ClientCredentialsConfig,
     providers: std::collections::HashMap<String, ProviderEntry>,
 }
 
@@ -92,6 +96,9 @@ impl Module for MiniChatModule {
         cfg.context
             .validate()
             .map_err(|e| anyhow::anyhow!("context config: {e}"))?;
+        cfg.client_credentials
+            .validate()
+            .map_err(|e| anyhow::anyhow!("client_credentials config: {e}"))?;
         for (id, entry) in &cfg.providers {
             entry
                 .validate(id)
@@ -187,6 +194,11 @@ impl Module for MiniChatModule {
             .get::<dyn AuthZResolverClient>()
             .map_err(|e| anyhow::anyhow!("failed to get AuthZ resolver: {e}"))?;
 
+        let authn_client = ctx
+            .client_hub()
+            .get::<dyn AuthNResolverClient>()
+            .map_err(|e| anyhow::anyhow!("failed to get AuthN resolver: {e}"))?;
+
         let gateway = ctx
             .client_hub()
             .get::<dyn ServiceGatewayClientV1>()
@@ -213,6 +225,8 @@ impl Module for MiniChatModule {
         // Ignore the result: if already set, we keep the first value.
         drop(self.oagw_deferred.set(OagwDeferred {
             gateway: Arc::clone(&gateway),
+            authn: Arc::clone(&authn_client),
+            client_credentials: cfg.client_credentials.clone(),
             providers: cfg.providers.clone(),
         }));
 
@@ -301,9 +315,12 @@ impl RunnableCapability for MiniChatModule {
         // list() only queries the persistent store which is empty until
         // switch_to_ready().
         if let Some(deferred) = self.oagw_deferred.get() {
+            let ctx =
+                exchange_client_credentials(&deferred.authn, &deferred.client_credentials).await?;
             let mut providers = deferred.providers.clone();
             crate::infra::oagw_provisioning::register_oagw_upstreams(
                 &deferred.gateway,
+                &ctx,
                 &mut providers,
             )
             .await?;
@@ -330,6 +347,26 @@ impl RunnableCapability for MiniChatModule {
         }
         Ok(())
     }
+}
+
+/// Exchange `OAuth2` client credentials via the `AuthN` resolver to obtain
+/// a `SecurityContext` for OAGW upstream provisioning.
+async fn exchange_client_credentials(
+    authn: &Arc<dyn AuthNResolverClient>,
+    creds: &crate::config::ClientCredentialsConfig,
+) -> anyhow::Result<modkit_security::SecurityContext> {
+    info!("Exchanging client credentials for OAGW provisioning context");
+    let request = ClientCredentialsRequest {
+        client_id: creds.client_id.clone(),
+        client_secret: secrecy::SecretString::from(creds.client_secret.expose_secret().to_owned()),
+        scopes: Vec::new(),
+    };
+    let result = authn
+        .exchange_client_credentials(&request)
+        .await
+        .map_err(|e| anyhow::anyhow!("client credentials exchange failed: {e}"))?;
+    info!("Security context obtained for OAGW provisioning");
+    Ok(result.security_context)
 }
 
 async fn register_plugin_schemas(

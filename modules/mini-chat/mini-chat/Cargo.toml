@@ -21,6 +21,9 @@ workspace = true
 # Plugin SDK - policy plugin traits, models, and errors
 mini-chat-sdk = { workspace = true }
 
+# AuthN resolver for S2S client credentials exchange
+authn-resolver-sdk = { package = "cf-authn-resolver-sdk", version = "0.2.7", path = "../../system/authn-resolver/authn-resolver-sdk" }
+
 # AuthZ resolver for authorization (PEP flow)
 authz-resolver-sdk = { workspace = true }
 
@@ -76,6 +79,7 @@ modkit-db-macros = { workspace = true }
 modkit-security = { workspace = true }
 modkit-macros = { workspace = true }
 modkit-odata = { workspace = true, features = ["with-utoipa"] }
+secrecy = { workspace = true }
 
 [dev-dependencies]
 chrono = { workspace = true }

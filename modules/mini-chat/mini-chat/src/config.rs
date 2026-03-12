@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 
+use secrecy::{ExposeSecret, SecretString};
 use serde::{Deserialize, Serialize};
 
 use crate::infra::llm::ProviderKind;
@@ -22,6 +23,12 @@ pub struct MiniChatConfig {
     pub outbox: OutboxConfig,
     #[serde(default)]
     pub context: ContextConfig,
+    /// `OAuth2` client credentials for OAGW upstream provisioning.
+    /// Mini-chat exchanges these via the `AuthN` resolver to obtain
+    /// a `SecurityContext` for OAGW API calls.
+    #[expand_vars]
+    #[serde(skip_serializing)]
+    pub client_credentials: ClientCredentialsConfig,
     /// Provider registry. Key = `provider_id` (matches [`ModelCatalogEntry::provider_id`]).
     #[expand_vars]
     #[serde(default = "default_providers")]
@@ -190,6 +197,28 @@ fn default_providers() -> HashMap<String, ProviderEntry> {
     m
 }
 
+/// `OAuth2` client credentials for authenticating OAGW provisioning calls.
+#[derive(Clone, Deserialize, modkit_macros::ExpandVars)]
+#[serde(deny_unknown_fields)]
+pub struct ClientCredentialsConfig {
+    /// `OAuth2` client identifier. Supports `${VAR}` env expansion.
+    #[expand_vars]
+    pub client_id: String,
+    /// `OAuth2` client secret. Supports `${VAR}` env expansion.
+    /// Redacted in `Debug` output.
+    #[expand_vars]
+    pub client_secret: SecretString,
+}
+
+impl std::fmt::Debug for ClientCredentialsConfig {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ClientCredentialsConfig")
+            .field("client_id", &self.client_id)
+            .field("client_secret", &"[REDACTED]")
+            .finish()
+    }
+}
+
 /// SSE streaming tuning parameters.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -262,8 +291,31 @@ impl Default for MiniChatConfig {
             quota: QuotaConfig::default(),
             outbox: OutboxConfig::default(),
             context: ContextConfig::default(),
+            client_credentials: ClientCredentialsConfig::default(),
             providers: default_providers(),
         }
+    }
+}
+
+impl Default for ClientCredentialsConfig {
+    fn default() -> Self {
+        Self {
+            client_id: String::new(),
+            client_secret: SecretString::from(String::new()),
+        }
+    }
+}
+
+impl ClientCredentialsConfig {
+    /// Validate that S2S credentials are configured.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.client_id.trim().is_empty() {
+            return Err("client_credentials client_id must not be empty".to_owned());
+        }
+        if self.client_secret.expose_secret().trim().is_empty() {
+            return Err("client_credentials client_secret must not be empty".to_owned());
+        }
+        Ok(())
     }
 }
 
