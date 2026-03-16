@@ -1431,6 +1431,7 @@ version = "0.2.14"
 dependencies = [
  "anyhow",
  "cf-modkit-security",
+ "rand 0.9.2",
  "tokio",
  "tokio-stream",
  "tokio-util",
