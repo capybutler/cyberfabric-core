@@ -7,6 +7,7 @@ use modkit_security::AccessScope;
 use uuid::Uuid;
 
 use crate::domain::error::DomainError;
+use crate::domain::llm::AttachmentRef;
 use crate::infra::db::entity::attachment::Model as AttachmentModel;
 
 /// Parameters for inserting a new attachment row in `pending` status.
@@ -114,5 +115,5 @@ pub trait AttachmentRepository: Send + Sync {
         runner: &C,
         scope: &AccessScope,
         chat_id: Uuid,
-    ) -> Result<HashMap<String, Uuid>, DomainError>;
+    ) -> Result<HashMap<String, AttachmentRef>, DomainError>;
 }

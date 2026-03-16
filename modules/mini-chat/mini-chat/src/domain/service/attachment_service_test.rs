@@ -1485,7 +1485,9 @@ async fn test_provider_file_id_map_excludes_non_ready() {
         .unwrap();
 
     assert_eq!(map.len(), 1, "only ready attachment should be in map");
-    assert_eq!(map.get("file-ready"), Some(&ready_id));
+    let att = map.get("file-ready").expect("file-ready should be in map");
+    assert_eq!(att.id, ready_id);
+    assert_eq!(att.filename, "test.pdf");
 }
 
 // ── P5-K8: build_provider_file_id_map excludes soft-deleted ──
@@ -1530,7 +1532,8 @@ async fn test_provider_file_id_map_excludes_deleted() {
         .unwrap();
 
     assert_eq!(map.len(), 1, "deleted attachment should not be in map");
-    assert_eq!(map.get("file-alive"), Some(&alive_id));
+    let att = map.get("file-alive").expect("file-alive should be in map");
+    assert_eq!(att.id, alive_id);
     assert!(!map.contains_key("file-deleted"));
 }
 

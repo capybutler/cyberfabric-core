@@ -7,6 +7,7 @@
 use modkit_macros::domain_model;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
+use uuid::Uuid;
 
 // ════════════════════════════════════════════════════════════════════════════
 // Message types
@@ -188,6 +189,13 @@ pub enum CitationSource {
 pub struct TextSpan {
     pub start: usize,
     pub end: usize,
+}
+
+/// Resolved attachment identity returned by [`build_provider_file_id_map`].
+#[derive(Debug, Clone)]
+pub struct AttachmentRef {
+    pub id: Uuid,
+    pub filename: String,
 }
 
 /// Lifecycle phase of a tool invocation within a stream.

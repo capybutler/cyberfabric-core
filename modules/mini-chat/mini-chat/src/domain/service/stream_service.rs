@@ -1402,7 +1402,7 @@ fn spawn_provider_task<TR: TurnRepository + 'static, MR: MessageRepository + 'st
     cancel: CancellationToken,
     tx: mpsc::Sender<StreamEvent>,
     fin_ctx: Option<FinalizationCtx<TR, MR>>,
-    provider_file_id_map: std::collections::HashMap<String, Uuid>,
+    provider_file_id_map: std::collections::HashMap<String, crate::domain::llm::AttachmentRef>,
 ) -> tokio::task::JoinHandle<StreamOutcome> {
     let span = if let Some(ref fctx) = fin_ctx {
         tracing::info_span!(

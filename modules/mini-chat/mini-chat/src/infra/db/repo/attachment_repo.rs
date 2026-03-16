@@ -11,6 +11,7 @@ use time::OffsetDateTime;
 use uuid::Uuid;
 
 use crate::domain::error::DomainError;
+use crate::domain::llm::AttachmentRef;
 use crate::domain::repos::{
     InsertAttachmentParams, SetFailedParams, SetReadyParams, SetUploadedParams,
 };
@@ -313,11 +314,12 @@ impl crate::domain::repos::AttachmentRepository for AttachmentRepository {
         runner: &C,
         scope: &AccessScope,
         chat_id: Uuid,
-    ) -> Result<HashMap<String, Uuid>, DomainError> {
+    ) -> Result<HashMap<String, AttachmentRef>, DomainError> {
         #[derive(Debug, FromQueryResult)]
         struct FileIdRow {
             id: Uuid,
             provider_file_id: String,
+            filename: String,
         }
 
         let rows: Vec<FileIdRow> = Entity::find()
@@ -334,13 +336,22 @@ impl crate::domain::repos::AttachmentRepository for AttachmentRepository {
                 q.select_only()
                     .column(Column::Id)
                     .column(Column::ProviderFileId)
+                    .column(Column::Filename)
                     .into_model::<FileIdRow>()
             })
             .await
             .map_err(db_err)?;
         Ok(rows
             .into_iter()
-            .map(|r| (r.provider_file_id, r.id))
+            .map(|r| {
+                (
+                    r.provider_file_id,
+                    AttachmentRef {
+                        id: r.id,
+                        filename: r.filename,
+                    },
+                )
+            })
             .collect())
     }
 }
