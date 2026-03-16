@@ -39,10 +39,6 @@ pub enum ParseError {
     /// Error parsing a named time zone.
     #[error("Error parsing a named time zone.")]
     ParsingTimeZoneNamed,
-
-    /// Error parsing a Unicode code point escape sequence.
-    #[error("Error parsing a Unicode code point escape sequence.")]
-    ParsingUnicodeCodePoint,
 }
 
 /// Represents the different types of expressions in the AST.

@@ -172,18 +172,8 @@ peg::parser! {
             = "'" s:quote_escaped_string_content()* "'" { Ok(Value::String(s.into_iter().collect::<Result<Vec<_>, _>>()?.into_iter().collect())) }
 
         rule quote_escaped_string_content() -> Result<char, ParseError>
-            = r"\" e:escape_character() { e }
+            = "''" { Ok('\'') }
             / c:[^'\''] { Ok(c) }
-
-        rule escape_character() -> Result<char, ParseError>
-            = "'" { Ok('\'') }
-            / "n" { Ok('\n') }
-            / "r" { Ok('\r') }
-            / "t" { Ok('\t') }
-            / r"\" { Ok('\\') }
-            / "u" sequence:$(hex()*<1,8>) {
-                u32::from_str_radix(sequence, 16).ok().and_then(char::from_u32).ok_or(ParseError::ParsingUnicodeCodePoint)
-            }
 
         /// Parses a null value.
         rule null_value() -> Value

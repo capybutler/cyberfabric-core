@@ -244,7 +244,7 @@ fn string_value() {
 
 #[test]
 fn escaped_string_comparison() {
-    let filter = r"name eq '\u03A9 S\'mores'";
+    let filter = "name eq '\u{03A9} S''mores'";
     let result = parse_str(filter).expect("valid filter tree");
 
     assert_eq!(
