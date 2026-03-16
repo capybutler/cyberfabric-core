@@ -1271,6 +1271,7 @@ dependencies = [
  "tokio",
  "tokio-util",
  "tracing",
+ "tracing-opentelemetry",
  "utoipa",
  "uuid",
 ]
@@ -1289,6 +1290,7 @@ dependencies = [
  "thiserror 2.0.18",
  "time",
  "tokio-util",
+ "tracing",
  "uuid",
 ]
 
@@ -1902,22 +1904,6 @@ dependencies = [
  "tokio",
  "tracing",
  "uuid",
-]
-
-[[package]]
-name = "cf-static-mini-chat-audit-plugin"
-version = "0.1.6"
-dependencies = [
- "anyhow",
- "async-trait",
- "cf-mini-chat-sdk",
- "cf-modkit",
- "cf-modkit-macros",
- "cf-types-registry-sdk",
- "inventory",
- "serde",
- "serde_json",
- "tracing",
 ]
 
 [[package]]
@@ -3796,7 +3782,6 @@ dependencies = [
  "cf-static-authn-plugin",
  "cf-static-authz-plugin",
  "cf-static-credstore-plugin",
- "cf-static-mini-chat-audit-plugin",
  "cf-static-mini-chat-model-policy-plugin",
  "cf-static-tr-plugin",
  "cf-tenant-resolver",
