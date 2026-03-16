@@ -48,7 +48,7 @@ pub(super) fn register_attachment_routes(
     ))
     .operation_id("mini_chat.delete_attachment")
     .summary("Delete an attachment")
-    .tag("attachments")
+    .tag(API_TAG)
     .authenticated()
     .require_license_features([&AiChatLicense])
     .path_param("id", "Chat UUID")
