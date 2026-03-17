@@ -36,6 +36,10 @@
     {
       "name": "models",
       "description": "Read-only model catalog visible to the authenticated user."
+    },
+    {
+      "name": "quota",
+      "description": "Per-user quota status queries."
     }
   ],
   "paths": {
@@ -1168,6 +1172,87 @@
           }
         }
       }
+    },
+    "/v1/quota/status": {
+      "get": {
+        "operationId": "getQuotaStatus",
+        "tags": ["quota"],
+        "summary": "Get quota status for the authenticated user",
+        "description": "Returns per-tier, per-period quota usage, remaining credits, warning flags, and the configured warning threshold. Useful for at-rest quota queries outside of a streaming turn.",
+        "responses": {
+          "200": {
+            "description": "Quota status with remaining percentages and warning flags.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QuotaStatusResponse"
+                },
+                "example": {
+                  "tiers": [
+                    {
+                      "tier": "premium",
+                      "periods": [
+                        {
+                          "period": "daily",
+                          "limit_credits_micro": 5000000,
+                          "used_credits_micro": 4200000,
+                          "remaining_credits_micro": 800000,
+                          "remaining_percentage": 16,
+                          "next_reset": "2025-06-16T00:00:00Z",
+                          "warning": true,
+                          "exhausted": false
+                        },
+                        {
+                          "period": "monthly",
+                          "limit_credits_micro": 100000000,
+                          "used_credits_micro": 35000000,
+                          "remaining_credits_micro": 65000000,
+                          "remaining_percentage": 65,
+                          "next_reset": "2025-07-01T00:00:00Z",
+                          "warning": false,
+                          "exhausted": false
+                        }
+                      ]
+                    },
+                    {
+                      "tier": "total",
+                      "periods": [
+                        {
+                          "period": "daily",
+                          "limit_credits_micro": 10000000,
+                          "used_credits_micro": 4800000,
+                          "remaining_credits_micro": 5200000,
+                          "remaining_percentage": 52,
+                          "next_reset": "2025-06-16T00:00:00Z",
+                          "warning": false,
+                          "exhausted": false
+                        },
+                        {
+                          "period": "monthly",
+                          "limit_credits_micro": 200000000,
+                          "used_credits_micro": 42000000,
+                          "remaining_credits_micro": 158000000,
+                          "remaining_percentage": 79,
+                          "next_reset": "2025-07-01T00:00:00Z",
+                          "warning": false,
+                          "exhausted": false
+                        }
+                      ]
+                    }
+                  ],
+                  "warning_threshold_pct": 80
+                }
+              }
+            }
+          },
+          "401": {
+            "$ref": "#/components/responses/Unauthorized"
+          },
+          "403": {
+            "$ref": "#/components/responses/Forbidden"
+          }
+        }
+      }
     }
   },
   "components": {
@@ -1820,6 +1905,22 @@
             "enum": ["premium_quota_exhausted", "force_standard_tier", "disable_premium_tier", "model_disabled"],
             "description": "Why downgrade occurred. Present only when quota_decision=\"downgrade\". Values: premium_quota_exhausted (user quota exhausted); force_standard_tier (operator kill switch: premium tier forcibly disabled for this tenant); disable_premium_tier (operator kill switch: premium tier globally disabled); model_disabled (operator kill switch: selected model global_enabled=false)."
           },
+          "quota_warnings": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuotaWarning"
+            },
+            "description": "Per-tier, per-period quota warning entries. Present on CAS-winning completed/incomplete turns. Absent on error, cancelled, replay, and CAS-loser paths. May be an empty array when all periods are healthy.",
+            "example": [
+              {
+                "tier": "premium",
+                "period": "daily",
+                "remaining_percentage": 12,
+                "warning": true,
+                "exhausted": false
+              }
+            ]
+          },
           "completion_signal": {
             "type": ["object", "null"],
             "description": "Non-fatal completion signal. Null for normal completion. For truncated responses (provider `response.incomplete`) contains the truncation reason. Not an error indicator — the turn outcome is still `completed`.",
@@ -2051,6 +2152,134 @@
               "$ref": "#/components/schemas/Model"
             }
           }
+        }
+      },
+      "QuotaStatusResponse": {
+        "type": "object",
+        "required": ["tiers", "warning_threshold_pct"],
+        "description": "Full quota status for the authenticated user, broken down by tier and period.",
+        "properties": {
+          "tiers": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuotaTierStatus"
+            },
+            "description": "Quota breakdown per tier (premium, total)."
+          },
+          "warning_threshold_pct": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Configured warning threshold percentage. Periods with remaining_percentage at or below this value have warning=true."
+          }
+        }
+      },
+      "QuotaTierStatus": {
+        "type": "object",
+        "required": ["tier", "periods"],
+        "description": "Quota status for a single tier.",
+        "properties": {
+          "tier": {
+            "$ref": "#/components/schemas/QuotaTier"
+          },
+          "periods": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/QuotaPeriodStatus"
+            },
+            "description": "Quota details per period within this tier."
+          }
+        }
+      },
+      "QuotaPeriodStatus": {
+        "type": "object",
+        "required": ["period", "limit_credits_micro", "used_credits_micro", "remaining_credits_micro", "remaining_percentage", "next_reset", "warning", "exhausted"],
+        "description": "Quota details for a single period within a tier.",
+        "properties": {
+          "period": {
+            "$ref": "#/components/schemas/QuotaPeriod"
+          },
+          "limit_credits_micro": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Total credit limit for this period in micro-credits."
+          },
+          "used_credits_micro": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Credits consumed so far in this period in micro-credits."
+          },
+          "remaining_credits_micro": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Credits remaining in this period in micro-credits."
+          },
+          "remaining_percentage": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Percentage of quota remaining (0–100)."
+          },
+          "next_reset": {
+            "type": "string",
+            "format": "date-time",
+            "description": "RFC 3339 timestamp of next period reset."
+          },
+          "warning": {
+            "type": "boolean",
+            "description": "True when remaining_percentage is at or below warning_threshold_pct."
+          },
+          "exhausted": {
+            "type": "boolean",
+            "description": "True when remaining_percentage is 0."
+          }
+        }
+      },
+      "QuotaTier": {
+        "type": "string",
+        "enum": ["premium", "total"],
+        "description": "Quota tier classification."
+      },
+      "QuotaPeriod": {
+        "type": "string",
+        "enum": ["daily", "monthly"],
+        "description": "Quota period classification."
+      },
+      "QuotaWarning": {
+        "type": "object",
+        "required": ["tier", "period", "remaining_percentage", "warning", "exhausted"],
+        "description": "Per-tier, per-period quota warning entry included in the SSE done event.",
+        "properties": {
+          "tier": {
+            "$ref": "#/components/schemas/QuotaTier"
+          },
+          "period": {
+            "$ref": "#/components/schemas/QuotaPeriod"
+          },
+          "remaining_percentage": {
+            "type": "integer",
+            "format": "uint8",
+            "minimum": 0,
+            "maximum": 100,
+            "description": "Percentage of quota remaining (0–100)."
+          },
+          "warning": {
+            "type": "boolean",
+            "description": "True when remaining_percentage is at or below the configured warning threshold."
+          },
+          "exhausted": {
+            "type": "boolean",
+            "description": "True when remaining_percentage is 0."
+          }
+        },
+        "example": {
+          "tier": "premium",
+          "period": "daily",
+          "remaining_percentage": 8,
+          "warning": true,
+          "exhausted": false
         }
       }
     }
