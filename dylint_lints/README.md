@@ -25,6 +25,7 @@ make gts-docs-test       # Run unit tests for GTS validator
 - ✅ DE0202: DTOs Not Referenced Outside API
 - ✅ DE0203: DTOs Must Have Serde Derives
 - ✅ DE0204: DTOs Must Have ToSchema Derive
+- ✅ DE0205: Operation builder must have tag and summary
 
 ### Domain Layer (DE03xx)
 - TODO
