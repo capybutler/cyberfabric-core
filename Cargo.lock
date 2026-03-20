@@ -1910,26 +1910,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "cf-static-mini-chat-model-policy-plugin"
-version = "0.5.10"
-dependencies = [
- "anyhow",
- "async-trait",
- "cf-mini-chat-sdk",
- "cf-modkit",
- "cf-modkit-macros",
- "cf-types-registry-sdk",
- "inventory",
- "serde",
- "serde_json",
- "time",
- "tokio",
- "tokio-util",
- "tracing",
- "uuid",
-]
-
-[[package]]
 name = "cf-static-tr-plugin"
 version = "0.1.13"
 dependencies = [
@@ -3785,7 +3765,6 @@ dependencies = [
  "cf-static-authn-plugin",
  "cf-static-authz-plugin",
  "cf-static-credstore-plugin",
- "cf-static-mini-chat-model-policy-plugin",
  "cf-static-tr-plugin",
  "cf-tenant-resolver",
  "cf-types-registry",

@@ -9,8 +9,8 @@ use modkit::gts::BaseModkitPluginV1;
 use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
 
-use crate::config::StaticMiniChatPolicyPluginConfig;
-use crate::domain::Service;
+use super::config::StaticMiniChatPolicyPluginConfig;
+use super::service::Service;
 
 /// Static model-policy plugin module for mini-chat.
 ///
