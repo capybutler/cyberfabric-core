@@ -56,7 +56,7 @@ struct Cli {
 enum Commands {
     /// Start the server
     Run,
-    /// Validate configuration and exit
+    /// Do nothing
     Check,
     /// Run database migrations and exit (for cloud deployments)
     Migrate,
@@ -103,17 +103,9 @@ async fn main() -> Result<()> {
     }
 
     // Dispatch subcommands (default: run)
-    match cli.command.as_ref().unwrap_or(&Commands::Run) {
+    match cli.command.unwrap_or(Commands::Run) {
         Commands::Run => run_server(config).await,
-        Commands::Check => check_config(&config),
         Commands::Migrate => run_migrate(config).await,
+        Commands::Check => Ok(()),
     }
-}
-
-fn check_config(config: &AppConfig) -> Result<()> {
-    tracing::info!("Checking configuration...");
-    // If load_layered/load_or_default succeeded and home_dir normalized, we're good.
-    println!("Configuration is valid");
-    println!("{}", config.to_yaml()?);
-    Ok(())
 }

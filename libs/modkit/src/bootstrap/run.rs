@@ -253,8 +253,6 @@ fn try_build_oop_module_config(
     }))
 }
 
-static INIT_LOGGING: std::sync::Once = std::sync::Once::new();
-
 /// Initialize process-wide bootstrap state from a provided `&AppConfig`.
 ///
 /// This helper performs the common startup sequence shared by server and migration modes.
@@ -276,30 +274,18 @@ pub fn init_procedure(config: &AppConfig) -> Result<()> {
     #[cfg(feature = "fips")]
     super::init_fips_crypto_provider();
 
-    // Guard logging init so that subsequent calls to init_procedure are no-ops.
-    // Mirrors the pattern used by init_panic_tracing (Once) and init_metrics_provider (OnceLock).
-    let mut logging_init_result: Result<()> = Ok(());
-    INIT_LOGGING.call_once(|| {
-        // Build OpenTelemetry layer before logging
-        #[cfg(feature = "otel")]
-        let otel_layer = if config.opentelemetry.tracing.enabled {
-            match crate::telemetry::init::init_tracing(&config.opentelemetry) {
-                Ok(layer) => Some(layer),
-                Err(e) => {
-                    logging_init_result = Err(e);
-                    return;
-                }
-            }
-        } else {
-            None
-        };
-        #[cfg(not(feature = "otel"))]
-        let otel_layer = None;
+    // Build OpenTelemetry layer before logging
+    #[cfg(feature = "otel")]
+    let otel_layer = if config.opentelemetry.tracing.enabled {
+        Some(crate::telemetry::init::init_tracing(&config.opentelemetry)?)
+    } else {
+        None
+    };
+    #[cfg(not(feature = "otel"))]
+    let otel_layer = None;
 
-        // Initialize logging + otel in one Registry
-        init_logging_unified(&config.logging, &config.server.home_dir, otel_layer);
-    });
-    logging_init_result?;
+    // Initialize logging + otel in one Registry
+    init_logging_unified(&config.logging, &config.server.home_dir, otel_layer);
 
     // Register custom panic hook to reroute panic backtrace into tracing.
     init_panic_tracing();

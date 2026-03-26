@@ -7,6 +7,7 @@
 use anyhow::Context;
 #[cfg(feature = "otel")]
 use opentelemetry::{KeyValue, global, trace::TracerProvider as _};
+use std::sync::Once;
 
 #[cfg(feature = "otel")]
 use opentelemetry_otlp::{Protocol, WithExportConfig};
@@ -107,7 +108,6 @@ fn build_http_exporter(
     if let Some(hmap) = build_headers_from_cfg_and_env(exporter) {
         b = b.with_headers(hmap);
     }
-    #[allow(clippy::expect_used)]
     b.build().context("build OTLP HTTP exporter")
 }
 
@@ -129,6 +129,8 @@ fn build_grpc_exporter(
     }
     b.build().context("build OTLP gRPC exporter")
 }
+
+static INIT_TRACING: Once = Once::new();
 
 /// Initialize OpenTelemetry tracing from configuration and return a layer
 /// to be attached to `tracing_subscriber`.
@@ -174,13 +176,15 @@ pub fn init_tracing(
         .with_resource(resource)
         .build();
 
-    // Make it global
-    global::set_tracer_provider(provider.clone());
-
     // Create tracer and layer
     let service_name = otel_cfg.resource.service_name.clone();
     let tracer = provider.tracer(service_name);
     let otel_layer = tracing_opentelemetry::OpenTelemetryLayer::new(tracer);
+
+    // Make it global
+    INIT_TRACING.call_once(|| {
+        global::set_tracer_provider(provider);
+    });
 
     tracing::info!("OpenTelemetry layer created successfully");
     Ok(otel_layer)

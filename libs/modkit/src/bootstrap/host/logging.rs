@@ -2,7 +2,7 @@ use super::super::config::{ConsoleFormat, LoggingConfig, Section};
 use anyhow::Context;
 use std::io::Write;
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Once};
 
 use parking_lot::Mutex;
 use tracing_subscriber::{Layer, fmt};
@@ -17,8 +17,7 @@ pub type OtelLayer = tracing_opentelemetry::OpenTelemetryLayer<
 pub type OtelLayer = ();
 
 // Keep a guard for non-blocking console to avoid being dropped.
-static CONSOLE_GUARD: std::sync::OnceLock<tracing_appender::non_blocking::WorkerGuard> =
-    std::sync::OnceLock::new();
+static CONSOLE_GUARD: Once = Once::new();
 
 // ================= level helpers =================
 
@@ -195,37 +194,39 @@ fn create_rotating_writer_at_path(
 /// Unified initializer used by both functions above.
 #[allow(unknown_lints, de1301_no_print_macros)] // runs before tracing subscriber is installed
 pub fn init_logging_unified(cfg: &LoggingConfig, base_dir: &Path, otel_layer: Option<OtelLayer>) {
-    // Bridge `log` → `tracing` *before* installing the subscriber
-    if let Err(e) = tracing_log::LogTracer::init() {
-        eprintln!("LogTracer init skipped: {e}");
-    }
+    CONSOLE_GUARD.call_once(|| {
+        // Bridge `log` → `tracing` *before* installing the subscriber
+        if let Err(e) = tracing_log::LogTracer::init() {
+            eprintln!("LogTracer init skipped: {e}");
+        }
 
-    let data = extract_config_data(cfg);
+        let data = extract_config_data(cfg);
 
-    if data.crate_sections.is_empty() && data.default_section.is_none() {
-        // Minimal fallback (INFO to console; honors RUST_LOG)
-        init_minimal(otel_layer);
-        return;
-    }
+        if data.crate_sections.is_empty() && data.default_section.is_none() {
+            // Minimal fallback (INFO to console; honors RUST_LOG)
+            init_minimal(otel_layer);
+            return;
+        }
 
-    // Build targets once, using a generic builder for different sinks
-    let file_router = build_file_router(&data, base_dir);
+        // Build targets once, using a generic builder for different sinks
+        let file_router = build_file_router(&data, base_dir);
 
-    let console_targets = build_target_console(&data);
-    let file_targets = build_target_file(&data, file_router.default.is_some());
+        let console_targets = build_target_console(&data);
+        let file_targets = build_target_file(&data, file_router.default.is_some());
 
-    let console_format = data
-        .default_section
-        .map(|s| s.console_format)
-        .unwrap_or_default();
+        let console_format = data
+            .default_section
+            .map(|s| s.console_format)
+            .unwrap_or_default();
 
-    install_subscriber(
-        &console_targets,
-        &file_targets,
-        file_router,
-        console_format,
-        otel_layer,
-    );
+        install_subscriber(
+            &console_targets,
+            &file_targets,
+            file_router,
+            console_format,
+            otel_layer,
+        );
+    });
 }
 
 // ================= generic targets builder =================
@@ -396,8 +397,7 @@ fn install_subscriber(
     let env: Option<EnvFilter> = EnvFilter::try_from_default_env().ok();
 
     // Console writer (non-blocking stderr)
-    let (nb_stderr, guard) = tracing_appender::non_blocking(std::io::stderr());
-    _ = CONSOLE_GUARD.set(guard);
+    let (nb_stderr, _guard) = tracing_appender::non_blocking(std::io::stderr());
 
     // Console fmt layers: text (human-friendly) or JSON (structured).
     // Only one is active at a time; the other is None.
