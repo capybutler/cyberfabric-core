@@ -62,12 +62,12 @@ See [PRD.md](./PRD.md) section 1 "Overview" — Key Problems Solved:
 | `cpt-cf-llm-gateway-fr-document-understanding-v1` | FileStorage fetch + provider adapters |
 | `cpt-cf-llm-gateway-fr-async-jobs-v1` | Distributed cache for job state, polling abstraction |
 | `cpt-cf-llm-gateway-fr-realtime-audio-v1` | WebSocket proxy via Outbound API GW |
-| `cpt-cf-llm-gateway-fr-usage-tracking-v1` | Usage Tracker module integration |
+| `cpt-cf-llm-gateway-fr-usage-tracking-v1` | AI credit reporting via Usage Tracker (tokens→credits conversion using Model Registry prices) |
 | `cpt-cf-llm-gateway-fr-provider-fallback-v1` | Fallback chain from request config |
 | `cpt-cf-llm-gateway-fr-timeout-v1` | TTFT + total timeout tracking |
 | `cpt-cf-llm-gateway-fr-pre-call-interceptor-v1` | Hook Plugin pre_call invocation |
 | `cpt-cf-llm-gateway-fr-post-response-interceptor-v1` | Hook Plugin post_response invocation |
-| `cpt-cf-llm-gateway-fr-budget-enforcement-v1` | Usage Tracker check_budget / report_usage |
+| `cpt-cf-llm-gateway-fr-budget-enforcement-v1` | Quota Manager check_quota + Usage Tracker report_usage (AI credits) |
 | `cpt-cf-llm-gateway-fr-rate-limiting-v1` | Distributed rate limiter |
 | `cpt-cf-llm-gateway-fr-batch-processing-v1` | Provider batch API abstraction |
 | `cpt-cf-llm-gateway-fr-audit-events-v1` | Audit Module event emission |
@@ -79,7 +79,7 @@ See [PRD.md](./PRD.md) section 1 "Overview" — Key Problems Solved:
 | `cpt-cf-llm-gateway-nfr-scalability-v1` | Stateless design, distributed cache for async jobs |
 | `cpt-cf-llm-gateway-nfr-data-retention-v1` | TTL-based cleanup, background purge task for expired job records and outbox entries |
 | `cpt-cf-llm-gateway-nfr-recovery-v1` | Persistent storage for job state, infrastructure-level HA |
-| `cpt-cf-llm-gateway-nfr-compatibility-v1` | Open Responses protocol versioning, SDK-only inter-module communication |
+| `cpt-cf-llm-gateway-nfr-compatibility-v1` | API backward compatibility within major version, SDK-only inter-module communication |
 
 #### Key ADRs
 
@@ -279,6 +279,7 @@ graph TB
     Consumer --> API[API Layer]
     API --> App[Application Layer]
     App --> HP[Hook Plugin]
+    App --> QM[Quota Manager]
     App --> UT[Usage Tracker]
     App --> AM[Audit Module]
     App --> Adapters[Provider Adapters]
@@ -302,16 +303,21 @@ graph TB
  - [ ] `p1` - **ID**: `cpt-cf-llm-gateway-component-hook-plugin`
    - Hook Plugin
    - Pre-call and post-response interception (moderation, PII, transformation)
+ - [ ] `p1` - **ID**: `cpt-cf-llm-gateway-component-quota-manager`
+   - Quota Manager
+   - Pre-request AI credit quota checks (specific component TBD — see PRD Open Questions)
  - [ ] `p1` - **ID**: `cpt-cf-llm-gateway-component-usage-tracker`
    - Usage Tracker
-   - Budget checks and usage reporting
+   - AI credit consumption reporting (tokens converted to credits via Model Registry prices)
  - [ ] `p1` - **ID**: `cpt-cf-llm-gateway-component-audit-module`
    - Audit Module
    - Compliance event logging
 
 **Interactions**:
 - Consumer → API Layer: Normalized requests
-- Application Layer → Model Registry: Model resolution and availability check
+- Application Layer → Model Registry: Model resolution, availability check, and per-model pricing for AI credit conversion
+- Application Layer → Quota Manager: Pre-request AI credit quota checks
+- Application Layer → Usage Tracker: Post-request AI credit consumption reporting
 - Application Layer → Type Registry: Tool schema resolution
 - Application Layer → FileStorage: Media fetch/store
 - Provider Adapters → Outbound API GW: Provider API calls
@@ -320,10 +326,12 @@ graph TB
 
 | Dependency | Role |
 |------------|------|
-| Model Registry | Model catalog, availability checks |
+| Model Registry | Model catalog, availability checks, per-model pricing for AI credit conversion |
 | Outbound API Gateway | External API calls to providers |
 | FileStorage | Media storage and retrieval |
 | Type Registry | Tool schema resolution |
+| Quota Manager | Pre-request AI credit quota checks (specific component TBD) |
+| Usage Tracker | AI credit consumption reporting |
 
 ### 3.3 API Contracts
 
@@ -1044,39 +1052,46 @@ sequenceDiagram
 #### Budget Enforcement
 
 **Use cases**: `cpt-cf-llm-gateway-fr-budget-enforcement-v1`
-**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-usage-tracker`
+**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-quota-manager`, `cpt-cf-llm-gateway-actor-usage-tracker`
 
 ```mermaid
 sequenceDiagram
     participant C as Consumer
     participant GW as LLM Gateway
-    participant UT as Usage Tracker
+    participant QM as Quota Manager
+    participant MR as Model Registry
     participant OB as Outbound API Gateway
     participant P as Provider
+    participant UT as Usage Tracker
 
     C->>GW: POST /responses (...)
-    GW->>UT: check_budget(tenant, model)
-    alt Budget exceeded
-        UT-->>GW: budget_exceeded
+    GW->>QM: check_quota(tenant)
+    alt Quota exceeded
+        QM-->>GW: quota_exceeded
         GW-->>C: budget_exceeded
-    else Budget available
-        UT-->>GW: ok (remaining quota)
+    else Quota available
+        QM-->>GW: ok
         GW->>OB: Request
         OB->>P: Request
-        P-->>OB: Response
+        P-->>OB: Response (with token usage)
         OB-->>GW: Response
-        GW->>UT: report_usage(tenant, model, tokens)
+        GW->>MR: get_model_pricing(model)
+        MR-->>GW: price_per_token
+        GW->>GW: Convert tokens → AI credits
+        GW->>UT: report_usage(tenant, model, ai_credits)
         UT-->>GW: ok
         GW-->>C: Response
     end
 ```
 
 **Budget enforcement flow**:
-1. **Pre-request check**: Gateway calls `check_budget()` before processing
+1. **Pre-request quota check**: Gateway calls Quota Manager `check_quota()` before processing
 2. **Reject if exceeded**: Returns `budget_exceeded` error immediately
-3. **Process request**: If budget available, proceed with provider call
-4. **Report usage**: After response, report actual token usage to Usage Tracker
-5. **Usage Tracker**: Maintains running totals per tenant/model, enforces configured limits
+3. **Process request**: If quota available, proceed with provider call
+4. **Convert to AI credits**: After response, Gateway obtains per-model pricing from Model Registry and converts consumed tokens to AI credits
+5. **Report usage**: Report AI credit consumption to Usage Tracker
+
+Note: Gateway may consume more AI credits than the tenant's allocated quota because token consumption cannot be predicted before the request completes. The pre-request quota check is a best-effort gate — actual consumption may exceed the quota. This is expected behavior.
 
 #### Batch Processing
 

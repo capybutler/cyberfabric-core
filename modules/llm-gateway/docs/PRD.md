@@ -57,7 +57,7 @@ LLM Gateway addresses these problems by providing a single integration point tha
 
 ### 1.3 Goals (Business Outcomes)
 
-**Success Criteria** (required at GA, baseline: new module — no prior data):
+**Success Criteria** (required at GA, baseline: new module — no prior data; measured over 7-day rolling window after initial 30-day burn-in period):
 - Gateway overhead < 50ms P99 at up to 1 000 concurrent requests (excluding provider latency)
 - Availability ≥ 99.9% measured monthly (Gateway infrastructure only — excludes provider outages; fallback-active mode counts as available)
 - Expected steady-state throughput: up to 500 requests/second; peak: up to 2 000 requests/second
@@ -94,7 +94,7 @@ LLM Gateway addresses these problems by providing a single integration point tha
 
 ### 2.1 Human Actors
 
-No dedicated human actors. All interactions with LLM Gateway are mediated through the Consumer system actor (platform modules, external API clients).
+No dedicated human actors. All interactions with LLM Gateway are mediated through the Consumer system actor (platform modules, external API clients). Platform administrators who configure models and providers do so through Model Registry, not through LLM Gateway directly.
 
 ### 2.2 System Actors
 
@@ -130,10 +130,23 @@ No dedicated human actors. All interactions with LLM Gateway are mediated throug
 
 **ID**: `cpt-cf-llm-gateway-actor-usage-tracker`
 
-- **Role**: Budget checks and usage reporting.
+- **Role**: Receives AI credit consumption reports.
 - **Direction**: outbound
-- **Data exchanged**: Usage records (tokens, cost estimate, latency, attribution: tenant, user, model); budget check requests before execution; receives budget status.
-- **Availability**: If Usage Tracker is unavailable for budget checks, Gateway rejects the request with a budget-check-unavailable error. Usage record delivery is guaranteed at-least-once — records are queued and retried until delivered.
+- **Data exchanged**: AI credit consumption records (credit amount, attribution: tenant, user, model). Gateway converts consumed tokens to AI credits using per-model prices obtained from Model Registry. Gateway does not report raw token counts or cost estimates — only AI credit amounts.
+- **Availability**: Usage record delivery is guaranteed at-least-once — records are queued and retried until delivered. Usage Tracker unavailability does not block request processing; records are buffered and delivered when the tracker becomes available.
+
+Note: Gateway may report more AI credits than the tenant's allocated quota because token consumption cannot be predicted before the request completes. This is expected behavior — the quota check is a best-effort gate, not a hard limit.
+
+#### Quota Manager
+
+**ID**: `cpt-cf-llm-gateway-actor-quota-manager`
+
+- **Role**: Checks available AI credit quotas before request execution.
+- **Direction**: outbound
+- **Data exchanged**: Quota check requests (tenant context); receives quota status (available/exceeded).
+- **Availability**: If Quota Manager is unavailable, Gateway rejects the request with a quota-check-unavailable error. Gateway does not bypass quota checks silently.
+
+Note: The specific component that provides quota management is an open question. The PRD defines the need for a quota-checking dependency but does not prescribe which module or service fulfills this role.
 
 #### Audit Module
 
@@ -148,9 +161,9 @@ No dedicated human actors. All interactions with LLM Gateway are mediated throug
 
 **ID**: `cpt-cf-llm-gateway-actor-model-registry`
 
-- **Role**: Resolves model identifiers to provider and endpoint information per tenant. Gateway queries Model Registry on every request to determine which provider and endpoint to use.
+- **Role**: Resolves model identifiers to provider and endpoint information per tenant. Gateway queries Model Registry on every request to determine which provider and endpoint to use. Also provides per-model pricing information used by Gateway to convert consumed tokens into AI credits.
 - **Direction**: outbound
-- **Data exchanged**: Model resolution requests (model identifier, tenant context); receives provider details (endpoint URL, provider type, capabilities, configuration).
+- **Data exchanged**: Model resolution requests (model identifier, tenant context); receives provider details (endpoint URL, provider type, capabilities, configuration, per-model pricing for AI credit conversion).
 - **Availability**: If Model Registry is unavailable, Gateway returns a model-resolution-unavailable error. Gateway cannot route requests without model resolution.
 
 ## 3. Operational Concept & Environment
@@ -160,6 +173,16 @@ No dedicated human actors. All interactions with LLM Gateway are mediated throug
 - Requires persistent storage for async/batch job state and guaranteed usage record delivery
 - All external provider calls route through Outbound API Gateway (OAGW) — Gateway never calls providers directly
 - Media files (images, audio, video, documents) are stored and retrieved via FileStorage module
+
+### 3.2 Data Ownership & Classification
+
+Gateway acts as a processor — consumers own request/response data; Gateway owns operational metadata (job state, usage records). Provider response data in persisted job records is held on behalf of the consumer and subject to retention-based cleanup.
+
+| Data Category | Examples | Persistence | Sensitivity | Owner |
+|---------------|----------|-------------|-------------|-------|
+| Transient request/response | Prompts, completions, embeddings | Not persisted — in-memory only | Consumer-defined (may contain PII) | Consumer |
+| Persisted job records | Async job state, batch job ID mappings, job results | Retention-bound (10 min / 48 h) | Potentially sensitive — treated as PII-capable | Consumer (held by Gateway) |
+| Usage telemetry | AI credit amounts, tenant/user/model attribution | Delivered to Usage Tracker, then removed | Operational — no PII | Gateway |
 
 ## 4. Scope
 
@@ -174,9 +197,9 @@ No dedicated human actors. All interactions with LLM Gateway are mediated throug
 - Tool/function calling pass-through (consumer executes tools)
 - Structured output with schema validation
 - Pre-call and post-response hook plugin interception
-- Usage tracking with guaranteed at-least-once delivery
+- AI credit usage tracking with guaranteed at-least-once delivery (tokens converted to credits via Model Registry prices)
 - Provider fallback and timeout enforcement
-- Per-tenant budget enforcement and rate limiting
+- Per-tenant AI credit quota enforcement via Quota Manager
 
 ### 4.2 Out of Scope
 
@@ -231,14 +254,6 @@ The system **MUST** accept a text prompt, generate an image via the resolved pro
 
 **Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
 
-#### Speech-to-Text
-
-- [ ] `p1` - **ID**: `cpt-cf-llm-gateway-fr-speech-to-text-v1`
-
-The system **MUST** accept messages with an audio reference (FileStorage URL or external URL), resolve the media, route to an STT-capable model, and return the transcription with usage metrics.
-
-**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
-
 #### Text-to-Speech
 
 - [ ] `p1` - **ID**: `cpt-cf-llm-gateway-fr-text-to-speech-v1`
@@ -252,14 +267,6 @@ The system **MUST** accept a text input, synthesize audio via the resolved provi
 - [ ] `p1` - **ID**: `cpt-cf-llm-gateway-fr-video-understanding-v1`
 
 The system **MUST** accept messages with a video reference (FileStorage URL or external URL), resolve the media, route to a video-capable model, and return the analysis with usage metrics.
-
-**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
-
-#### Video Generation
-
-- [ ] `p1` - **ID**: `cpt-cf-llm-gateway-fr-video-generation-v1`
-
-The system **MUST** accept a text prompt, generate video via the resolved provider, store the result, and return a retrievable URL with usage metrics. Video generation typically requires async mode due to long processing times.
 
 **Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
 
@@ -299,23 +306,15 @@ The system **MUST** provide a uniform async experience regardless of whether the
 
 **Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
 
-#### Realtime Audio
-
-- [ ] `p1` - **ID**: `cpt-cf-llm-gateway-fr-realtime-audio-v1`
-
-The system **MUST** support bidirectional audio streaming via a persistent connection for real-time voice conversations, with usage reported on session close.
-
-**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
-
 #### Usage Tracking
 
 - [ ] `p1` - **ID**: `cpt-cf-llm-gateway-fr-usage-tracking-v1`
 
-The system **MUST** report usage after each request via Usage Tracker: tokens, cost estimate, latency, attribution (tenant, user, conversation, model). The system **MUST** guarantee at-least-once delivery of usage records.
+The system **MUST** report AI credit consumption after each request via Usage Tracker. The system **MUST** obtain per-model prices from Model Registry, convert consumed tokens to AI credits, and report the credit amount with attribution (tenant, user, model). The system **MUST** guarantee at-least-once delivery of usage records.
 
 Cross-cutting concern — applies to all operations, no dedicated UC.
 
-**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-usage-tracker`
+**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-usage-tracker`, `cpt-cf-llm-gateway-actor-model-registry`
 
 ### P2 — Reliability & Governance
 
@@ -355,25 +354,53 @@ The system **MUST** invoke Hook Plugin after receiving a response from the provi
 
 **Actors**: `cpt-cf-llm-gateway-actor-hook-plugin`, `cpt-cf-llm-gateway-actor-consumer`
 
-#### Per-Tenant Budget Enforcement
+#### Per-Tenant Quota Enforcement
 
 - [ ] `p2` - **ID**: `cpt-cf-llm-gateway-fr-budget-enforcement-v1`
 
-The system **MUST** check budget before execution via Usage Tracker, reject requests when budget is exhausted, and report actual usage after completion.
+The system **MUST** check available AI credit quota before execution via Quota Manager and reject requests when the quota is exhausted. After request completion, the system **MUST** report actual AI credit consumption to Usage Tracker.
+
+Note: Gateway may consume more AI credits than the allocated quota because token consumption cannot be predicted before the request completes. This is expected behavior — the pre-request quota check is a best-effort gate, not a hard ceiling.
 
 Cross-cutting concern — applies to all operations, no dedicated UC.
 
-**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-usage-tracker`
+**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-quota-manager`, `cpt-cf-llm-gateway-actor-usage-tracker`
 
 #### Rate Limiting
 
 - [ ] `p2` - **ID**: `cpt-cf-llm-gateway-fr-rate-limiting-v1`
 
-The system **MUST** enforce rate limits at tenant and user levels and reject requests exceeding configured limits.
+The system **MUST** enforce rate limits at tenant and user levels and reject requests exceeding configured limits. Rate limiting is closely related to quota management; both may be provided by the same component.
+
+Note: The specific mechanism and component providing rate limiting is an open question — see Open Questions section.
 
 **Actors**: `cpt-cf-llm-gateway-actor-consumer`
 
-### P3 — Optimization
+### P3 — Additional Capabilities
+
+#### Speech-to-Text
+
+- [ ] `p3` - **ID**: `cpt-cf-llm-gateway-fr-speech-to-text-v1`
+
+The system **MUST** accept messages with an audio reference (FileStorage URL or external URL), resolve the media, route to an STT-capable model, and return the transcription with usage metrics.
+
+**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
+
+#### Video Generation
+
+- [ ] `p3` - **ID**: `cpt-cf-llm-gateway-fr-video-generation-v1`
+
+The system **MUST** accept a text prompt, generate video via the resolved provider, store the result, and return a retrievable URL with usage metrics. Video generation typically requires async mode due to long processing times.
+
+**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
+
+#### Realtime Audio
+
+- [ ] `p3` - **ID**: `cpt-cf-llm-gateway-fr-realtime-audio-v1`
+
+The system **MUST** support bidirectional audio streaming via a persistent connection for real-time voice conversations, with usage reported on session close.
+
+**Actors**: `cpt-cf-llm-gateway-actor-consumer`, `cpt-cf-llm-gateway-actor-provider`
 
 #### Batch Processing
 
@@ -413,17 +440,17 @@ Async job records (ID mappings, results) are retained for 10 minutes after compl
 
 - [ ] `p2` - **ID**: `cpt-cf-llm-gateway-nfr-compatibility-v1`
 
-Gateway API follows the Open Responses protocol and maintains backward compatibility within the same major version. Breaking changes require a new API version prefix. Co-existence with other platform modules is guaranteed — Gateway communicates exclusively through SDK traits and ClientHub, with no shared mutable state.
+Gateway API **MUST** maintain backward compatibility within the same major version. Breaking changes require a new API version prefix. Co-existence with other platform modules is guaranteed — Gateway communicates exclusively through SDK traits and ClientHub, with no shared mutable state. The specific API protocol is a design choice documented in DESIGN.md.
 
 ### NFR Exclusions
 
 The following quality domains are handled at the platform level and do not require module-specific NFRs:
 
 - **Authentication / Authorization**: Handled by platform AuthN/AuthZ modules via SecurityContext. All Gateway endpoints require valid authentication; authorization is enforced per tenant through platform middleware.
-- **Security implementation**: Credential management handled by CredStore; TLS and network security handled by infrastructure. Content security (PII filtering, moderation) is handled by Hook Plugins, not Gateway itself.
+- **Security implementation**: Credential management handled by CredStore; TLS and network security handled by infrastructure. Content security (PII filtering, moderation) is handled by Hook Plugins, not Gateway itself. Data classification and ownership are documented in § 3.2.
 - **Safety**: Not applicable — LLM Gateway is a software-only API module with no physical interaction or safety-critical operations.
 - **Usability / Accessibility**: Not applicable — API-only module with no user interface.
-- **Compliance / Regulatory**: LLM Gateway does not store conversation content or PII. Request/response data is transient. Compliance requirements for data processed by LLM providers are the responsibility of consumers and the providers themselves.
+- **Compliance / Regulatory**: LLM Gateway does not store conversation content. Synchronous request/response data is transient. Async and batch job results are durably persisted for the retention period (up to 48 hours) and may contain provider response data that includes PII depending on consumer requests; Gateway treats all persisted job results as potentially sensitive and relies on retention-based cleanup as the primary data protection control. Compliance requirements for data processed by LLM providers are the responsibility of consumers and the providers themselves.
 - **Operations (Deployment / Monitoring)**: Handled by platform infrastructure. Gateway follows standard ModKit module deployment and observability patterns.
 - **Maintainability / Documentation**: Follows platform-wide documentation standards. API documentation generated from OpenAPI specs in DESIGN.
 
@@ -435,7 +462,7 @@ Async and batch job state must survive Gateway instance restarts with zero data 
 
 ## 7. Public Library Interfaces
 
-Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md), not a public Rust crate interface.
+Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md), not a public Rust crate interface. If inter-module programmatic access is needed in the future, an SDK crate with ClientHub traits will be introduced as a separate artifact.
 
 ## 8. Use Cases
 
@@ -462,7 +489,7 @@ Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md)
 
 **Acceptance criteria**:
 - Response in normalized format regardless of provider
-- Usage metrics included (tokens, cost estimate)
+- Usage metrics included (AI credit amount, model attribution)
 - Provider errors normalized to Gateway error format
 
 #### UC-002: Streaming Chat Completion
@@ -513,7 +540,7 @@ Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md)
 
 **Acceptance criteria**:
 - Vectors returned in normalized format
-- Usage metrics included (tokens)
+- Usage metrics included (AI credit amount)
 
 #### UC-004: Vision (Image Analysis)
 
@@ -569,7 +596,7 @@ Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md)
 
 #### UC-006: Speech-to-Text
 
-- [ ] `p1` - **ID**: `cpt-cf-llm-gateway-usecase-speech-to-text-v1`
+- [ ] `p3` - **ID**: `cpt-cf-llm-gateway-usecase-speech-to-text-v1`
 **Actor**: `cpt-cf-llm-gateway-actor-consumer`
 
 **Preconditions**: STT model available for tenant.
@@ -645,7 +672,7 @@ Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md)
 
 #### UC-009: Video Generation
 
-- [ ] `p1` - **ID**: `cpt-cf-llm-gateway-usecase-video-generation-v1`
+- [ ] `p3` - **ID**: `cpt-cf-llm-gateway-usecase-video-generation-v1`
 **Actor**: `cpt-cf-llm-gateway-actor-consumer`
 
 **Preconditions**: Video generation model available for tenant.
@@ -783,7 +810,7 @@ Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md)
 
 #### UC-014: Realtime Audio
 
-- [ ] `p1` - **ID**: `cpt-cf-llm-gateway-usecase-realtime-audio-v1`
+- [ ] `p3` - **ID**: `cpt-cf-llm-gateway-usecase-realtime-audio-v1`
 **Actor**: `cpt-cf-llm-gateway-actor-consumer`
 
 **Preconditions**: Model available for tenant, model supports realtime audio.
@@ -916,7 +943,7 @@ Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md)
 - [ ] `p3` - **ID**: `cpt-cf-llm-gateway-usecase-batch-processing-v1`
 **Actor**: `cpt-cf-llm-gateway-actor-consumer`
 
-**Preconditions**: Model available for tenant, provider supports batch API.
+**Preconditions**: Model available for tenant. If the resolved provider does not support a native batch API, Gateway rejects the batch request with a batch-not-supported error.
 
 **Flow**:
 1. Consumer submits batch of requests
@@ -951,7 +978,8 @@ Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md)
 | Model Registry | Resolves model identifiers to provider and endpoint information | `p1` |
 | FileStorage | Stores and retrieves media files (images, audio, video, documents) | `p1` |
 | CredStore | Provides provider API credentials to OAGW | `p1` |
-| Usage Tracker | Receives usage reports for budget enforcement and billing | `p1` |
+| Usage Tracker | Receives AI credit consumption reports | `p1` |
+| Quota Manager | Checks available AI credit quotas before request execution (specific component TBD — see Open Questions) | `p2` |
 | Type Registry | Resolves GTS schema references for tool definitions | `p2` |
 | Audit Module | Receives compliance audit events | `p4` |
 
@@ -974,9 +1002,12 @@ Not applicable — LLM Gateway exposes only a REST API (documented in DESIGN.md)
 
 ## 13. Open Questions
 
-No open questions at this time. All scope, protocol, and integration decisions have been resolved through ADRs (0001–0005) and design discussions.
+- **Quota Manager component** (Owner: Platform Architecture, Resolve by: before P2 implementation begins): Gateway requires a quota-checking dependency to enforce AI credit quotas before request execution. The specific component that provides quota management is not yet defined. It may be a dedicated Quota Manager module, an extension of Usage Tracker, or an external service. This needs to be resolved before implementing `cpt-cf-llm-gateway-fr-budget-enforcement-v1`.
+- **Rate limiting mechanism** (Owner: Platform Architecture, Resolve by: before P2 implementation begins): Rate limiting (`cpt-cf-llm-gateway-fr-rate-limiting-v1`) is closely related to quota management. Whether rate limiting and quota enforcement are provided by the same component or separate components is an open question.
+- **Request monitoring and observability** (Owner: Platform Architecture, Resolve by: before P1 implementation begins): The LLM Gateway needs to track how many requests are being processed, including metrics such as request counts, latency, error rates, and token usage per provider/model. However, the platform does not yet have a standardized approach to monitoring and observability across modules. A platform-wide monitoring strategy must be agreed upon before implementing module-level metrics, to ensure consistency and avoid fragmented solutions.
 
 ## 14. Traceability
 
 - **Design**: [DESIGN.md](./DESIGN.md)
 - **ADRs**: [ADR/](./ADR/)
+- **Decomposition**: Not yet created — planned for feature-level breakdown
