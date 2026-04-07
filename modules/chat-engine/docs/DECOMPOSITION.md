@@ -393,7 +393,7 @@ Feature numbering reflects logical grouping, not implementation order. Recommend
 
 ### 2.6 [Message Reactions & Feedback](features/message-reactions.md) 🔄 MEDIUM
 
-- [ ] `p2` - **ID**: `cpt-cf-chat-engine-feature-message-reactions`
+- [x] `p2` - **ID**: `cpt-cf-chat-engine-feature-message-reactions`
 
 - **Type**: Extension
 
