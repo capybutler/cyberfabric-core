@@ -20,6 +20,7 @@ Updated:  2026-03-20 by Constructor Tech
   - [Update Active Path](#update-active-path)
   - [Validate Plugin Capability](#validate-plugin-capability)
 - [4. States (CDSL)](#4-states-cdsl)
+  - [None](#none)
 - [5. Definitions of Done](#5-definitions-of-done)
   - [Recreate Response](#recreate-response-1)
   - [Branch from Message](#branch-from-message-1)
@@ -235,6 +236,8 @@ Success criteria: Variant creation latency equivalent to normal message send; br
    1. [ ] - `p2` - **RETURN** 502 Bad Gateway with error detail - `inst-vpc-error`
 
 ## 4. States (CDSL)
+
+### None
 
 Not applicable. Message variants do not introduce new entity lifecycle states beyond those defined in `cpt-cf-chat-engine-state-session-lifecycle-session` (session lifecycle) and `cpt-cf-chat-engine-state-message-processing-stream` (streaming state). The is_active flag on messages is a path-selection marker, not a state machine transition.
 

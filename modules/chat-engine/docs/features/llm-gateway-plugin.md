@@ -25,6 +25,7 @@ Updated:  2026-03-20 by Constructor Tech
   - [Generate Summary](#generate-summary)
   - [Plugin Resilience](#plugin-resilience)
 - [4. States (CDSL)](#4-states-cdsl)
+  - [None](#none)
 - [5. Definitions of Done](#5-definitions-of-done)
   - [GTS Schema Registration](#gts-schema-registration)
   - [Model Registry Capability Resolution](#model-registry-capability-resolution)
@@ -305,6 +306,8 @@ Success criteria: LLM plugin registers GTS schemas at startup; capabilities are 
 5. [ ] - `p1` - **RETURN** HTTP response from downstream service or error after policies exhausted - `inst-res-return`
 
 ## 4. States (CDSL)
+
+### None
 
 No plugin-specific state machines. The LLM Gateway Plugin is stateless; session and streaming state machines are owned by `cpt-cf-chat-engine-feature-session-lifecycle` and `cpt-cf-chat-engine-feature-message-processing` respectively.
 

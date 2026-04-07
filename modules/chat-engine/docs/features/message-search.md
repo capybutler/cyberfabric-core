@@ -19,6 +19,7 @@ Updated:  2026-03-20 by Constructor Tech
   - [Load Context Window](#load-context-window)
   - [Maintain Search Index](#maintain-search-index)
 - [4. States (CDSL)](#4-states-cdsl)
+  - [None](#none)
 - [5. Definitions of Done](#5-definitions-of-done)
   - [Session-Scoped Full-Text Search](#session-scoped-full-text-search)
   - [Cross-Session Full-Text Search](#cross-session-full-text-search)
@@ -170,6 +171,8 @@ Context is loaded using two methods:
 4. [ ] - `p3` - **RETURN** void - `inst-mi-return`
 
 ## 4. States (CDSL)
+
+### None
 
 No state machines are required for this feature. Search is a stateless query operation with no entity lifecycle transitions.
 

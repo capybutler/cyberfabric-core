@@ -20,6 +20,7 @@ Updated:  2026-03-20 by Constructor Tech
   - [Evaluate Retention Policy](#evaluate-retention-policy)
   - [Enforce Retention Cleanup](#enforce-retention-cleanup)
 - [4. States (CDSL)](#4-states-cdsl)
+  - [None](#none)
 - [5. Definitions of Done](#5-definitions-of-done)
   - [On-Demand Session Summary](#on-demand-session-summary)
   - [Retention Policy Configuration](#retention-policy-configuration)
@@ -214,6 +215,8 @@ Success criteria: Summary streaming first-byte under 500ms; retention cleanup pr
 3. [ ] - `p2` - **RETURN** summary of deletions per session - `inst-rc-return`
 
 ## 4. States (CDSL)
+
+### None
 
 Not applicable. Session Intelligence does not introduce new entity lifecycle states. Summary generation is a stateless request-response operation. Retention enforcement is a scheduled batch operation that transitions messages directly to deletion.
 
