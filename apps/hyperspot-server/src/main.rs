@@ -64,6 +64,16 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    // Install aws-lc-rs as the default rustls CryptoProvider before any TLS
+    // config is constructed. Required because both `ring` and `aws-lc-rs`
+    // providers are compiled in (ring via aliri/pingora-rustls), and rustls
+    // 0.23 panics if it cannot auto-detect a single provider.
+    // Skip in FIPS mode — init_procedure() installs the FIPS provider instead.
+    #[cfg(not(feature = "fips"))]
+    if let Err(_e) = rustls::crypto::aws_lc_rs::default_provider().install_default() {
+        // Another provider was already installed — safe to continue.
+    }
+
     let cli = Cli::parse();
 
     // Layered config:
