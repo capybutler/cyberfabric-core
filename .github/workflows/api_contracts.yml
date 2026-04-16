@@ -110,6 +110,15 @@ jobs:
           cp docs/api/api.json /tmp/api.committed.json
           make openapi
 
+      - name: Dump server log on failure
+        if: failure()
+        run: |
+          echo "=== SERVER LOG ==="
+          for f in /tmp/server-*.log; do
+            echo "--- $f ---"
+            cat "$f" 2>/dev/null | tail -100
+          done
+
       # ── Phase 1: Spec freshness ───────────────────────────────────────
 
       - name: Check spec is up to date

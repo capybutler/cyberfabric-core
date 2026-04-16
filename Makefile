@@ -38,6 +38,15 @@ endef
 define start_server_and_wait
 	TEMP_DIR=$$(if [ -n "$$TEMP" ]; then echo "$$TEMP"; elif [ -n "$$TMP" ]; then echo "$$TMP"; else echo "/tmp"; fi); \
 	LOG_FILE="$$TEMP_DIR/server-$$$$.log"; \
+	HEALTH_PORT=$$(echo "$(2)" | sed -E 's|.*://[^:]+:([0-9]+).*|\1|'); \
+	if [ -n "$$HEALTH_PORT" ] && command -v lsof >/dev/null 2>&1; then \
+		STALE_PIDS=$$(lsof -tiTCP:$$HEALTH_PORT -sTCP:LISTEN 2>/dev/null); \
+		if [ -n "$$STALE_PIDS" ]; then \
+			echo "Killing stale LISTEN processes on port $$HEALTH_PORT (PIDs: $$STALE_PIDS)"; \
+			echo "$$STALE_PIDS" | xargs kill 2>/dev/null || true; \
+			sleep 1; \
+		fi; \
+	fi; \
 	$(1) > "$$LOG_FILE" 2>&1 & \
 	SERVER_PID=$$!; \
 	echo "Server started with PID: $$SERVER_PID (log: $$LOG_FILE)"; \

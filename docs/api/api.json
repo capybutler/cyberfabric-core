@@ -293,12 +293,6 @@
           "allow_credentials": {
             "type": "boolean"
           },
-          "allowed_headers": {
-            "items": {
-              "type": "string"
-            },
-            "type": "array"
-          },
           "allowed_methods": {
             "items": {
               "$ref": "#/components/schemas/CorsHttpMethod"
@@ -319,11 +313,6 @@
               "type": "string"
             },
             "type": "array"
-          },
-          "max_age": {
-            "format": "int32",
-            "minimum": 0,
-            "type": "integer"
           },
           "sharing": {
             "$ref": "#/components/schemas/SharingMode"
@@ -2732,6 +2721,17 @@
           "request_id": {
             "format": "uuid",
             "type": "string"
+          },
+          "thread_summary_applied": {
+            "oneOf": [
+              {
+                "type": "null"
+              },
+              {
+                "$ref": "#/components/schemas/ThreadSummaryInfo",
+                "description": "Present when a thread summary is included in the context window.\nUI can display an informational indicator."
+              }
+            ]
           }
         },
         "required": [
@@ -2886,6 +2886,21 @@
         "required": [
           "start",
           "end"
+        ],
+        "type": "object"
+      },
+      "ThreadSummaryInfo": {
+        "description": "Metadata about a thread summary applied to the current turn's context.\n\nSent in the `stream_started` event when the conversation has an active\nthread summary. The UI can use this to show an informational banner.",
+        "properties": {
+          "token_estimate": {
+            "description": "Estimated token cost of the summary in the context window.",
+            "format": "int32",
+            "minimum": 0,
+            "type": "integer"
+          }
+        },
+        "required": [
+          "token_estimate"
         ],
         "type": "object"
       },
