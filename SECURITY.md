@@ -1,11 +1,5 @@
 # Security Policy
 
-## Supported Versions
-
-| Version | Supported          |
-| ------- | ------------------ |
-| 0.1.x   | :white_check_mark: |
-
 ## Reporting Vulnerabilities
 
 **Do NOT report security vulnerabilities through public GitHub issues.**
@@ -13,7 +7,7 @@
 Report vulnerabilities via:
 
 1. **GitHub Security Advisories**: Report privately at [cyberfabric/cyberfabric-core/security/advisories/new](https://github.com/cyberfabric/cyberfabric-core/security/advisories/new)
-2. **Direct Contact**: Email maintainers directly (see [MAINTAINERS](https://github.com/cyberfabric/cyberfabric-core/graphs/contributors) list)
+2. **Direct Contact**: Email security team (security@acronis.com) or  [maintainers](MAINTAINERS.md) directly
 
 ### Required Information
 
@@ -28,15 +22,13 @@ Report vulnerabilities via:
 ### Response Timeline
 
 - Acknowledgment: 48 hours
-- Fix target: 90 days from disclosure
+- Fix target: 7-90 days from disclosure, depending on severity
 - Credit: Provided in security advisory (unless anonymity requested)
 
 ## Developer Security Practices
 
+- Review [Security Practices](docs/security/SECURITY.md)
 - Review [Security Guidelines](guidelines/SECURITY.md) for coding standards
-- Follow [Secure ORM documentation](docs/SECURE-ORM.md) for database operations
-- Dependencies scanned via `cargo audit` and Dependabot
-- All changes require code review via pull requests
 
 ## Disclosure Process
 
@@ -44,4 +36,3 @@ Report vulnerabilities via:
 2. Patch release created
 3. Notification via GitHub releases
 4. Public disclosure after update window
-
