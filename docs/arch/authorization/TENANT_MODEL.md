@@ -58,6 +58,8 @@ The tenant structure is a **single-root tree** — every tenant except the root 
 - Depth is not bounded by the tenant model itself; any limits on hierarchy depth come from the concrete Account/Tenant Management service implementation (operational policy, performance envelope, storage constraints).
 - The root is identified by convention (the single tenant with `parent_id = NULL`). There is no `is_system` field, and the root is not referred to as a "system tenant".
 
+**Relationship with the RG forest.** When tenants are materialized as groups in the Resource Group module, the single-root tree is embedded inside the broader **RG forest**: RG may hold several root groups (ownership-graph roots, auxiliary forests), each carrying its own `tenant_id`. At most one of those roots may be a tenant-type group — that root *is* the single tenant root described above. All other tenants live below it as sub-tenants. Non-tenant RG roots inherit the main tenant's `tenant_id` via seeding but are not tenants themselves. RG enforces this at create time (`TenantRootAlreadyExists` / 409 Conflict). See [RG DESIGN §Tenant Root Uniqueness](../../../modules/system/resource-group/docs/DESIGN.md#tenant-root-uniqueness).
+
 **Why single-root tree?**
 - **One OAuth client is enough** for S2S tenant-scoped flows that need to act as the root — no per-root credential fan-out at the vendor IdP.
 - **Unambiguous "act as root" semantics** — platform-level tenant-scoped operations always address the same tenant.
