@@ -59,7 +59,7 @@ impl EarlyLintPass for De0901GtsStringPattern {
         // Extract both the item name and the initializer expression from const/static items.
         // Note: `Item` has no top-level `ident`; it lives inside `ConstItem` / `StaticItem`.
         let (item_name, init_expr): (&str, Option<&Expr>) = match &item.kind {
-            ItemKind::Const(ci) => (ci.ident.name.as_str(), ci.expr.as_deref()),
+            ItemKind::Const(ci) => (ci.ident.name.as_str(), ci.rhs.as_ref().map(|rhs| rhs.expr())),
             ItemKind::Static(si) => (si.ident.name.as_str(), si.expr.as_deref()),
             _ => return,
         };

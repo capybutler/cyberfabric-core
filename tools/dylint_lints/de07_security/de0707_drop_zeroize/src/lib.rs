@@ -260,10 +260,7 @@ impl<'tcx> LateLintPass<'tcx> for De0707DropZeroize {
             return;
         };
         let impl_def_id = item.owner_id.def_id;
-        let Some(impl_trait_ref) = cx.tcx.impl_trait_ref(impl_def_id) else {
-            return;
-        };
-        let impl_trait_ref = impl_trait_ref.instantiate_identity();
+        let impl_trait_ref = cx.tcx.impl_trait_ref(impl_def_id).instantiate_identity();
         let Some(drop_trait_did) = cx.tcx.lang_items().drop_trait() else {
             return;
         };

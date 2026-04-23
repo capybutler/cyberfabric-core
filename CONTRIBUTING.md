@@ -16,7 +16,7 @@ We welcome contributions in:
 
 ### 1.1 Prerequisites
 
-- **Rust stable** with Cargo (Edition 2024, Rust MSRV 1.92.0)
+- **Rust stable** with Cargo (Edition 2024, Rust MSRV 1.95.0)
 - **Protocol Buffers compiler** (`protoc`) (see `README.md`)
 - **Git** for version control
 - **Your favorite editor** (VS Code with rust-analyzer recommended)

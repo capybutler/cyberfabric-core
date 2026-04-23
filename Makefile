@@ -309,7 +309,7 @@ dylint-test: install-tools
 dylint:
 	$(call check_tool,cargo-dylint)
 	$(call check_tool,dylint-link)
-	cargo +nightly-2025-09-18 dylint --all --workspace
+	cargo +nightly-2026-01-22 dylint --all --workspace
 
 # Run all code safety checks
 safety: clippy kani lint dylint # geiger

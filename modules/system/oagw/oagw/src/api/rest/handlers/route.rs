@@ -82,7 +82,10 @@ pub async fn list_routes(
     let upstream_uuid = params
         .upstream_id
         .as_deref()
-        .map(|id| parse_gts_id(id, gts::UPSTREAM_SCHEMA, instance))
+        .map(
+            #[allow(clippy::result_large_err)]
+            |id| parse_gts_id(id, gts::UPSTREAM_SCHEMA, instance),
+        )
         .transpose()?;
     let query = crate::domain::model::ListQuery {
         top: params.limit.min(100),

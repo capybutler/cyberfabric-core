@@ -12,7 +12,7 @@ use rustc_lint::LintContext;
 use rustc_ast::{UseTree, UseTreeKind};
 
 use rustc_span::source_map::SourceMap;
-use rustc_span::{FileName, RealFileName, Span};
+use rustc_span::{FileName, RemapPathScopeComponents, Span};
 use std::collections::HashSet;
 
 const ALLOWED_FLAGS: &[&str] = &["request", "response"];
@@ -54,10 +54,12 @@ pub fn filename_str(source_map: &SourceMap, span: Span) -> Option<String> {
         FileName::Real(real) => {
             if let Some(local) = real.local_path() {
                 Some(local.to_string_lossy().to_string())
-            } else if let RealFileName::Remapped { virtual_name, .. } = real {
-                Some(virtual_name.to_string_lossy().to_string())
             } else {
-                None
+                Some(
+                    real.path(RemapPathScopeComponents::DIAGNOSTICS)
+                        .to_string_lossy()
+                        .to_string(),
+                )
             }
         }
         _ => None,

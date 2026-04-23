@@ -61,7 +61,7 @@ jobs:
           cache: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@9bc92bc5598b4f3bec5d910d352094982cb0c3b9 # 1.92.0
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
       - name: Install nextest
         uses: taiki-e/install-action@6ef672efc2b5aabc787a9e94baf4989aa02a97df # v2.70.3
@@ -74,7 +74,7 @@ jobs:
         with:
           cache-bin: false
           cache-targets: false
-          shared-key: pr-${{ runner.os }}-stable-1.92
+          shared-key: pr-${{ runner.os }}-stable-1.95
 
       # Install sccache (cross-platform)
       - name: Install sccache
@@ -112,7 +112,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@9bc92bc5598b4f3bec5d910d352094982cb0c3b9 # 1.92.0
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
       - name: Install nextest
         uses: taiki-e/install-action@6ef672efc2b5aabc787a9e94baf4989aa02a97df # v2.70.3
@@ -124,7 +124,7 @@ jobs:
         with:
           cache-bin: false
           cache-targets: false
-          shared-key: pr-${{ runner.os }}-integration-stable-1.92
+          shared-key: pr-${{ runner.os }}-integration-stable-1.95
 
       # Install sccache (cross-platform)
       - name: Install sccache
@@ -168,7 +168,7 @@ jobs:
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@9bc92bc5598b4f3bec5d910d352094982cb0c3b9 # 1.92.0
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
       # Install tools via prebuilt binaries for speed.
       - name: Install cargo-deny
@@ -187,7 +187,7 @@ jobs:
       contents: read
       id-token: write
     env:
-      RUSTUP_TOOLCHAIN: nightly-2026-01-20
+      RUSTUP_TOOLCHAIN: nightly-2026-01-22
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
@@ -198,7 +198,7 @@ jobs:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install Rust toolchain (with llvm-tools)
-        uses: dtolnay/rust-toolchain@881ba7bf39a41cda34ac9e123fb41b44ed08232f # nightly
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: llvm-tools-preview
@@ -237,13 +237,13 @@ jobs:
     name: Dylint Tests
     runs-on: ubuntu-latest
     env:
-      RUSTUP_TOOLCHAIN: nightly-2025-09-18
+      RUSTUP_TOOLCHAIN: nightly-2026-01-22
     steps:
       - name: Checkout
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
 
       - name: Install Rust nightly toolchain
-        uses: dtolnay/rust-toolchain@881ba7bf39a41cda34ac9e123fb41b44ed08232f # nightly
+        uses: dtolnay/rust-toolchain@5b842231ba77f5c045dba54ac5560fed2db780e2 # nightly
         with:
           toolchain: ${{ env.RUSTUP_TOOLCHAIN }}
           components: llvm-tools-preview,rustc-dev

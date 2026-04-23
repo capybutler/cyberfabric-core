@@ -44,7 +44,7 @@ Follows existing project conventions: `testing/e2e/modules/{module}/` for HTTP-l
 
 ## Prerequisites
 
-- Rust stable (MSRV 1.92.0)
+- Rust stable (MSRV 1.95.0)
 - Docker (for PostgreSQL)
 - `protoc` installed (`brew install protobuf` on macOS)
 

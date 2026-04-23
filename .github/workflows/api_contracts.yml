@@ -81,7 +81,7 @@ jobs:
           cache: false
 
       - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@9bc92bc5598b4f3bec5d910d352094982cb0c3b9 # 1.92.0
+        uses: dtolnay/rust-toolchain@e081816240890017053eacbb1bdf337761dc5582 # 1.95.0
 
       # Cache Cargo registry/git + target/ across platforms.
       - name: Cache Cargo/target
@@ -89,7 +89,7 @@ jobs:
         with:
           cache-bin: false
           cache-targets: false
-          shared-key: pr-${{ runner.os }}-stable-1.92
+          shared-key: pr-${{ runner.os }}-stable-1.95
 
       # Install sccache (cross-platform)
       - name: Install sccache

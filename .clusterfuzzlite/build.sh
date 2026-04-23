@@ -2,7 +2,7 @@
 # Copyright 2026 HyperSpot Contributors
 # SPDX-License-Identifier: Apache-2.0
 
-# Update Rust toolchain to latest nightly (project requires Rust 1.92+)
+# Update Rust toolchain to latest nightly (project requires Rust 1.95+)
 # ClusterFuzzLite sets RUSTUP_TOOLCHAIN=nightly-2025-09-05 which is too old
 # We must override it to use latest nightly
 unset RUSTUP_TOOLCHAIN
