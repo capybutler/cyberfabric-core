@@ -227,6 +227,83 @@ impl MockTenantResolverClient {
         }
     }
 
+    /// Create a resolver where `parent` has multiple direct `children`.
+    ///
+    /// Each child sees `[parent]` as its ancestor chain. Parent has no
+    /// ancestors (it's the root).
+    pub fn with_siblings(parent: TenantId, children: Vec<TenantId>) -> Self {
+        let mut tenants = HashMap::new();
+        let parent_info = TenantInfo {
+            id: parent,
+            name: format!("tenant-{}", &parent.to_string()[..8]),
+            status: TenantStatus::Active,
+            tenant_type: None,
+            parent_id: None,
+            self_managed: false,
+        };
+        tenants.insert(parent, (parent_info, vec![]));
+        for &child in &children {
+            let info = TenantInfo {
+                id: child,
+                name: format!("tenant-{}", &child.to_string()[..8]),
+                status: TenantStatus::Active,
+                tenant_type: None,
+                parent_id: Some(parent),
+                self_managed: false,
+            };
+            let ancestors = vec![TenantRef {
+                id: parent,
+                status: TenantStatus::Active,
+                tenant_type: None,
+                parent_id: None,
+                self_managed: false,
+            }];
+            tenants.insert(child, (info, ancestors));
+        }
+        Self { tenants }
+    }
+
+    /// Create a resolver with two independent trees (separate roots).
+    ///
+    /// Each root has its own set of direct children. The trees share no
+    /// ancestry. Used for testing cross-tree isolation.
+    pub fn with_two_trees(
+        root_a: TenantId,
+        children_a: Vec<TenantId>,
+        root_b: TenantId,
+        children_b: Vec<TenantId>,
+    ) -> Self {
+        let mut resolver = Self::with_siblings(root_a, children_a);
+        let parent_info = TenantInfo {
+            id: root_b,
+            name: format!("tenant-{}", &root_b.to_string()[..8]),
+            status: TenantStatus::Active,
+            tenant_type: None,
+            parent_id: None,
+            self_managed: false,
+        };
+        resolver.tenants.insert(root_b, (parent_info, vec![]));
+        for &child in &children_b {
+            let info = TenantInfo {
+                id: child,
+                name: format!("tenant-{}", &child.to_string()[..8]),
+                status: TenantStatus::Active,
+                tenant_type: None,
+                parent_id: Some(root_b),
+                self_managed: false,
+            };
+            let ancestors = vec![TenantRef {
+                id: root_b,
+                status: TenantStatus::Active,
+                tenant_type: None,
+                parent_id: None,
+                self_managed: false,
+            }];
+            resolver.tenants.insert(child, (info, ancestors));
+        }
+        resolver
+    }
+
     /// Create a resolver with an explicit hierarchy.
     ///
     /// `chain` is ordered root-first: `[root, parent, child]`.  Each entry
