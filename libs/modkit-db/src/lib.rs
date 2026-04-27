@@ -77,7 +77,6 @@ pub use sea_orm_migration;
 pub mod advisory_locks;
 pub mod config;
 pub mod contention;
-pub mod deadlock;
 pub mod manager;
 pub mod migration_runner;
 pub mod odata;
@@ -100,7 +99,7 @@ pub use manager::DbManager;
 pub use options::redact_credentials_in_dsn;
 
 // Re-export secure database types for convenience
-pub use secure::{Db, DbConn, DbTx};
+pub use secure::{DEFAULT_TX_RETRY_ATTEMPTS, Db, DbConn, DbTx};
 
 // Re-export service-friendly provider
 pub use db_provider::DBProvider;

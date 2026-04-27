@@ -88,12 +88,14 @@ where
     /// - starting the transaction fails (mapped from `DbError`)
     /// - the closure returns an error
     /// - commit fails (mapped from `DbError`)
-    pub async fn transaction_with_config<T, F>(&self, config: TxConfig, f: F) -> Result<T, E>
+    pub async fn transaction_with_config<T, F>(&self, tx_config: TxConfig, f: F) -> Result<T, E>
     where
         T: Send + 'static,
         F: for<'a> FnOnce(&'a DbTx<'a>) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>
             + Send,
     {
-        self.db.transaction_ref_mapped_with_config(config, f).await
+        self.db
+            .transaction_ref_mapped_with_config(tx_config, f)
+            .await
     }
 }

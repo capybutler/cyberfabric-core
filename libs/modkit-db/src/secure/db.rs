@@ -49,6 +49,24 @@ use super::tx_config::TxConfig;
 use super::tx_error::TxError;
 use crate::{DbError, DbHandle};
 
+/// Default attempt budget for [`Db::transaction_with_retry`].
+///
+/// Three attempts is the canonical "small bounded retry" used across
+/// Cyberfabric services that wrap writes in retry-aware transactions
+/// (closure-table mutations, hierarchy invariants, write paths under
+/// concurrent load). It balances:
+///
+/// - resilience against transient lock-contention failures detected by
+///   [`crate::contention::is_retryable_contention`] (`PostgreSQL`
+///   serialization failures / deadlocks, `MySQL`/`InnoDB` deadlocks,
+///   `SQLite` `BUSY` / `BUSY_SNAPSHOT`);
+/// - bounded latency on the hot path — no exponential backoff, just
+///   immediate retry of a guaranteed-stale transaction;
+/// - predictable failure semantics — after exhausting attempts the
+///   original error is returned, so callers can surface e.g.
+///   `503 Service Unavailable`.
+pub const DEFAULT_TX_RETRY_ATTEMPTS: u32 = 3;
+
 // Task-local guard to detect transaction bypass attempts.
 //
 // When set to `true`, any call to `Db::conn()` will fail with
@@ -176,6 +194,16 @@ impl Db {
         Ok(DbConn {
             conn: self.handle.sea_internal_ref(),
         })
+    }
+
+    /// Database backend in use (`Postgres` / `MySql` / `Sqlite`).
+    ///
+    /// Required by [`crate::contention::is_retryable_contention`] to scope
+    /// retryable-error detection to the correct engine.
+    #[must_use]
+    pub fn backend(&self) -> sea_orm::DbBackend {
+        use sea_orm::ConnectionTrait;
+        self.handle.sea_internal_ref().get_database_backend()
     }
 
     // --- Advisory locks (forwarded, no `DbHandle` exposure) ---
@@ -312,7 +340,7 @@ impl Db {
     /// - commit fails (mapped from `DbError`)
     pub async fn transaction_ref_mapped_with_config<F, T, E>(
         &self,
-        config: TxConfig,
+        tx_config: TxConfig,
         f: F,
     ) -> Result<T, E>
     where
@@ -323,8 +351,8 @@ impl Db {
     {
         use sea_orm::{AccessMode, IsolationLevel};
 
-        let isolation: Option<IsolationLevel> = config.isolation.map(Into::into);
-        let access_mode: Option<AccessMode> = config.access_mode.map(Into::into);
+        let isolation: Option<IsolationLevel> = tx_config.isolation.map(Into::into);
+        let access_mode: Option<AccessMode> = tx_config.access_mode.map(Into::into);
 
         let txn = self
             .handle
@@ -346,6 +374,153 @@ impl Db {
             Err(e) => {
                 _ = txn.rollback().await;
                 Err(e)
+            }
+        }
+    }
+
+    /// Execute a closure inside a transaction with bounded retries on transient
+    /// lock-contention failures.
+    ///
+    /// Retry detection is delegated to [`crate::contention::is_retryable_contention`],
+    /// which is backend-aware (`PostgreSQL` serialization failure / deadlock,
+    /// `MySQL`/`InnoDB` deadlock, `SQLite` `BUSY` / `BUSY_SNAPSHOT`). The caller
+    /// supplies a small `extract_db_err` accessor that reaches into the domain
+    /// error `E` and returns the underlying [`sea_orm::DbErr`], if any — that is
+    /// the only piece of glue the helper needs from the caller.
+    ///
+    /// Uses [`DEFAULT_TX_RETRY_ATTEMPTS`] as the attempt budget. Use
+    /// [`Self::transaction_with_retry_max`] if you need to override the budget
+    /// (typically only in tests).
+    ///
+    /// # Parameters
+    ///
+    /// - `tx_config`: Transaction configuration (isolation level + access
+    ///   mode). The helper itself is isolation-agnostic — pick whichever
+    ///   level the operation needs:
+    ///   - [`TxConfig::default()`] — engine default. Right for retry on
+    ///     `SQLite` (BUSY) or `MySQL`/`InnoDB` (deadlocks happen at any
+    ///     isolation level), or for `PostgreSQL` work that doesn't need
+    ///     stronger guarantees than `READ COMMITTED`.
+    ///   - [`TxConfig::serializable()`] — full `SERIALIZABLE`. Right when
+    ///     the body relies on predicate-level invariants (closure-table
+    ///     mutations, hierarchy or uniqueness checks across rows that
+    ///     concurrent writers could insert), so that conflicting reads
+    ///     surface as `40001` and get retried by this helper.
+    ///   - Custom `TxConfig` (e.g. `RepeatableRead` + `ReadOnly`) for
+    ///     reporting paths that want repeatable snapshots without paying
+    ///     the cost of `SERIALIZABLE`.
+    /// - `extract_db_err`: Accessor returning `Some(&DbErr)` if the domain
+    ///   error wraps a database error, `None` otherwise. Returning `None`
+    ///   always short-circuits the retry loop (the failure is non-DB and
+    ///   is propagated immediately).
+    /// - `body`: The transactional work. Called with a fresh `&DbTx` per
+    ///   attempt. Each retry runs in a brand-new transaction, so the
+    ///   closure must be idempotent across attempts (any in-memory state
+    ///   mutated by an earlier attempt must be reset by the closure
+    ///   itself before re-running).
+    ///
+    /// # Behaviour
+    ///
+    /// 1. Begin a transaction with the given `tx_config` and invoke `body`.
+    /// 2. On `Ok`, commit and return.
+    /// 3. On `Err(e)`:
+    ///    - if `extract_db_err(&e)` yields a `DbErr` that
+    ///      [`crate::contention::is_retryable_contention`] flags as
+    ///      retryable for the active backend, and attempts remain, log at
+    ///      `WARN` and retry;
+    ///    - otherwise, return the error.
+    ///
+    /// On exhausting all attempts the **last** error is returned.
+    ///
+    /// # Errors
+    ///
+    /// Returns `E` if the transaction fails (after retries) or if any
+    /// infrastructure error mapped from `DbError` occurs.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let result: Result<MyType, MyError> = db
+    ///     .transaction_with_retry(
+    ///         TxConfig::serializable(),
+    ///         MyError::db_err, // fn(&MyError) -> Option<&sea_orm::DbErr>
+    ///         |tx| Box::pin(async move {
+    ///             repo.do_atomic_work(tx).await?;
+    ///             Ok(MyType::default())
+    ///         }),
+    ///     )
+    ///     .await;
+    /// ```
+    pub async fn transaction_with_retry<T, E, X, F>(
+        &self,
+        tx_config: TxConfig,
+        extract_db_err: X,
+        body: F,
+    ) -> Result<T, E>
+    where
+        E: From<DbError> + Send + 'static,
+        T: Send + 'static,
+        X: Fn(&E) -> Option<&sea_orm::DbErr> + Send,
+        F: for<'a> FnMut(&'a DbTx<'a>) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>
+            + Send,
+    {
+        self.transaction_with_retry_max(tx_config, DEFAULT_TX_RETRY_ATTEMPTS, extract_db_err, body)
+            .await
+    }
+
+    /// Like [`Self::transaction_with_retry`] but with an explicit attempt
+    /// budget. See that method for behaviour and parameter semantics.
+    ///
+    /// `max_attempts` includes the first try (so `1` disables retries). Values
+    /// below `1` are clamped to `1`. Production code should call the default
+    /// variant instead of hard-coding a number here; this method exists mainly
+    /// for tests and for the rare case where a service has a justified reason
+    /// to deviate from the workspace-wide default.
+    ///
+    /// # Errors
+    ///
+    /// Returns `E` if the transaction fails (after retries) or if any
+    /// infrastructure error mapped from `DbError` occurs.
+    pub async fn transaction_with_retry_max<T, E, X, F>(
+        &self,
+        tx_config: TxConfig,
+        max_attempts: u32,
+        extract_db_err: X,
+        mut body: F,
+    ) -> Result<T, E>
+    where
+        E: From<DbError> + Send + 'static,
+        T: Send + 'static,
+        X: Fn(&E) -> Option<&sea_orm::DbErr> + Send,
+        F: for<'a> FnMut(&'a DbTx<'a>) -> Pin<Box<dyn Future<Output = Result<T, E>> + Send + 'a>>
+            + Send,
+    {
+        let max = max_attempts.max(1);
+        let backend = self.backend();
+        let mut attempt: u32 = 1;
+
+        loop {
+            let result = self
+                .transaction_ref_mapped_with_config(tx_config.clone(), |tx| body(tx))
+                .await;
+
+            match result {
+                Ok(value) => return Ok(value),
+                Err(e) => {
+                    let retryable = extract_db_err(&e).is_some_and(|db_err| {
+                        crate::contention::is_retryable_contention(backend, db_err)
+                    });
+                    if retryable && attempt < max {
+                        tracing::warn!(
+                            attempt,
+                            max_attempts = max,
+                            "retrying transaction after retryable failure"
+                        );
+                        attempt += 1;
+                        continue;
+                    }
+                    return Err(e);
+                }
             }
         }
     }

@@ -32,6 +32,19 @@ pub trait GroupRepositoryTrait: Send + Sync + 'static {
         id: Uuid,
     ) -> Result<Option<rg_entity::Model>, DomainError>;
 
+    /// Return the id of *any* existing root group (`parent_id` IS NULL) whose
+    /// `gts_type.schema_id` starts with the given prefix, or `None` when no
+    /// such root exists. Used to enforce tenant-root uniqueness
+    /// (`cpt-cf-resource-group-fr-enforce-tenant-root-uniqueness`).
+    ///
+    /// Expected to be called inside a `SERIALIZABLE` transaction so the
+    /// uniqueness check is race-free against concurrent root creations.
+    async fn find_root_id_with_type_prefix<C: DBRunner>(
+        &self,
+        db: &C,
+        type_prefix: &str,
+    ) -> Result<Option<Uuid>, DomainError>;
+
     async fn list_groups<C: DBRunner>(
         &self,
         db: &C,
@@ -39,7 +52,15 @@ pub trait GroupRepositoryTrait: Send + Sync + 'static {
         query: &ODataQuery,
     ) -> Result<Page<ResourceGroup>, DomainError>;
 
-    async fn list_hierarchy<C: DBRunner>(
+    async fn get_descendants<C: DBRunner>(
+        &self,
+        db: &C,
+        scope: &AccessScope,
+        group_id: Uuid,
+        query: &ODataQuery,
+    ) -> Result<Page<ResourceGroupWithDepth>, DomainError>;
+
+    async fn get_ancestors<C: DBRunner>(
         &self,
         db: &C,
         scope: &AccessScope,
@@ -177,27 +198,27 @@ pub trait TypeRepositoryTrait: Send + Sync + 'static {
         metadata_schema: Option<&serde_json::Value>,
     ) -> Result<gts_type::Model, DomainError>;
 
-    async fn insert_allowed_parents<C: DBRunner>(
+    async fn insert_allowed_parent_types<C: DBRunner>(
         &self,
         db: &C,
         type_id: i16,
         parent_ids: &[i16],
     ) -> Result<(), DomainError>;
 
-    async fn insert_allowed_memberships<C: DBRunner>(
+    async fn insert_allowed_membership_types<C: DBRunner>(
         &self,
         db: &C,
         type_id: i16,
         membership_ids: &[i16],
     ) -> Result<(), DomainError>;
 
-    async fn delete_allowed_parents<C: DBRunner>(
+    async fn delete_allowed_parent_types<C: DBRunner>(
         &self,
         db: &C,
         type_id: i16,
     ) -> Result<(), DomainError>;
 
-    async fn delete_allowed_memberships<C: DBRunner>(
+    async fn delete_allowed_membership_types<C: DBRunner>(
         &self,
         db: &C,
         type_id: i16,

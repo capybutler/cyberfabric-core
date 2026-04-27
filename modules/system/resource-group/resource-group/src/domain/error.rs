@@ -32,6 +32,9 @@ pub enum DomainError {
     #[error("Membership not found: {key}")]
     MembershipNotFound { key: String },
 
+    #[error("Duplicate membership: {message}")]
+    DuplicateMembership { message: String },
+
     #[error("Invalid parent type: {message}")]
     InvalidParentType { message: String },
 
@@ -43,6 +46,16 @@ pub enum DomainError {
 
     #[error("Conflict: {message}")]
     Conflict { message: String },
+
+    /// Second tenant-type root rejected.
+    ///
+    /// Raised when a `create_group`/`update_group` would leave the RG forest
+    /// with more than one root group whose GTS type code starts with
+    /// `TENANT_RG_TYPE_PATH`. Enforces
+    /// `cpt-cf-resource-group-fr-enforce-tenant-root-uniqueness`. Maps to
+    /// `ResourceGroupError::conflict` (HTTP 409).
+    #[error("Tenant root already exists: {message}")]
+    TenantRootAlreadyExists { message: String },
 
     /// Cross-tenant link rejected when adding a membership.
     ///
@@ -56,29 +69,26 @@ pub enum DomainError {
     #[error("Access denied: {message}")]
     AccessDenied { message: String },
 
-    #[error("Database error: {message}")]
-    Database { message: String },
+    #[error("Database error: {0}")]
+    Database(sea_orm::DbErr),
 
     #[error("Internal error")]
     InternalError,
 }
 
 impl DomainError {
-    /// Returns `true` if this error represents a serialization failure
-    /// (SQLSTATE `40001`) that is safe to retry.
+    /// Returns the underlying `DbErr` if this is a database failure.
     ///
-    /// Covers `PostgreSQL` `SERIALIZABLE` conflicts and `MySQL`/`MariaDB` deadlocks.
+    /// Used as the extractor for
+    /// [`modkit_db::Db::transaction_with_retry`], which feeds the
+    /// `DbErr` into [`modkit_db::contention::is_retryable_contention`] for
+    /// backend-aware retry decisions (`PostgreSQL` serialization failures /
+    /// deadlocks, `MySQL`/`InnoDB` deadlocks, `SQLite` `BUSY`/`BUSY_SNAPSHOT`).
     #[must_use]
-    pub fn is_serialization_failure(&self) -> bool {
+    pub fn db_err(&self) -> Option<&sea_orm::DbErr> {
         match self {
-            DomainError::Database { message } => {
-                let msg = message.to_ascii_lowercase();
-                msg.contains("40001")
-                    || msg.contains("could not serialize access")
-                    || msg.contains("deadlock detected")
-                    || msg.contains("deadlock found when trying to get lock")
-            }
-            _ => false,
+            DomainError::Database(err) => Some(err),
+            _ => None,
         }
     }
 
@@ -117,6 +127,12 @@ impl DomainError {
         Self::MembershipNotFound { key: key.into() }
     }
 
+    pub fn duplicate_membership(message: impl Into<String>) -> Self {
+        Self::DuplicateMembership {
+            message: message.into(),
+        }
+    }
+
     pub fn invalid_parent_type(message: impl Into<String>) -> Self {
         Self::InvalidParentType {
             message: message.into(),
@@ -141,16 +157,26 @@ impl DomainError {
         }
     }
 
+    pub fn tenant_root_already_exists(message: impl Into<String>) -> Self {
+        Self::TenantRootAlreadyExists {
+            message: message.into(),
+        }
+    }
+
     pub fn tenant_incompatibility(message: impl Into<String>) -> Self {
         Self::TenantIncompatibility {
             message: message.into(),
         }
     }
 
+    /// Wrap an arbitrary message as a `DomainError::Database`.
+    ///
+    /// Used by infra code that produces non-`DbErr` failures (e.g., a row that
+    /// the schema guarantees exists is unexpectedly missing). The message is
+    /// stored inside `DbErr::Custom`, preserving the typed-`DbErr` invariant
+    /// expected by [`Self::db_err`].
     pub fn database(message: impl Into<String>) -> Self {
-        Self::Database {
-            message: message.into(),
-        }
+        Self::Database(sea_orm::DbErr::Custom(message.into()))
     }
 }
 
@@ -174,29 +200,36 @@ impl From<DomainError> for ResourceGroupError {
             DomainError::ConflictActiveReferences { message } => {
                 ResourceGroupError::conflict_active_references(message)
             }
-            DomainError::Conflict { message } => ResourceGroupError::conflict(message),
+            DomainError::Conflict { message }
+            | DomainError::DuplicateMembership { message }
+            | DomainError::TenantRootAlreadyExists { message } => {
+                ResourceGroupError::conflict(message)
+            }
             DomainError::GroupNotFound { id } => ResourceGroupError::not_found(id.to_string()),
             DomainError::MembershipNotFound { key } => ResourceGroupError::not_found(key),
             DomainError::TenantIncompatibility { message } => {
                 ResourceGroupError::tenant_incompatibility(message)
             }
             DomainError::AccessDenied { .. } => ResourceGroupError::access_denied(),
-            DomainError::Database { .. } | DomainError::InternalError => {
-                ResourceGroupError::internal()
-            }
+            DomainError::Database(_) | DomainError::InternalError => ResourceGroupError::internal(),
         }
     }
 }
 
 impl From<sea_orm::DbErr> for DomainError {
     fn from(e: sea_orm::DbErr) -> Self {
-        DomainError::database(format!("{e}"))
+        DomainError::Database(e)
     }
 }
 
 impl From<modkit_db::DbError> for DomainError {
     fn from(e: modkit_db::DbError) -> Self {
-        DomainError::database(format!("{e}"))
+        // Preserve the typed `DbErr` when present (so retry detection via
+        // `db_err()` stays accurate); otherwise fall back to a `Custom` wrap.
+        match e {
+            modkit_db::DbError::Sea(db_err) => DomainError::Database(db_err),
+            other => DomainError::database(other.to_string()),
+        }
     }
 }
 
