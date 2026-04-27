@@ -94,9 +94,12 @@ impl UsageCollectorClientV1 for UsageCollectorRestClient {
             resource_id: record.resource_id,
             metric: record.metric,
             kind: record.kind,
+            subject_id: record.subject_id,
+            subject_type: record.subject_type,
             idempotency_key: record.idempotency_key,
             value: record.value,
             timestamp: record.timestamp,
+            metadata: record.metadata,
         };
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-3
 
@@ -144,6 +147,7 @@ impl UsageCollectorClientV1 for UsageCollectorRestClient {
                     "failed to parse module config response: {e}"
                 ))
             }),
+            StatusCode::NOT_FOUND => Err(UsageCollectorError::module_not_found(module_name)),
             status => Err(http_status_to_usage_collector_error(status)),
         }
     }

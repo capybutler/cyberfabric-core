@@ -22,8 +22,6 @@ ModKit module `usage-collector-rest-client`: builds [`UsageCollectorRestClient`]
 
 ```yaml
 modules:
-  authn-resolver:
-    # ... your AuthN resolver / plugin config
   usage-collector-rest-client:
     config:
       # required

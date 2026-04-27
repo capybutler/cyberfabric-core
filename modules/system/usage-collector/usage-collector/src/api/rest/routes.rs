@@ -43,10 +43,7 @@ pub fn register_routes(
         .json_request::<CreateUsageRecordRequest>(openapi, "Usage record to create")
         .allow_content_types(&["application/json"])
         .handler(handlers::handle_create_usage_record)
-        .json_response(
-            http::StatusCode::OK,
-            "Record accepted and stored",
-        )
+        .json_response(http::StatusCode::NO_CONTENT, "Record accepted and stored")
         .error_403(openapi)
         .error_422(openapi)
         .error_500(openapi)

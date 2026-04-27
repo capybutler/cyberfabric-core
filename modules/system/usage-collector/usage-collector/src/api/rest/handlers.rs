@@ -57,7 +57,7 @@ pub async fn handle_create_usage_record(
     builder.enqueue().await.map_err(emitter_error_to_problem)?;
 
     // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-gateway-ingest-handler:inst-gw-7
-    Ok(StatusCode::OK)
+    Ok(StatusCode::NO_CONTENT)
     // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-gateway-ingest-handler:inst-gw-7
 }
 

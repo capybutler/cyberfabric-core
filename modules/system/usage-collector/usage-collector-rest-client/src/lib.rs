@@ -15,7 +15,7 @@
 //!
 //! ```yaml
 //! modules:
-//!   usage-collector-client:
+//!   usage-collector-rest-client:
 //!     config:
 //!       client_id: "my-client"
 //!       client_secret: "${CLIENT_SECRET}"

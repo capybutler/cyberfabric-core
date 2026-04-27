@@ -233,7 +233,7 @@ records are enqueued individually by design.
    1. [x] - `p1` - **RETURN** `HandlerResult::Reject`; unrecoverable format error — message moved to dead-letter store - `inst-dlv-2a`
 3. [x] - `p1` - Assemble gateway ingest request from `UsageRecord` fields - `inst-dlv-3`
 4. [x] - `p1` - Call `UsageCollectorClientV1::create_usage_record(record)` - `inst-dlv-4`
-5. [x] - `p1` - **IF** call succeeds (200 OK) - `inst-dlv-5`
+5. [x] - `p1` - **IF** call succeeds (204 No Content) - `inst-dlv-5`
    1. [x] - `p1` - **RETURN** `HandlerResult::Success`; outbox row is deleted - `inst-dlv-5a`
 6. [x] - `p1` - **IF** transient failure (network error, 5xx, 429) - `inst-dlv-6`
    1. [x] - `p1` - **RETURN** `HandlerResult::Retry`; outbox library applies exponential backoff; `backoff_max` MUST be configured below 15 minutes to satisfy `cpt-cf-usage-collector-nfr-recovery` - `inst-dlv-6a`
@@ -246,7 +246,7 @@ records are enqueued individually by design.
 
 **Input**: `UsageRecord` delivered by the outbox pipeline, `SecurityContext`
 
-**Output**: 200 OK or error response
+**Output**: 204 No Content or error response
 
 **Steps**:
 1. [x] - `p1` - Enforce metadata size limit: reject if `record.metadata` byte length > 8192 - `inst-gw-1`
@@ -258,7 +258,7 @@ records are enqueued individually by design.
 6. [x] - `p1` - **IF** plugin call times out or fails transiently - `inst-gw-6`
    1. [x] - `p1` - Record failure against circuit breaker; open circuit after 5 consecutive failures within a 10 s window; half-open probe after configurable interval (default 30 s) - `inst-gw-6a`
    2. [x] - `p1` - **RETURN** transient error; retry is handled by the outbox library on the SDK side - `inst-gw-6b`
-7. [x] - `p1` - **RETURN** 200 OK on successful plugin confirmation - `inst-gw-7`
+7. [x] - `p1` - **RETURN** 204 No Content on successful plugin confirmation - `inst-gw-7`
 
 ### Static Module Config Resolution
 
