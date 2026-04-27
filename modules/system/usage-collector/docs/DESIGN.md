@@ -1,3 +1,20 @@
+---
+cpt:
+  kind: DESIGN
+  version: "0.2.0"
+  changelog:
+    - version: "0.2.0"
+      date: "2026-04-27"
+      changes:
+        - "fr-subject-attribution (§1.2): subject identity now accepted from payload with PDP authz; falls back to SecurityContext when not supplied"
+        - "cpt-cf-usage-collector-principle-two-phase-authz (§2.1): bound context extended with subject_id and subject_type; AuthorizedUsageEmitter described as carrying subject identity"
+        - "AuthorizedUsageEmitter (§3.1): token description includes subject_id and subject_type as bound fields"
+    - version: "0.1.0"
+      date: "2026-04-01"
+      changes:
+        - "Initial design"
+---
+
 # Technical Design — Usage Collector
 
 
@@ -52,7 +69,7 @@ Once records arrive at the gateway, they are persisted via the active storage pl
 | `cpt-cf-usage-collector-fr-gauge-semantics` | Gauge records carry `kind = gauge`; `enqueue()` applies no monotonicity validation; storage plugin stores values as-is |
 | `cpt-cf-usage-collector-fr-tenant-attribution` | The caller supplies `tenant_id` explicitly to `authorize_for()` (or the subject's home tenant is used via `authorize()`); the PDP `USAGE_RECORD`/`CREATE` check at that point authorizes the caller to emit for the specified tenant, covering both same-tenant and subtenant cases. The authorized `tenant_id` is bound into the `AuthorizedUsageEmitter` token and stamped into every outbox row produced by that token. The gateway accepts the `tenant_id` from the delivered record without a second PDP check. |
 | `cpt-cf-usage-collector-fr-resource-attribution` | `UsageRecord` carries required `resource_id` (UUID) and `resource_type` (string) fields; both are mandatory at emit time; persisted in outbox payload and storage backend; gateway and plugin pass them through without interpretation |
-| `cpt-cf-usage-collector-fr-subject-attribution` | `AuthorizedUsageEmitter.enqueue()` captures `subject_id` and `subject_type` from the authenticated SecurityContext and includes them in the outbox payload; never accepted from request payload |
+| `cpt-cf-usage-collector-fr-subject-attribution` | Subject identity (`subject_id`, `subject_type`) is accepted from the request payload when supplied by an authenticated caller with PDP authorization; when not supplied, it is derived from `SecurityContext`. The authorized subject identity is bound into the `AuthorizedUsageEmitter` token and included in the outbox payload. |
 | `cpt-cf-usage-collector-fr-tenant-isolation` | Gateway enforces tenant scoping on all read and write operations; plugins filter by tenant ID; system fails closed on authorization failure |
 | `cpt-cf-usage-collector-fr-ingestion-authorization` | `ScopedUsageEmitter.authorize_for()` / `ScopedUsageEmitter.authorize()` calls the platform PDP (`USAGE_RECORD`/`CREATE`) before any transaction opens; a denial is surfaced immediately with no record persisted; the returned `AuthorizedUsageEmitter` token carries the allowed-metrics list and authorization context evaluated in-memory by `enqueue()` before the outbox INSERT |
 | `cpt-cf-usage-collector-fr-pluggable-storage` | Gateway resolves active plugin via GTS; plugin implements write and read traits; operator selects backend via configuration |
@@ -186,7 +203,7 @@ Any logic that requires communication with external modules is consolidated in p
 `AuthorizedUsageEmitter` acts as a pre-fetched, in-memory contract for the emission. It currently carries:
 - **PDP authorization result**: the platform PDP permit decision for `USAGE_RECORD`/`CREATE` for the specified tenant and resource
 - **Allowed metrics list**: the set of metrics the source module is permitted to emit, fetched from the gateway during phase 1
-- **Bound context**: the authorized `tenant_id`, `resource_id`, and `resource_type` — every record produced by this token is stamped with these values
+- **Bound context**: the authorized `tenant_id`, `resource_id`, `resource_type`, `subject_id`, and `subject_type` — every record produced by this token is stamped with these values; `subject_id` and `subject_type` are accepted from the caller when supplied with PDP authorization, or derived from `SecurityContext` when absent
 
 Any future requirement that depends on external state at emit time MUST be resolved in phase 1 and included in `AuthorizedUsageEmitter`, not deferred to phase 2. A denial, quota exhaustion, or validation failure from `authorize_for()` surfaces immediately to the caller as an error before any domain operation is committed.
 
@@ -250,7 +267,7 @@ All plugin connections to ClickHouse and TimescaleDB MUST use TLS; connection pa
 | `AggregationQuery` | Query parameters: tenant ID (derived from SecurityContext), time range (mandatory), aggregation function (SUM/COUNT/MIN/MAX/AVG); optional filters: usage type, subject (subject_id, subject_type), resource (resource_id, resource_type), source; optional GROUP BY dimensions: time bucket granularity, usage type, subject, resource, source | `AggregationQuery` is not yet present in the SDK (target-state) |
 | `AggregationResult` | Result row: aggregation function applied, aggregated numeric value; dimension values present for each active GROUP BY dimension: time bucket start timestamp (when grouped by time), usage type (when grouped by usage type), subject ID + subject type (when grouped by subject), resource ID + resource type (when grouped by resource), source module (when grouped by source); absent dimensions are null | `AggregationResult` is not yet present in the SDK (target-state) |
 | `RawQuery` | Raw record query parameters: tenant ID (derived from SecurityContext), time range (mandatory), optional pagination cursor; optional filters: usage type, subject (subject_id, subject_type), resource (resource_id, resource_type) | `RawQuery` is not yet present in the SDK (target-state) |
-| `AuthorizedUsageEmitter` | Time-limited authorization handle returned by `authorize_for()` / `authorize()`; carries the PDP permit result, the authorized `tenant_id`/`resource_id`/`resource_type`, the allowed-metrics list for the source module, and a monotonic issuance timestamp. `enqueue()` verifies the token has not exceeded its maximum age before proceeding. | `AuthorizedUsageEmitter` is not yet present in the SDK (target-state); see `usage-emitter` crate |
+| `AuthorizedUsageEmitter` | Time-limited authorization handle returned by `authorize_for()` / `authorize()`; carries the PDP permit result, the authorized `tenant_id`/`resource_id`/`resource_type`, the subject identity (`subject_id`/`subject_type`) bound at authorization time (accepted from the caller with PDP authorization or derived from `SecurityContext` when absent), the allowed-metrics list for the source module, and a monotonic issuance timestamp. `enqueue()` verifies the token has not exceeded its maximum age before proceeding. | `AuthorizedUsageEmitter` is not yet present in the SDK (target-state); see `usage-emitter` crate |
 | `RetentionPolicy` | Retention rule: scope (`global` \| `tenant` \| `usage-type`), target identifier, retention duration. The global policy is mandatory and cannot be deleted; it applies when no more-specific policy matches. Precedence: per-usage-type > per-tenant > global. | `RetentionPolicy` is not yet present in the SDK (target-state) |
 | `BackfillOperation` | Backfill request: operator identity, target `tenant_id` (PDP-authorized: gateway verifies the caller is permitted to backfill for the specified tenant before accepting the request), usage type, time range, historical records to insert | `BackfillOperation` is not yet present in the SDK (target-state) |
 | `WriteAuditEvent` | Structured event emitted to platform `audit_service` for each operator-initiated write: operation type (`backfill` \| `amend` \| `deactivate`), actor_id, tenant_id, timestamp, justification, and a `WriteAuditContext` variant with operation-specific context — backfill: (usage type, time range, records added); amendment: (record ID, changed fields before/after); deactivation: (record ID). Not stored locally. | `WriteAuditEvent` is not yet present in the SDK (target-state) |

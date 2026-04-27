@@ -100,7 +100,10 @@ impl<'a> UsageRecordBuilder<'a> {
             .map_or(UsageKind::Gauge, |m| m.kind);
 
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5
-        if kind == UsageKind::Counter && (self.value < 0.0 || self.idempotency_key.is_none()) {
+        if kind == UsageKind::Counter
+            && (self.value < 0.0
+                || self.idempotency_key.as_deref().map_or(true, |s| s.trim().is_empty()))
+        {
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5a
             return Err(UsageEmitterError::invalid_record(
                 "counter records require a non-negative value and an idempotency key",
@@ -139,9 +142,10 @@ impl<'a> UsageRecordBuilder<'a> {
             metric: self.metric,
             kind,
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5b
-            idempotency_key: self
-                .idempotency_key
-                .unwrap_or_else(|| Uuid::new_v4().to_string()),
+            idempotency_key: match self.idempotency_key.as_deref() {
+                Some(k) if !k.trim().is_empty() => k.to_owned(),
+                _ => Uuid::new_v4().to_string(),
+            },
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5b
             value: self.value,
             timestamp: self.timestamp.unwrap_or_else(Utc::now),

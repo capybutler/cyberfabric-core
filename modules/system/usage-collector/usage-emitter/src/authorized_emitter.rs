@@ -89,6 +89,10 @@ impl AuthorizedUsageEmitter {
         self.validate_authorization_freshness()?;
         self.validate_authorized_tenant(&record)?;
         self.validate_authorized_resource(&record)?;
+        // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-6
+        self.validate_authorized_module(&record)?;
+        self.validate_authorized_subject(&record)?;
+        // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-6
         self.validate_allowed_metric(&record)?;
         self.validate_metric_kind(&record)?;
         Self::validate_counter_value(&record)?;
@@ -159,6 +163,24 @@ impl AuthorizedUsageEmitter {
             ));
         }
 
+        Ok(())
+    }
+
+    fn validate_authorized_module(&self, record: &UsageRecord) -> Result<(), UsageEmitterError> {
+        if record.module != self.module {
+            return Err(UsageEmitterError::invalid_record(
+                "record module does not match authorized token",
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_authorized_subject(&self, record: &UsageRecord) -> Result<(), UsageEmitterError> {
+        if record.subject_id != self.subject_id || record.subject_type != self.subject_type {
+            return Err(UsageEmitterError::invalid_record(
+                "record subject does not match authorized token",
+            ));
+        }
         Ok(())
     }
 

@@ -275,3 +275,45 @@ async fn enqueue_rejects_metric_kind_mismatch() {
         } if metric == "test.counter"
     ));
 }
+
+// ── Module and subject mismatch rejection ─────────────────────────────────────
+
+#[tokio::test]
+async fn enqueue_rejects_mismatched_module() {
+    let f = Fixture::build("ap_bad_module").await;
+    let record = UsageRecord {
+        module: "wrong-module".to_owned(),
+        ..f.record()
+    };
+    let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
+    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+}
+
+#[tokio::test]
+async fn enqueue_rejects_mismatched_subject_id() {
+    let f = Fixture::build("ap_bad_subj_id").await;
+    let record = UsageRecord {
+        subject_id: Uuid::new_v4(), // differs from Uuid::nil() in the token
+        ..f.record()
+    };
+    let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
+    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+}
+
+#[tokio::test]
+async fn enqueue_rejects_mismatched_subject_type() {
+    let f = Fixture::build("ap_bad_subj_type").await;
+    let record = UsageRecord {
+        subject_type: "other.subject".to_owned(), // differs from "test.subject" in the token
+        ..f.record()
+    };
+    let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
+    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+}
+
+#[tokio::test]
+async fn enqueue_accepts_record_when_module_and_subject_match_token() {
+    let f = Fixture::build("ap_match_ok").await;
+    // f.record() already has module="test-module", subject_id=Uuid::nil(), subject_type="test.subject"
+    f.emitter.enqueue_in(&f.conn(), f.record()).await.unwrap();
+}

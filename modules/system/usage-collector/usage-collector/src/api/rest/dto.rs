@@ -16,6 +16,10 @@ pub struct CreateUsageRecordRequest {
     pub resource_type: String,
     /// Identifier of the metered resource instance.
     pub resource_id: Uuid,
+    /// Identifier of the subject (user/service account) performing the request.
+    pub subject_id: Uuid,
+    /// Type of the subject (e.g. `"user"`, `"service_account"`).
+    pub subject_type: String,
     /// Metric name for this observation.
     pub metric: String,
     /// Optional idempotency key; if omitted, one is generated when building the record.

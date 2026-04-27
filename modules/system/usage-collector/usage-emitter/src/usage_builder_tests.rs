@@ -8,7 +8,7 @@ use modkit_db::outbox::{
     outbox_migrations,
 };
 use modkit_db::{ConnectOpts, Db, connect_db};
-use usage_collector_sdk::models::{AllowedMetric, UsageKind};
+use usage_collector_sdk::models::{AllowedMetric, UsageKind, UsageRecord};
 use uuid::Uuid;
 
 use crate::authorized_emitter::AuthorizedUsageEmitter;
@@ -62,12 +62,16 @@ struct Fixture {
     db: Db,
     _handle: OutboxHandle,
     emitter: AuthorizedUsageEmitter,
+    tenant_id: Uuid,
+    resource_id: Uuid,
 }
 
 impl Fixture {
     async fn build(name: &str) -> Self {
         let db = build_db(name).await;
         let handle = build_outbox(db.clone()).await;
+        let tenant_id = Uuid::new_v4();
+        let resource_id = Uuid::new_v4();
         let allowed_metrics = vec![
             AllowedMetric {
                 name: "test.gauge".to_owned(),
@@ -83,8 +87,8 @@ impl Fixture {
             db.clone(),
             Arc::clone(handle.outbox()),
             "test-module".to_owned(),
-            Uuid::new_v4(),
-            Uuid::new_v4(),
+            tenant_id,
+            resource_id,
             "test.resource".to_owned(),
             allowed_metrics,
             Uuid::nil(),
@@ -94,11 +98,31 @@ impl Fixture {
             db,
             _handle: handle,
             emitter,
+            tenant_id,
+            resource_id,
         }
     }
 
     fn conn(&self) -> modkit_db::DbConn<'_> {
         self.db.conn().unwrap()
+    }
+
+    /// Build a valid `UsageRecord` that matches the authorized token fields.
+    fn record(&self) -> UsageRecord {
+        UsageRecord {
+            tenant_id: self.tenant_id,
+            module: "test-module".to_owned(),
+            metric: "test.gauge".to_owned(),
+            kind: UsageKind::Gauge,
+            value: 1.0,
+            resource_id: self.resource_id,
+            resource_type: "test.resource".to_owned(),
+            subject_id: Uuid::nil(),
+            subject_type: "test.subject".to_owned(),
+            idempotency_key: Uuid::new_v4().to_string(),
+            timestamp: Utc::now(),
+            metadata: None,
+        }
     }
 }
 
@@ -209,4 +233,165 @@ async fn builder_without_optional_fields_enqueues_successfully() {
         .enqueue_in(&f.conn())
         .await
         .unwrap();
+}
+
+// ── Blank idempotency key handling ────────────────────────────────────────────
+
+#[tokio::test]
+async fn test_counter_with_blank_idempotency_key_is_rejected() {
+    let f = Fixture::build("ub_counter_blank_idem").await;
+    let err = f
+        .emitter
+        .build_usage_record("test.counter", 1.0)
+        .with_idempotency_key("")
+        .enqueue_in(&f.conn())
+        .await
+        .unwrap_err();
+    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+}
+
+#[tokio::test]
+async fn test_gauge_with_blank_idempotency_key_uses_uuid_fallback() {
+    use std::sync::{Arc, Mutex};
+    use usage_collector_sdk::models::UsageRecord;
+
+    struct CaptureHandler {
+        captured: Arc<Mutex<Option<Vec<u8>>>>,
+    }
+
+    #[async_trait::async_trait]
+    impl LeasedMessageHandler for CaptureHandler {
+        async fn handle(&self, msg: &OutboxMessage) -> MessageResult {
+            let mut guard = self.captured.lock().unwrap();
+            *guard = Some(msg.payload.clone());
+            MessageResult::Ok
+        }
+    }
+
+    let name = "ub_gauge_blank_idem";
+    let url = format!("sqlite:file:{name}?mode=memory&cache=shared");
+    let db = modkit_db::connect_db(
+        &url,
+        modkit_db::ConnectOpts {
+            max_conns: Some(1),
+            ..Default::default()
+        },
+    )
+    .await
+    .unwrap();
+    modkit_db::migration_runner::run_migrations_for_testing(&db, modkit_db::outbox::outbox_migrations())
+        .await
+        .unwrap();
+
+    let captured: Arc<Mutex<Option<Vec<u8>>>> = Arc::new(Mutex::new(None));
+    let cfg = crate::config::UsageEmitterConfig::default();
+    let _handle = Outbox::builder(db.clone())
+        .queue(
+            cfg.outbox_queue.as_str(),
+            Partitions::of(cfg.outbox_partition_count),
+        )
+        .leased(CaptureHandler {
+            captured: Arc::clone(&captured),
+        })
+        .start()
+        .await
+        .unwrap();
+
+    let allowed_metrics = vec![
+        usage_collector_sdk::models::AllowedMetric {
+            name: "test.gauge".to_owned(),
+            kind: usage_collector_sdk::models::UsageKind::Gauge,
+        },
+    ];
+    let emitter = crate::authorized_emitter::AuthorizedUsageEmitter::new(
+        Arc::new(cfg),
+        db.clone(),
+        Arc::clone(_handle.outbox()),
+        "test-module".to_owned(),
+        Uuid::new_v4(),
+        Uuid::new_v4(),
+        "test.resource".to_owned(),
+        allowed_metrics,
+        Uuid::nil(),
+        "test.subject".to_owned(),
+    );
+
+    let conn = db.conn().unwrap();
+    emitter
+        .build_usage_record("test.gauge", 1.0)
+        .with_idempotency_key("")
+        .enqueue_in(&conn)
+        .await
+        .unwrap();
+
+    // Wait for the outbox to deliver the message to the handler.
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        {
+            let guard = captured.lock().unwrap();
+            if guard.is_some() {
+                break;
+            }
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for outbox delivery"
+        );
+        tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+    }
+
+    let payload = captured.lock().unwrap().take().unwrap();
+    let record: UsageRecord = serde_json::from_slice(&payload).unwrap();
+    assert!(
+        !record.idempotency_key.is_empty(),
+        "expected a non-empty UUID, got an empty string"
+    );
+    assert_ne!(
+        record.idempotency_key, "",
+        "blank idempotency key must not be stored as-is"
+    );
+}
+
+// ── Authorization scope mismatch rejection ────────────────────────────────────
+
+#[tokio::test]
+async fn builder_rejects_mismatched_module_name() {
+    let f = Fixture::build("ub_bad_module").await;
+    let record = UsageRecord {
+        module: "wrong-module".to_owned(),
+        ..f.record()
+    };
+    let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
+    assert!(
+        matches!(err, crate::error::UsageEmitterError::InvalidRecord { .. }),
+        "expected InvalidRecord for mismatched module, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn builder_rejects_mismatched_subject_id() {
+    let f = Fixture::build("ub_bad_subj_id").await;
+    let record = UsageRecord {
+        subject_id: Uuid::new_v4(), // differs from Uuid::nil() in the token
+        ..f.record()
+    };
+    let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
+    assert!(
+        matches!(err, crate::error::UsageEmitterError::InvalidRecord { .. }),
+        "expected InvalidRecord for mismatched subject_id, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn builder_rejects_mismatched_subject_type() {
+    let f = Fixture::build("ub_bad_subj_type").await;
+    let record = UsageRecord {
+        subject_type: "other.subject".to_owned(), // differs from "test.subject" in the token
+        ..f.record()
+    };
+    let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
+    assert!(
+        matches!(err, crate::error::UsageEmitterError::InvalidRecord { .. }),
+        "expected InvalidRecord for mismatched subject_type, got {err:?}"
+    );
 }

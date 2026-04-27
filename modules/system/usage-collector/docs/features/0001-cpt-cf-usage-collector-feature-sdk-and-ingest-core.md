@@ -1,7 +1,23 @@
 ---
 cpt:
-  version: "1.4"
+  version: "1.8"
   changelog:
+    - version: "1.8"
+      date: "2026-04-27"
+      changes:
+        - "Add subject_id/subject_type to authorize_for() input; extend PDP call (inst-authz-2) with MODULE+SUBJECT properties; bind subject into token (inst-authz-6); replace SecurityContext capture with token validation in inst-enq-6."
+    - version: "1.7"
+      date: "2026-04-27"
+      changes:
+        - "§3 inst-enq-5, inst-enq-5b: define blank-as-missing semantics for idempotency_key — empty or whitespace-only strings MUST be treated as absent (equivalent to None)"
+    - version: "1.6"
+      date: "2026-04-27"
+      changes:
+        - "§3 authorize-for: added inst-authz-5b — collector infrastructure failures (PluginTimeout, CircuitOpen, Unavailable, Internal) now return UsageEmitterError::Internal instead of AuthorizationFailed; fixes misclassification of retryable failures as 403 policy denials"
+    - version: "1.5"
+      date: "2026-04-27"
+      changes:
+        - "§3 inst-dlv-6: clarified transient failure list to explicitly include connection/transport errors and AuthN service unavailability; introduces UsageCollectorError::Unavailable as the carrier for these cases"
     - version: "1.4"
       date: "2026-04-27"
       changes:
@@ -167,7 +183,7 @@ response-time and throughput targets.
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for`
 
-**Input**: `SecurityContext`, `tenant_id: Uuid`, `resource_id: Uuid`, `resource_type: String`
+**Input**: `SecurityContext`, `tenant_id: Uuid`, `resource_id: Uuid`, `resource_type: String`, `subject_id: Uuid`, `subject_type: String`
 
 **Output**: `Result<AuthorizedUsageEmitter, UsageEmitterError>`
 
@@ -179,13 +195,14 @@ needed. Batch delivery and N+1 query optimisation are not applicable —
 records are enqueued individually by design.
 
 **Steps**:
-1. [x] - `p1` - Call platform PDP: `USAGE_RECORD`/`CREATE` for the given `tenant_id` and `resource_id`/`resource_type` - `inst-authz-2`
+1. [x] - `p1` - Call platform PDP: `USAGE_RECORD`/`CREATE`, passing `tenant_id`, `resource_id`/`resource_type` as resource properties, MODULE (the scoped emitter's bound module name) as a resource property, and SUBJECT_ID/SUBJECT_TYPE as resource properties - `inst-authz-2`
 2. [x] - `p1` - **IF** PDP denies - `inst-authz-3`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::AuthorizationDenied` - `inst-authz-3a`
 3. [x] - `p1` - Call `get_module_config(module_name)` to fetch `AllowedMetric` list from gateway - `inst-authz-4`
 4. [x] - `p1` - **IF** module not in static config - `inst-authz-5`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::ModuleNotConfigured` - `inst-authz-5a`
-5. [x] - `p1` - Bind PDP permit result, allowed-metrics list, `tenant_id`, `resource_id`, `resource_type`, and issuance timestamp into `AuthorizedUsageEmitter` token - `inst-authz-6`
+   2. [x] - `p1` - **ELSE IF** `get_module_config` returns any other error (e.g. plugin timeout, circuit open, unavailable, internal) - **RETURN** `UsageEmitterError::Internal` - `inst-authz-5b`
+5. [x] - `p1` - Bind PDP permit result, allowed-metrics list, `tenant_id`, `resource_id`, `resource_type`, `subject_id`, `subject_type`, and issuance timestamp into `AuthorizedUsageEmitter` token - `inst-authz-6`
 6. [x] - `p1` - **RETURN** `AuthorizedUsageEmitter` token - `inst-authz-7`
 
 ### Phase 2: `build_usage_record().enqueue()` — In-Transaction Enqueue
@@ -196,7 +213,7 @@ records are enqueued individually by design.
 
 **Output**: `Result<(), UsageEmitterError>`
 
-**Optional field serialization**: `metadata` is optional. When absent it serializes as an absent JSON field (not `null`). Deserialization treats absent as `None` with no default substitution. `idempotency_key` is optional from the caller's perspective but is **always present in the serialized record** — when the caller omits it, a UUID v4 is auto-generated before enqueue so the wire format always carries a non-null key.
+**Optional field serialization**: `metadata` is optional. When absent it serializes as an absent JSON field (not `null`). Deserialization treats absent as `None` with no default substitution. `idempotency_key` is optional from the caller's perspective but is **always present in the serialized record** — when the caller omits it, a UUID v4 is auto-generated before enqueue so the wire format always carries a non-null key. Blank strings (`""` or whitespace-only) are semantically equivalent to `None` for this field and MUST NOT be stored as a valid key.
 
 **Steps**:
 1. [x] - `p1` - Verify `AuthorizedUsageEmitter` token has not exceeded its maximum age - `inst-enq-1`
@@ -205,10 +222,10 @@ records are enqueued individually by design.
 3. [x] - `p1` - Verify metric name is present in the token's allowed-metrics list - `inst-enq-3`
 4. [x] - `p1` - **IF** metric not in allowed list - `inst-enq-4`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::MetricNotAllowed` - `inst-enq-4a`
-5. [x] - `p1` - **IF** metric kind is `counter` AND (value < 0 OR idempotency_key is None) - `inst-enq-5`
+5. [x] - `p1` - **IF** metric kind is `counter` AND (value < 0 OR idempotency_key is None); an empty or whitespace-only string MUST be treated as absent (equivalent to `None`) - `inst-enq-5`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::InvalidRecord` - `inst-enq-5a`
-5a. [x] - `p1` - **IF** idempotency_key is None (gauge record without caller-supplied key) — generate a UUID v4 and assign it as the idempotency_key - `inst-enq-5b`
-6. [x] - `p1` - Capture `subject_id` and `subject_type` from `SecurityContext` - `inst-enq-6`
+5a. [x] - `p1` - **IF** idempotency_key is None (gauge record without caller-supplied key) — generate a UUID v4 and assign it as the idempotency_key; an empty or whitespace-only string MUST be treated as absent and triggers the UUID fallback - `inst-enq-5b`
+6. [x] - `p1` - Validate `record.module` equals the token's bound module name; if mismatch RETURN `UsageEmitterError::InvalidRecord`. Validate `record.subject_id` and `record.subject_type` match the token's bound `subject_id` and `subject_type`; if mismatch RETURN `UsageEmitterError::InvalidRecord` - `inst-enq-6`
 7. [x] - `p1` - **IF** metadata is present AND byte length > 8192 - `inst-enq-7`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::MetadataTooLarge` - `inst-enq-7a`
 8. [x] - `p1` - Serialize `UsageRecord` (tenant_id, module, kind, metric, value, idempotency_key, resource_id, resource_type, subject_id, subject_type, metadata, timestamp) with `payload_type = "usage-collector.record.v1"` - `inst-enq-8`
@@ -235,7 +252,7 @@ records are enqueued individually by design.
 4. [x] - `p1` - Call `UsageCollectorClientV1::create_usage_record(record)` - `inst-dlv-4`
 5. [x] - `p1` - **IF** call succeeds (204 No Content) - `inst-dlv-5`
    1. [x] - `p1` - **RETURN** `HandlerResult::Success`; outbox row is deleted - `inst-dlv-5a`
-6. [x] - `p1` - **IF** transient failure (network error, 5xx, 429) - `inst-dlv-6`
+6. [x] - `p1` - **IF** transient failure (connection/transport error, AuthN service temporarily unreachable, network timeout, 5xx, 429) - `inst-dlv-6`
    1. [x] - `p1` - **RETURN** `HandlerResult::Retry`; outbox library applies exponential backoff; `backoff_max` MUST be configured below 15 minutes to satisfy `cpt-cf-usage-collector-nfr-recovery` - `inst-dlv-6a`
 7. [x] - `p1` - **IF** permanent failure (4xx excluding 429) - `inst-dlv-7`
    1. [x] - `p1` - **RETURN** `HandlerResult::Reject`; message moved to dead-letter store and surfaced via monitoring - `inst-dlv-7a`

@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
 use authz_resolver_sdk::models::{
@@ -158,6 +158,24 @@ impl UsageCollectorClientV1 for NoopCollector {
     }
 }
 
+struct FailingCollector {
+    error: fn() -> UsageCollectorError,
+}
+
+#[async_trait]
+impl UsageCollectorClientV1 for FailingCollector {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn get_module_config(
+        &self,
+        _module_name: &str,
+    ) -> Result<usage_collector_sdk::ModuleConfig, UsageCollectorError> {
+        Err((self.error)())
+    }
+}
+
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
 async fn build_db(name: &str) -> Db {
@@ -186,6 +204,16 @@ async fn build_emitter(db: Db, authz: Arc<dyn AuthZResolverClient>) -> UsageEmit
     )
     .await
     .unwrap()
+}
+
+async fn build_emitter_with_collector(
+    db: Db,
+    authz: Arc<dyn AuthZResolverClient>,
+    collector: Arc<dyn UsageCollectorClientV1>,
+) -> UsageEmitter {
+    UsageEmitter::build(UsageEmitterConfig::default(), db, authz, collector)
+        .await
+        .unwrap()
 }
 
 fn make_ctx() -> SecurityContext {
@@ -322,6 +350,8 @@ async fn authorize_for_denies_when_pdp_rejects_owner_tenant() {
             foreign_tenant,
             Uuid::new_v4(),
             "test.resource".to_owned(),
+            Uuid::new_v4(),
+            "test.subject".to_owned(),
         )
         .await
     else {
@@ -351,7 +381,14 @@ async fn authorize_for_allows_subtenant_when_pdp_allows_extra_tenant() {
 
     emitter
         .for_module(TEST_MODULE)
-        .authorize_for(&ctx, child, Uuid::new_v4(), "test.resource".to_owned())
+        .authorize_for(
+            &ctx,
+            child,
+            Uuid::new_v4(),
+            "test.resource".to_owned(),
+            Uuid::new_v4(),
+            "test.subject".to_owned(),
+        )
         .await
         .expect("PDP allows emit for allowed sub-tenant");
 }
@@ -368,7 +405,217 @@ async fn authorize_for_sends_barrier_mode_ignore_to_pdp() {
             ctx.subject_tenant_id(),
             Uuid::new_v4(),
             "test.resource".to_owned(),
+            Uuid::new_v4(),
+            "test.subject".to_owned(),
         )
         .await
         .expect("barrier assert + allow");
+}
+
+// ── Collector infrastructure failures map to Internal (not AuthorizationFailed) ──
+
+#[tokio::test]
+async fn authorize_for_maps_collector_plugin_timeout_to_internal() {
+    let db = build_db("emit_collector_timeout").await;
+    let emitter = build_emitter_with_collector(
+        db,
+        Arc::new(AllowAllAuthZ),
+        Arc::new(FailingCollector {
+            error: UsageCollectorError::plugin_timeout,
+        }),
+    )
+    .await;
+    let ctx = make_ctx();
+    let result = emitter
+        .for_module(TEST_MODULE)
+        .authorize(&ctx, Uuid::new_v4(), "test.resource".to_owned())
+        .await;
+    assert!(matches!(result, Err(UsageEmitterError::Internal { .. })));
+}
+
+#[tokio::test]
+async fn authorize_for_maps_collector_circuit_open_to_internal() {
+    let db = build_db("emit_collector_circuit_open").await;
+    let emitter = build_emitter_with_collector(
+        db,
+        Arc::new(AllowAllAuthZ),
+        Arc::new(FailingCollector {
+            error: UsageCollectorError::circuit_open,
+        }),
+    )
+    .await;
+    let ctx = make_ctx();
+    let result = emitter
+        .for_module(TEST_MODULE)
+        .authorize(&ctx, Uuid::new_v4(), "test.resource".to_owned())
+        .await;
+    assert!(matches!(result, Err(UsageEmitterError::Internal { .. })));
+}
+
+#[tokio::test]
+async fn authorize_for_maps_collector_unavailable_to_internal() {
+    let db = build_db("emit_collector_unavailable").await;
+    let emitter = build_emitter_with_collector(
+        db,
+        Arc::new(AllowAllAuthZ),
+        Arc::new(FailingCollector {
+            error: || UsageCollectorError::unavailable("gateway unreachable"),
+        }),
+    )
+    .await;
+    let ctx = make_ctx();
+    let result = emitter
+        .for_module(TEST_MODULE)
+        .authorize(&ctx, Uuid::new_v4(), "test.resource".to_owned())
+        .await;
+    assert!(matches!(result, Err(UsageEmitterError::Internal { .. })));
+}
+
+#[tokio::test]
+async fn authorize_for_maps_collector_internal_error_to_internal() {
+    let db = build_db("emit_collector_internal").await;
+    let emitter = build_emitter_with_collector(
+        db,
+        Arc::new(AllowAllAuthZ),
+        Arc::new(FailingCollector {
+            error: || UsageCollectorError::internal("unexpected state"),
+        }),
+    )
+    .await;
+    let ctx = make_ctx();
+    let result = emitter
+        .for_module(TEST_MODULE)
+        .authorize(&ctx, Uuid::new_v4(), "test.resource".to_owned())
+        .await;
+    assert!(matches!(result, Err(UsageEmitterError::Internal { .. })));
+}
+
+// ── PDP resource property assertions ─────────────────────────────────────────
+
+/// PDP mock that asserts the MODULE resource property equals the expected value,
+/// denies if the assertion fails, otherwise allows.
+struct AssertModulePropertyAuthZ {
+    expected_module: String,
+    matched: Arc<Mutex<bool>>,
+}
+
+#[async_trait]
+impl AuthZResolverClient for AssertModulePropertyAuthZ {
+    async fn evaluate(
+        &self,
+        request: EvaluationRequest,
+    ) -> Result<EvaluationResponse, AuthZResolverError> {
+        use crate::domain::authz::properties;
+        let module_val = request
+            .resource
+            .properties
+            .get(properties::MODULE)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let ok = module_val == self.expected_module;
+        *self.matched.lock().unwrap() = ok;
+        Ok(EvaluationResponse {
+            decision: ok,
+            context: EvaluationResponseContext::default(),
+        })
+    }
+}
+
+/// PDP mock that asserts SUBJECT_ID and SUBJECT_TYPE resource properties equal
+/// the expected values, denies if either assertion fails, otherwise allows.
+struct AssertSubjectPropertiesAuthZ {
+    expected_subject_id: String,
+    expected_subject_type: String,
+    matched: Arc<Mutex<bool>>,
+}
+
+#[async_trait]
+impl AuthZResolverClient for AssertSubjectPropertiesAuthZ {
+    async fn evaluate(
+        &self,
+        request: EvaluationRequest,
+    ) -> Result<EvaluationResponse, AuthZResolverError> {
+        use crate::domain::authz::properties;
+        let subj_id = request
+            .resource
+            .properties
+            .get(properties::SUBJECT_ID)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let subj_type = request
+            .resource
+            .properties
+            .get(properties::SUBJECT_TYPE)
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let ok = subj_id == self.expected_subject_id && subj_type == self.expected_subject_type;
+        *self.matched.lock().unwrap() = ok;
+        Ok(EvaluationResponse {
+            decision: ok,
+            context: EvaluationResponseContext::default(),
+        })
+    }
+}
+
+#[tokio::test]
+async fn authorize_for_pdp_request_includes_module_resource_property() {
+    let matched = Arc::new(Mutex::new(false));
+    let db = build_db("emit_module_prop").await;
+    let emitter = build_emitter(
+        db,
+        Arc::new(AssertModulePropertyAuthZ {
+            expected_module: TEST_MODULE.to_owned(),
+            matched: Arc::clone(&matched),
+        }),
+    )
+    .await;
+    let ctx = make_ctx();
+    let _ = emitter
+        .for_module(TEST_MODULE)
+        .authorize_for(
+            &ctx,
+            ctx.subject_tenant_id(),
+            Uuid::new_v4(),
+            "test.resource".to_owned(),
+            Uuid::new_v4(),
+            "test.subject".to_owned(),
+        )
+        .await;
+    assert!(
+        *matched.lock().unwrap(),
+        "PDP request must include MODULE resource property equal to the module name"
+    );
+}
+
+#[tokio::test]
+async fn authorize_for_pdp_request_includes_subject_id_and_subject_type_resource_properties() {
+    let matched = Arc::new(Mutex::new(false));
+    let subject_id = Uuid::new_v4();
+    let subject_type = "test.subject.type".to_owned();
+    let db = build_db("emit_subject_props").await;
+    let emitter = build_emitter(
+        db,
+        Arc::new(AssertSubjectPropertiesAuthZ {
+            expected_subject_id: subject_id.to_string(),
+            expected_subject_type: subject_type.clone(),
+            matched: Arc::clone(&matched),
+        }),
+    )
+    .await;
+    let ctx = make_ctx();
+    let _ = emitter
+        .for_module(TEST_MODULE)
+        .authorize_for(
+            &ctx,
+            ctx.subject_tenant_id(),
+            Uuid::new_v4(),
+            "test.resource".to_owned(),
+            subject_id,
+            subject_type,
+        )
+        .await;
+    assert!(
+        *matched.lock().unwrap(),
+        "PDP request must include SUBJECT_ID and SUBJECT_TYPE resource properties with the passed values"
+    );
 }

@@ -155,21 +155,27 @@ impl UsageCollectorClientV1 for UsageCollectorRestClient {
 
 fn authn_error_to_usage_collector_error(e: AuthNResolverError) -> UsageCollectorError {
     match e {
+        // Permanent: the configured client credentials are actively rejected.
         AuthNResolverError::Unauthorized(msg) => {
             UsageCollectorError::authorization_failed(format!("client credentials: {msg}"))
         }
+        // Transient: the identity service is temporarily unreachable (network outage,
+        // service restart, etc.). Retrying after backoff is appropriate.
         other => {
-            UsageCollectorError::internal(format!("client credentials exchange failed: {other}"))
+            UsageCollectorError::unavailable(format!("client credentials exchange failed: {other}"))
         }
     }
 }
 
 fn http_send_error_to_usage_collector_error(e: HttpError) -> UsageCollectorError {
     match e {
+        // Timeout variants map to PluginTimeout to keep the circuit-breaker semantics intact.
         HttpError::Timeout(_) | HttpError::DeadlineExceeded(_) => {
             UsageCollectorError::plugin_timeout()
         }
-        other => UsageCollectorError::internal(format!("REST request failed: {other}")),
+        // All other transport-level errors (connection refused, DNS failure, TLS error, etc.)
+        // are transient: the request never reached the server and retrying is appropriate.
+        other => UsageCollectorError::unavailable(format!("REST request failed: {other}")),
     }
 }
 

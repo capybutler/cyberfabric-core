@@ -29,6 +29,15 @@ pub enum UsageCollectorError {
     /// Circuit breaker is open — storage plugin calls are suspended until the recovery window elapses.
     #[error("storage plugin circuit breaker is open")]
     CircuitOpen,
+
+    /// Transient infrastructure failure: connection/transport error or a dependent service
+    /// (e.g. the identity/AuthN service) is temporarily unreachable.
+    /// The operation may succeed on retry once the outage resolves.
+    #[error("service unavailable: {message}")]
+    Unavailable {
+        /// Detail for operators and logs.
+        message: String,
+    },
 }
 
 impl UsageCollectorError {
@@ -61,6 +70,13 @@ impl UsageCollectorError {
     #[must_use]
     pub fn circuit_open() -> Self {
         Self::CircuitOpen
+    }
+
+    #[must_use]
+    pub fn unavailable(message: impl Into<String>) -> Self {
+        Self::Unavailable {
+            message: message.into(),
+        }
     }
 }
 

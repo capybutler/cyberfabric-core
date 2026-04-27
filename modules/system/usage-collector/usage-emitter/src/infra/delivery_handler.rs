@@ -9,8 +9,13 @@ use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
 /// Outbox delivery handler that forwards dequeued usage records to the usage collector,
 /// calling [`UsageCollectorClientV1::create_usage_record`] once per message.
 ///
-/// Implements [`LeasedMessageHandler`]: deserialization failures dead-letter the message;
-/// collector failures map to batch retry or reject.
+/// Implements [`LeasedMessageHandler`]:
+/// - Deserialization failures dead-letter the message (permanent: corrupt payload).
+/// - [`UsageCollectorError::PluginTimeout`], [`UsageCollectorError::CircuitOpen`], and
+///   [`UsageCollectorError::Unavailable`] trigger retry (transient: timeout, open circuit,
+///   connection/transport error, or identity service temporarily unreachable).
+/// - All other collector errors dead-letter the message (permanent: auth denial,
+///   module not configured, or unexpected condition).
 pub struct DeliveryHandler {
     collector: Arc<dyn UsageCollectorClientV1>,
 }
@@ -70,9 +75,13 @@ impl LeasedMessageHandler for DeliveryHandler {
             }
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-5
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-6
-            Err(e @ (UsageCollectorError::PluginTimeout | UsageCollectorError::CircuitOpen)) => {
-                // PluginTimeout covers: network timeout, HTTP 429, HTTP 5xx (see rest_client.rs).
-                // CircuitOpen means the gateway circuit breaker is open; retry after backoff.
+            Err(e @ (UsageCollectorError::PluginTimeout
+                | UsageCollectorError::CircuitOpen
+                | UsageCollectorError::Unavailable { .. })) => {
+                // PluginTimeout: network timeout, HTTP 429, HTTP 5xx (see rest_client.rs).
+                // CircuitOpen: gateway circuit breaker is open; retry after backoff.
+                // Unavailable: connection/transport error or identity service temporarily
+                //   unreachable; the request never reached the gateway (see rest_client.rs).
                 info!(error = %e, "transient collector delivery error; will retry");
                 // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-6a
                 MessageResult::Retry

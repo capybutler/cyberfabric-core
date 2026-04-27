@@ -57,3 +57,7 @@ tracing = { workspace = true }
 
 # DB
 sea-orm-migration = { workspace = true }
+
+[dev-dependencies]
+# ModKit dependencies
+modkit-db = { workspace = true, features = ["sqlite"] }

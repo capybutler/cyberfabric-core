@@ -22,6 +22,14 @@ fn plugin_timeout_constructor() {
     assert!(matches!(e, UsageCollectorError::PluginTimeout));
 }
 
+#[test]
+fn unavailable_constructor_sets_message() {
+    let e = UsageCollectorError::unavailable("connection refused");
+    assert!(
+        matches!(e, UsageCollectorError::Unavailable { ref message } if message == "connection refused")
+    );
+}
+
 // ── Display ───────────────────────────────────────────────────────
 
 #[test]
@@ -40,4 +48,10 @@ fn display_internal() {
 fn display_plugin_timeout() {
     let e = UsageCollectorError::plugin_timeout();
     assert_eq!(e.to_string(), "storage plugin call timed out");
+}
+
+#[test]
+fn display_unavailable() {
+    let e = UsageCollectorError::unavailable("identity service down");
+    assert_eq!(e.to_string(), "service unavailable: identity service down");
 }

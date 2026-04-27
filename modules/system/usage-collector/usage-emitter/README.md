@@ -93,11 +93,13 @@ match authorized.enqueue(record).await {
 
 ## Background delivery
 
-The outbox worker dequeues from `usage-records` and calls `UsageCollectorClientV1::create_usage_record` per message:
+The outbox worker dequeues from the queue configured via `outbox_queue` (host overrides apply) and calls `UsageCollectorClientV1::create_usage_record` per message:
 
 - **`Ok`** — message acknowledged
-- **`PluginTimeout`** — transient; message is retried
-- **Other errors** — permanent; message is dead-lettered
+- **`PluginTimeout`** — transient (plugin timeout, HTTP 429, HTTP 5xx); message is retried
+- **`CircuitOpen`** — transient (circuit breaker open); message is retried
+- **`Unavailable`** — transient (connection/transport error, identity service unreachable); message is retried
+- **Other errors** — permanent (`AuthorizationFailed`, `ModuleNotFound`, `Internal`); message is dead-lettered
 
 Delivery is independent of the request that enqueued the record and survives process restarts through the durable outbox.
 

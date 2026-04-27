@@ -29,7 +29,7 @@ use crate::error::UsageEmitterError;
 ///
 /// // In a handler:
 /// let authorized = scoped
-///     .authorize_for(&ctx, tenant_id, resource_id, resource_type)
+///     .authorize_for(&ctx, tenant_id, resource_id, resource_type, subject_id, subject_type)
 ///     .await?;
 /// authorized.build_usage_record("requests", 1.0).enqueue().await?;
 /// ```
@@ -65,8 +65,8 @@ impl ScopedUsageEmitter {
     /// Obtain a time-limited [`AuthorizedUsageEmitter`] by calling the PDP for `USAGE_RECORD`/`CREATE`
     /// and fetching the allowed metrics for this module from the collector.
     ///
-    /// The returned handle is bound to the module name, tenant, and metered resource; every enqueued
-    /// record must match and its metric must be in the allowed list.
+    /// The returned handle is bound to the module name, tenant, metered resource, and subject
+    /// identity; every enqueued record must match and its metric must be in the allowed list.
     ///
     /// # Errors
     ///
@@ -79,6 +79,8 @@ impl ScopedUsageEmitter {
         tenant_id: Uuid,
         resource_id: Uuid,
         resource_type: String,
+        subject_id: Uuid,
+        subject_type: String,
     ) -> Result<AuthorizedUsageEmitter, UsageEmitterError> {
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-2
         let request = AccessRequest::new()
@@ -86,7 +88,10 @@ impl ScopedUsageEmitter {
             .barrier_mode(BarrierMode::Ignore)
             .resource_property(pep_properties::OWNER_TENANT_ID, tenant_id)
             .resource_property(authz::properties::RESOURCE_ID, resource_id)
-            .resource_property(authz::properties::RESOURCE_TYPE, resource_type.as_str());
+            .resource_property(authz::properties::RESOURCE_TYPE, resource_type.as_str())
+            .resource_property(authz::properties::MODULE, self.module.clone())
+            .resource_property(authz::properties::SUBJECT_ID, subject_id.to_string())
+            .resource_property(authz::properties::SUBJECT_TYPE, subject_type.clone());
         let pdp_result = PolicyEnforcer::new(Arc::clone(&self.authz))
             .access_scope_with(
                 ctx,
@@ -119,7 +124,9 @@ impl ScopedUsageEmitter {
                 return Err(UsageEmitterError::module_not_configured(module_name));
             }
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5a
-            Err(e) => return Err(UsageEmitterError::authorization_failed(e.to_string())),
+            // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5b
+            Err(e) => return Err(UsageEmitterError::internal(e.to_string())),
+            // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5b
             Ok(cfg) => cfg,
         };
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5
@@ -134,8 +141,8 @@ impl ScopedUsageEmitter {
             resource_id,
             resource_type,
             module_cfg.allowed_metrics,
-            ctx.subject_id(),
-            ctx.subject_type().unwrap_or("").to_owned(),
+            subject_id,
+            subject_type,
         );
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-6
 
@@ -156,7 +163,16 @@ impl ScopedUsageEmitter {
         resource_id: Uuid,
         resource_type: String,
     ) -> Result<AuthorizedUsageEmitter, UsageEmitterError> {
-        self.authorize_for(ctx, ctx.subject_tenant_id(), resource_id, resource_type)
-            .await
+        let subject_id = ctx.subject_id();
+        let subject_type = ctx.subject_type().unwrap_or("").to_owned();
+        self.authorize_for(
+            ctx,
+            ctx.subject_tenant_id(),
+            resource_id,
+            resource_type,
+            subject_id,
+            subject_type,
+        )
+        .await
     }
 }

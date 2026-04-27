@@ -38,7 +38,14 @@ pub async fn handle_create_usage_record(
 
     let authorized = emitter
         .for_module(&req.module)
-        .authorize_for(&ctx, req.tenant_id, req.resource_id, req.resource_type)
+        .authorize_for(
+            &ctx,
+            req.tenant_id,
+            req.resource_id,
+            req.resource_type,
+            req.subject_id,
+            req.subject_type,
+        )
         .await
         .map_err(emitter_error_to_problem)?;
 

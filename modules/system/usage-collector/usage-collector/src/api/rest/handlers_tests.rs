@@ -1,19 +1,30 @@
 //! Unit tests for REST handlers and `emitter_error_to_problem`.
 
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use authz_resolver_sdk::models::{EvaluationRequest, EvaluationResponse, EvaluationResponseContext};
+use authz_resolver_sdk::{AuthZResolverClient, AuthZResolverError};
 use axum::Extension;
+use axum::Json;
 use axum::extract::Path;
+use chrono::Utc;
 use http::StatusCode;
+use modkit_db::migration_runner::run_migrations_for_testing;
+use modkit_db::outbox::outbox_migrations;
+use modkit_db::{ConnectOpts, connect_db};
+use modkit_security::SecurityContext;
 use usage_collector_sdk::{
     AllowedMetric, ModuleConfig, UsageCollectorClientV1, UsageCollectorError, UsageKind,
     UsageRecord,
 };
-use usage_emitter::UsageEmitterError;
+use usage_emitter::{UsageEmitter, UsageEmitterError, UsageEmitterV1};
+use uuid::Uuid;
 
 use super::emitter_error_to_problem;
+use super::handle_create_usage_record;
 use super::handle_get_module_config;
+use crate::api::rest::dto::CreateUsageRecordRequest;
 
 // ── emitter_error_to_problem ──────────────────────────────────────
 
@@ -182,4 +193,159 @@ fn module_not_configured_maps_to_unprocessable_entity() {
     let p = emitter_error_to_problem(err);
     assert_eq!(p.status, StatusCode::UNPROCESSABLE_ENTITY);
     assert!(p.detail.contains("my-module"));
+}
+
+// ── handle_create_usage_record ────────────────────────────────────────────────
+
+/// PDP mock that captures the `subject_id` and `subject_type` resource properties from the
+/// incoming evaluation request, then allows the request to proceed.
+struct CapturingSubjectAuthZ {
+    captured_subject_id: Arc<Mutex<Option<String>>>,
+    captured_subject_type: Arc<Mutex<Option<String>>>,
+}
+
+#[async_trait]
+impl AuthZResolverClient for CapturingSubjectAuthZ {
+    async fn evaluate(
+        &self,
+        request: EvaluationRequest,
+    ) -> Result<EvaluationResponse, AuthZResolverError> {
+        let subj_id = request
+            .resource
+            .properties
+            .get("subject_id")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        let subj_type = request
+            .resource
+            .properties
+            .get("subject_type")
+            .and_then(|v| v.as_str())
+            .map(str::to_owned);
+        *self.captured_subject_id.lock().unwrap() = subj_id;
+        *self.captured_subject_type.lock().unwrap() = subj_type;
+        Ok(EvaluationResponse {
+            decision: true,
+            context: EvaluationResponseContext::default(),
+        })
+    }
+}
+
+/// Collector that returns a fixed `ModuleConfig` with one allowed metric.
+struct FixedConfigCollector;
+
+#[async_trait]
+impl UsageCollectorClientV1 for FixedConfigCollector {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn get_module_config(
+        &self,
+        _module_name: &str,
+    ) -> Result<ModuleConfig, UsageCollectorError> {
+        Ok(ModuleConfig {
+            allowed_metrics: vec![AllowedMetric {
+                name: "test.gauge".to_owned(),
+                kind: UsageKind::Gauge,
+            }],
+        })
+    }
+}
+
+async fn build_handler_emitter(
+    authz: Arc<dyn AuthZResolverClient>,
+) -> Arc<dyn UsageEmitterV1> {
+    let db_name = format!("hw_{}", Uuid::new_v4().simple());
+    let url = format!("sqlite:file:{db_name}?mode=memory&cache=shared");
+    let db = connect_db(&url, ConnectOpts { max_conns: Some(1), ..Default::default() })
+        .await
+        .unwrap();
+    run_migrations_for_testing(&db, outbox_migrations()).await.unwrap();
+    let emitter = UsageEmitter::build(
+        usage_emitter::UsageEmitterConfig::default(),
+        db,
+        authz,
+        Arc::new(FixedConfigCollector),
+    )
+    .await
+    .unwrap();
+    Arc::new(emitter) as Arc<dyn UsageEmitterV1>
+}
+
+#[tokio::test]
+async fn ingest_handler_passes_subject_fields_to_authorize_for() {
+    let subject_id = Uuid::new_v4();
+    let subject_type = "test.service_account".to_owned();
+
+    let captured_id: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let captured_type: Arc<Mutex<Option<String>>> = Arc::new(Mutex::new(None));
+    let authz = Arc::new(CapturingSubjectAuthZ {
+        captured_subject_id: Arc::clone(&captured_id),
+        captured_subject_type: Arc::clone(&captured_type),
+    });
+
+    let emitter = build_handler_emitter(authz).await;
+
+    let ctx = SecurityContext::builder()
+        .subject_id(Uuid::new_v4())
+        .subject_tenant_id(Uuid::new_v4())
+        .build()
+        .unwrap();
+
+    let req = CreateUsageRecordRequest {
+        module: "test-module".to_owned(),
+        tenant_id: Uuid::new_v4(),
+        resource_type: "test.resource".to_owned(),
+        resource_id: Uuid::new_v4(),
+        subject_id,
+        subject_type: subject_type.clone(),
+        metric: "test.gauge".to_owned(),
+        idempotency_key: None,
+        value: 1.0,
+        timestamp: Utc::now(),
+        metadata: None,
+    };
+
+    let result = handle_create_usage_record(
+        Extension(ctx),
+        Extension(emitter),
+        Json(req),
+    )
+    .await;
+
+    assert!(result.is_ok(), "handler should succeed: {result:?}");
+
+    assert_eq!(
+        captured_id.lock().unwrap().as_deref(),
+        Some(subject_id.to_string().as_str()),
+        "subject_id must be forwarded to the PDP request"
+    );
+    assert_eq!(
+        captured_type.lock().unwrap().as_deref(),
+        Some(subject_type.as_str()),
+        "subject_type must be forwarded to the PDP request"
+    );
+}
+
+#[test]
+fn ingest_handler_returns_bad_request_when_subject_fields_absent() {
+    // `subject_id` and `subject_type` have no `#[serde(default)]`, so a JSON body
+    // that omits them must fail deserialization.  axum's `Json` extractor returns
+    // HTTP 422 in that case.  Here we verify the contract at the serde level.
+    let body_without_subject = serde_json::json!({
+        "module": "test-module",
+        "tenant_id": Uuid::new_v4(),
+        "resource_type": "test.resource",
+        "resource_id": Uuid::new_v4(),
+        "metric": "test.gauge",
+        "value": 1.0,
+        "timestamp": Utc::now()
+    });
+    let result: Result<CreateUsageRecordRequest, _> =
+        serde_json::from_value(body_without_subject);
+    assert!(
+        result.is_err(),
+        "deserialization must fail when subject_id and subject_type are absent"
+    );
 }
