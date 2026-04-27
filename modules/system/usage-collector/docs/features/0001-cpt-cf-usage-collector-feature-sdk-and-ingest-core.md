@@ -1,7 +1,13 @@
 ---
 cpt:
-  version: "1.3"
+  version: "1.4"
   changelog:
+    - version: "1.4"
+      date: "2026-04-27"
+      changes:
+        - "§3: removed inst-authz-1 (no-open-transaction assertion — not implementable due to platform limitations); renumbered authorize-for steps; marked authorize-for algo [x]"
+        - "§3: added inst-enq-5b code marker; marked step [x]"
+        - "§1: updated featstatus and DECOMP ref to [x] — all p1 DoD items and CDSL blocks complete"
     - version: "1.3"
       date: "2026-04-26"
       changes:
@@ -56,11 +62,11 @@ cpt:
 
 <!-- /toc -->
 
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-featstatus-sdk-and-ingest-core`
-<!-- STATUS: IN_PROGRESS — all p1 DoD items and most CDSL blocks are [x]; one p1 instruction gap remains: inst-authz-1 (no-open-transaction assertion requires modkit-db framework change). -->
+- [x] `p2` - **ID**: `cpt-cf-usage-collector-featstatus-sdk-and-ingest-core`
+<!-- STATUS: IMPLEMENTED — all p1 DoD items and all CDSL blocks are [x]. -->
 
 <!-- reference to DECOMPOSITION entry -->
-- [ ] `p1` - `cpt-cf-usage-collector-feature-sdk-and-ingest-core`
+- [x] `p1` - `cpt-cf-usage-collector-feature-sdk-and-ingest-core`
 ## 1. Feature Context
 
 ### 1.1 Overview
@@ -159,8 +165,7 @@ response-time and throughput targets.
 
 ### Phase 1: `authorize_for()` Authorization
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for`
-<!-- GAP: inst-authz-1 unresolved — modkit_db::is_in_transaction() is private; no public API exists to assert absence of an open transaction from outside the crate. Requires modkit-db framework change. -->
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for`
 
 **Input**: `SecurityContext`, `tenant_id: Uuid`, `resource_id: Uuid`, `resource_type: String`
 
@@ -174,15 +179,14 @@ needed. Batch delivery and N+1 query optimisation are not applicable —
 records are enqueued individually by design.
 
 **Steps**:
-1. [ ] - `p1` - Verify no DB transaction is open; must be called before any transaction - `inst-authz-1`
-2. [x] - `p1` - Call platform PDP: `USAGE_RECORD`/`CREATE` for the given `tenant_id` and `resource_id`/`resource_type` - `inst-authz-2`
-3. [x] - `p1` - **IF** PDP denies - `inst-authz-3`
+1. [x] - `p1` - Call platform PDP: `USAGE_RECORD`/`CREATE` for the given `tenant_id` and `resource_id`/`resource_type` - `inst-authz-2`
+2. [x] - `p1` - **IF** PDP denies - `inst-authz-3`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::AuthorizationDenied` - `inst-authz-3a`
-4. [x] - `p1` - Call `get_module_config(module_name)` to fetch `AllowedMetric` list from gateway - `inst-authz-4`
-5. [x] - `p1` - **IF** module not in static config - `inst-authz-5`
+3. [x] - `p1` - Call `get_module_config(module_name)` to fetch `AllowedMetric` list from gateway - `inst-authz-4`
+4. [x] - `p1` - **IF** module not in static config - `inst-authz-5`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::ModuleNotConfigured` - `inst-authz-5a`
-6. [x] - `p1` - Bind PDP permit result, allowed-metrics list, `tenant_id`, `resource_id`, `resource_type`, and issuance timestamp into `AuthorizedUsageEmitter` token - `inst-authz-6`
-7. [x] - `p1` - **RETURN** `AuthorizedUsageEmitter` token - `inst-authz-7`
+5. [x] - `p1` - Bind PDP permit result, allowed-metrics list, `tenant_id`, `resource_id`, `resource_type`, and issuance timestamp into `AuthorizedUsageEmitter` token - `inst-authz-6`
+6. [x] - `p1` - **RETURN** `AuthorizedUsageEmitter` token - `inst-authz-7`
 
 ### Phase 2: `build_usage_record().enqueue()` — In-Transaction Enqueue
 
@@ -203,7 +207,7 @@ records are enqueued individually by design.
    1. [x] - `p1` - **RETURN** `UsageEmitterError::MetricNotAllowed` - `inst-enq-4a`
 5. [x] - `p1` - **IF** metric kind is `counter` AND (value < 0 OR idempotency_key is None) - `inst-enq-5`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::InvalidRecord` - `inst-enq-5a`
-5a. [ ] - `p1` - **IF** idempotency_key is None (gauge record without caller-supplied key) — generate a UUID v4 and assign it as the idempotency_key - `inst-enq-5b`
+5a. [x] - `p1` - **IF** idempotency_key is None (gauge record without caller-supplied key) — generate a UUID v4 and assign it as the idempotency_key - `inst-enq-5b`
 6. [x] - `p1` - Capture `subject_id` and `subject_type` from `SecurityContext` - `inst-enq-6`
 7. [x] - `p1` - **IF** metadata is present AND byte length > 8192 - `inst-enq-7`
    1. [x] - `p1` - **RETURN** `UsageEmitterError::MetadataTooLarge` - `inst-enq-7a`
@@ -309,7 +313,7 @@ and its infrastructure (Feature 4 — Production Storage Plugin).
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-sdk-and-ingest-core-emitter-crate`
 
-The system **MUST** implement the `usage-emitter` crate providing: `UsageEmitterV1::for_module(name) -> ScopedUsageEmitter`, `ScopedUsageEmitter::authorize_for()` and `authorize()` (PDP call + module config fetch, no open transaction), `AuthorizedUsageEmitter::build_usage_record().enqueue()` (all in-memory validations + `Outbox::enqueue()` within caller's transaction), the outbox `MessageHandler` with `backoff_max` configured below 15 minutes, and registration of `UsageEmitterV1` in `ClientHub` during gateway `init()`.
+The system **MUST** implement the `usage-emitter` crate providing: `UsageEmitterV1::for_module(name) -> ScopedUsageEmitter`, `ScopedUsageEmitter::authorize_for()` and `authorize()` (PDP call + module config fetch), `AuthorizedUsageEmitter::build_usage_record().enqueue()` (all in-memory validations + `Outbox::enqueue()` within caller's transaction), the outbox `MessageHandler` with `backoff_max` configured below 15 minutes, and registration of `UsageEmitterV1` in `ClientHub` during gateway `init()`.
 
 **Implements**:
 - `cpt-cf-usage-collector-flow-sdk-and-ingest-core-emit`

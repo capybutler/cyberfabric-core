@@ -27,7 +27,6 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 - Features grouped by functional cohesion (related capabilities together)
 - Dependencies follow the SDK → emitter → gateway → plugin layering from the DESIGN
 - Features 1–2 reflect the preliminary implementation already in progress; Features 3–8 are not yet started
-- All DESIGN components, sequences, data entities, FRs, principles, and constraints are covered.
 
 **Deliberate Omissions**: None. All DESIGN components, sequences, data entities, FRs, principles, and constraints are covered.
 
