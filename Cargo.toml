@@ -86,7 +86,10 @@ members = [
     "modules/system/oagw/oagw-sdk",
     "modules/mini-chat/mini-chat-sdk",
     "modules/mini-chat/mini-chat",
+    "modules/system/usage-collector/plugins/noop-usage-collector-storage-plugin",
+    "modules/system/usage-collector/usage-collector",
     "modules/system/usage-collector/usage-collector-sdk",
+    "modules/system/usage-collector/usage-emitter",
 ]
 exclude = ["tools/fuzz"]
 resolver = "3"
@@ -244,6 +247,7 @@ cf-system-sdk-directory = { version = "0.1.34", path = "libs/system-sdks/sdks/di
 # system modules SDKs
 types-registry-sdk = { package = "cf-types-registry-sdk", version = "0.1.5", path = "modules/system/types-registry/types-registry-sdk" }
 tenant-resolver-sdk = { package = "cf-tenant-resolver-sdk", version = "0.3.0", path = "modules/system/tenant-resolver/tenant-resolver-sdk" }
+authn-resolver-sdk = { package = "cf-authn-resolver-sdk", version = "0.3.10", path = "modules/system/authn-resolver/authn-resolver-sdk" }
 authz-resolver-sdk = { package = "cf-authz-resolver-sdk", version = "0.3.0", path = "modules/system/authz-resolver/authz-resolver-sdk" }
 resource-group-sdk = { package = "cf-resource-group-sdk", version = "0.1.0", path = "modules/system/resource-group/resource-group-sdk" }
 oagw-sdk = { package = "cf-oagw-sdk", version = "0.4.1", path = "modules/system/oagw/oagw-sdk" }
@@ -255,7 +259,9 @@ credstore-sdk = { package = "cf-credstore-sdk", version = "0.1.18", path = "modu
 mini-chat-sdk = { package = "cf-mini-chat-sdk", version = "0.10.0", path = "modules/mini-chat/mini-chat-sdk" }
 
 # usage-collector
+usage-collector = { package = "cf-usage-collector", version = "0.1.0", path = "modules/system/usage-collector/usage-collector" }
 usage-collector-sdk = { package = "cf-usage-collector-sdk", version = "0.1.0", path = "modules/system/usage-collector/usage-collector-sdk" }
+usage-emitter = { package = "cf-usage-emitter", version = "0.1.0", path = "modules/system/usage-collector/usage-emitter" }
 
 # system modules
 grpc_hub = { package = "cf-grpc-hub", version = "0.2.0", path = "modules/system/grpc-hub" }
