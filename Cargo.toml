@@ -88,6 +88,7 @@ members = [
     "modules/mini-chat/mini-chat",
     "modules/system/usage-collector/plugins/noop-usage-collector-storage-plugin",
     "modules/system/usage-collector/usage-collector",
+    "modules/system/usage-collector/usage-collector-rest-client",
     "modules/system/usage-collector/usage-collector-sdk",
     "modules/system/usage-collector/usage-emitter",
 ]
@@ -260,6 +261,7 @@ mini-chat-sdk = { package = "cf-mini-chat-sdk", version = "0.10.0", path = "modu
 
 # usage-collector
 usage-collector = { package = "cf-usage-collector", version = "0.1.0", path = "modules/system/usage-collector/usage-collector" }
+usage-collector-rest-client = { package = "cf-usage-collector-rest-client", version = "0.1.0", path = "modules/system/usage-collector/usage-collector-rest-client" }
 usage-collector-sdk = { package = "cf-usage-collector-sdk", version = "0.1.0", path = "modules/system/usage-collector/usage-collector-sdk" }
 usage-emitter = { package = "cf-usage-emitter", version = "0.1.0", path = "modules/system/usage-collector/usage-emitter" }
 
