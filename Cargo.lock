@@ -2620,6 +2620,36 @@ dependencies = [
 ]
 
 [[package]]
+name = "cf-usage-collector-rest-client"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cf-authn-resolver-sdk",
+ "cf-authz-resolver-sdk",
+ "cf-modkit",
+ "cf-modkit-db",
+ "cf-modkit-http",
+ "cf-modkit-macros",
+ "cf-modkit-security",
+ "cf-modkit-utils",
+ "cf-usage-collector-sdk",
+ "cf-usage-emitter",
+ "chrono",
+ "http",
+ "httpmock",
+ "sea-orm-migration",
+ "secrecy",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "url",
+ "urlencoding",
+ "uuid",
+]
+
+[[package]]
 name = "cf-usage-collector-sdk"
 version = "0.1.0"
 dependencies = [
