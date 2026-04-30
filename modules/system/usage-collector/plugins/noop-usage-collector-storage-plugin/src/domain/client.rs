@@ -1,6 +1,8 @@
 use async_trait::async_trait;
 
-use usage_collector_sdk::models::UsageRecord;
+use usage_collector_sdk::models::{
+    AggregationQuery, AggregationResult, PagedResult, RawQuery, UsageRecord,
+};
 use usage_collector_sdk::{UsageCollectorError, UsageCollectorPluginClientV1};
 
 use super::service::Service;
@@ -9,6 +11,23 @@ use super::service::Service;
 impl UsageCollectorPluginClientV1 for Service {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Ok(PagedResult {
+            items: vec![],
+            next_cursor: None,
+        })
     }
 }
 

@@ -29,5 +29,9 @@ pub mod plugin_api;
 pub use api::UsageCollectorClientV1;
 pub use error::UsageCollectorError;
 pub use gts::UsageCollectorStoragePluginSpecV1;
-pub use models::{AllowedMetric, ModuleConfig, UsageKind, UsageRecord};
+pub use models::{
+    AggregationFn, AggregationQuery, AggregationResult, AllowedMetric, BucketSize, Cursor,
+    CursorDecodeError, GroupByDimension, ModuleConfig, PagedResult, RawQuery, UsageKind,
+    UsageRecord,
+};
 pub use plugin_api::UsageCollectorPluginClientV1;

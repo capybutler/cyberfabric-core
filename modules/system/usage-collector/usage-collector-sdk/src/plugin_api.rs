@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 
 use crate::error::UsageCollectorError;
-use crate::models::UsageRecord;
+use crate::models::{AggregationQuery, AggregationResult, PagedResult, RawQuery, UsageRecord};
 
 /// Backend storage adapter for usage records.
 ///
@@ -12,4 +12,16 @@ use crate::models::UsageRecord;
 pub trait UsageCollectorPluginClientV1: Send + Sync {
     /// Create one usage record in storage (idempotent upsert where applicable).
     async fn create_usage_record(&self, record: UsageRecord) -> Result<(), UsageCollectorError>;
+
+    /// Execute an aggregated usage query. Breaking trait addition.
+    async fn query_aggregated(
+        &self,
+        query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError>;
+
+    /// Execute a raw paginated usage record query. Breaking trait addition.
+    async fn query_raw(
+        &self,
+        query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError>;
 }

@@ -12,7 +12,8 @@ use usage_collector_sdk::UsageCollectorClientV1;
 use usage_collector_sdk::UsageKind;
 use usage_collector_sdk::UsageRecord;
 use usage_collector_sdk::{
-    UsageCollectorError, UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1,
+    AggregationQuery, AggregationResult, PagedResult, RawQuery, UsageCollectorError,
+    UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1,
 };
 use uuid::Uuid;
 
@@ -64,6 +65,23 @@ struct OkPlugin;
 impl UsageCollectorPluginClientV1 for OkPlugin {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Ok(PagedResult {
+            items: vec![],
+            next_cursor: None,
+        })
     }
 }
 
@@ -203,6 +221,23 @@ impl UsageCollectorPluginClientV1 for SlowPlugin {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         tokio::time::sleep(Duration::from_mins(1)).await;
         Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Ok(PagedResult {
+            items: vec![],
+            next_cursor: None,
+        })
     }
 }
 
@@ -407,6 +442,20 @@ impl UsageCollectorPluginClientV1 for FailPlugin {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         Err(UsageCollectorError::internal("simulated plugin failure"))
     }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Err(UsageCollectorError::internal("simulated plugin failure"))
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Err(UsageCollectorError::internal("simulated plugin failure"))
+    }
 }
 
 /// A storage plugin that counts every `store` invocation via an atomic counter.
@@ -434,6 +483,23 @@ impl UsageCollectorPluginClientV1 for CountingPlugin {
         } else {
             Ok(())
         }
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Ok(PagedResult {
+            items: vec![],
+            next_cursor: None,
+        })
     }
 }
 
@@ -554,6 +620,23 @@ async fn half_open_admits_exactly_one_concurrent_probe_others_rejected() {
             tokio::task::yield_now().await;
             Ok(())
         }
+
+        async fn query_aggregated(
+            &self,
+            _query: AggregationQuery,
+        ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+            Ok(vec![])
+        }
+
+        async fn query_raw(
+            &self,
+            _query: RawQuery,
+        ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+            Ok(PagedResult {
+                items: vec![],
+                next_cursor: None,
+            })
+        }
     }
 
     let threshold = 2u32;
@@ -644,6 +727,23 @@ async fn successful_probe_closes_circuit() {
             } else {
                 Ok(())
             }
+        }
+
+        async fn query_aggregated(
+            &self,
+            _query: AggregationQuery,
+        ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+            Ok(vec![])
+        }
+
+        async fn query_raw(
+            &self,
+            _query: RawQuery,
+        ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+            Ok(PagedResult {
+                items: vec![],
+                next_cursor: None,
+            })
         }
     }
 
