@@ -8,10 +8,12 @@ use modkit::client_hub::{ClientHub, ClientScope};
 use types_registry_sdk::{
     GtsEntity, ListQuery, RegisterResult, TypesRegistryClient, TypesRegistryError,
 };
+use modkit_security::AccessScope;
 use usage_collector_sdk::UsageCollectorClientV1;
 use usage_collector_sdk::UsageKind;
 use usage_collector_sdk::UsageRecord;
 use usage_collector_sdk::{
+    AggregationFn, AggregationQuery, AggregationResult, PagedResult, RawQuery,
     UsageCollectorError, UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1,
 };
 use uuid::Uuid;
@@ -64,6 +66,23 @@ struct OkPlugin;
 impl UsageCollectorPluginClientV1 for OkPlugin {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Ok(PagedResult {
+            items: vec![],
+            next_cursor: None,
+        })
     }
 }
 
@@ -203,6 +222,23 @@ impl UsageCollectorPluginClientV1 for SlowPlugin {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         tokio::time::sleep(Duration::from_mins(1)).await;
         Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Ok(PagedResult {
+            items: vec![],
+            next_cursor: None,
+        })
     }
 }
 
@@ -407,6 +443,50 @@ impl UsageCollectorPluginClientV1 for FailPlugin {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         Err(UsageCollectorError::internal("simulated plugin failure"))
     }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Err(UsageCollectorError::internal("simulated plugin failure"))
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Err(UsageCollectorError::internal("simulated plugin failure"))
+    }
+}
+
+/// A plugin that captures the received AggregationQuery for scope-propagation assertions.
+struct CapturingPlugin {
+    captured: Arc<std::sync::Mutex<Option<AggregationQuery>>>,
+}
+
+#[async_trait::async_trait]
+impl UsageCollectorPluginClientV1 for CapturingPlugin {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        *self.captured.lock().unwrap() = Some(query);
+        Ok(vec![])
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Ok(PagedResult {
+            items: vec![],
+            next_cursor: None,
+        })
+    }
 }
 
 /// A storage plugin that counts every `store` invocation via an atomic counter.
@@ -434,6 +514,23 @@ impl UsageCollectorPluginClientV1 for CountingPlugin {
         } else {
             Ok(())
         }
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(
+        &self,
+        _query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        Ok(PagedResult {
+            items: vec![],
+            next_cursor: None,
+        })
     }
 }
 
@@ -554,6 +651,23 @@ async fn half_open_admits_exactly_one_concurrent_probe_others_rejected() {
             tokio::task::yield_now().await;
             Ok(())
         }
+
+        async fn query_aggregated(
+            &self,
+            _query: AggregationQuery,
+        ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+            Ok(vec![])
+        }
+
+        async fn query_raw(
+            &self,
+            _query: RawQuery,
+        ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+            Ok(PagedResult {
+                items: vec![],
+                next_cursor: None,
+            })
+        }
     }
 
     let threshold = 2u32;
@@ -645,6 +759,23 @@ async fn successful_probe_closes_circuit() {
                 Ok(())
             }
         }
+
+        async fn query_aggregated(
+            &self,
+            _query: AggregationQuery,
+        ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+            Ok(vec![])
+        }
+
+        async fn query_raw(
+            &self,
+            _query: RawQuery,
+        ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+            Ok(PagedResult {
+                items: vec![],
+                next_cursor: None,
+            })
+        }
     }
 
     let threshold = 2u32;
@@ -694,6 +825,148 @@ async fn successful_probe_closes_circuit() {
         .create_usage_record(record(Uuid::new_v4()))
         .await
         .expect("circuit should be closed after successful probe");
+}
+
+// ── query path ───────────────────────────────────────────────────────────────
+
+fn minimal_agg_query() -> AggregationQuery {
+    AggregationQuery {
+        scope: AccessScope::deny_all(),
+        time_range: (Utc::now(), Utc::now()),
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 0,
+    }
+}
+
+fn minimal_raw_query() -> RawQuery {
+    RawQuery {
+        scope: AccessScope::deny_all(),
+        time_range: (Utc::now(), Utc::now()),
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_type: None,
+        subject_id: None,
+        cursor: None,
+        page_size: 10,
+    }
+}
+
+#[tokio::test]
+async fn test_query_aggregated_delegates_to_plugin() {
+    let client = Arc::new(make_client());
+    let proxy = UsageCollectorLocalClient::as_plugin_client(Arc::clone(&client));
+    let result = proxy.query_aggregated(minimal_agg_query()).await;
+    assert!(result.is_ok());
+    assert_eq!(result.unwrap(), vec![]);
+}
+
+#[tokio::test]
+async fn test_query_raw_delegates_to_plugin() {
+    let client = Arc::new(make_client());
+    let proxy = UsageCollectorLocalClient::as_plugin_client(Arc::clone(&client));
+    let result = proxy.query_raw(minimal_raw_query()).await;
+    assert!(result.is_ok());
+    let paged = result.unwrap();
+    assert!(paged.items.is_empty());
+    assert!(paged.next_cursor.is_none());
+}
+
+#[tokio::test]
+async fn test_query_aggregated_plugin_not_found_returns_error() {
+    let instance_id = format!(
+        "{}test._.lc_test.v1",
+        UsageCollectorStoragePluginSpecV1::gts_schema_id()
+    );
+    let hub = Arc::new(ClientHub::default());
+    let entity = GtsEntity {
+        id: Uuid::nil(),
+        gts_id: instance_id.clone(),
+        segments: vec![],
+        is_schema: false,
+        content: plugin_content(&instance_id, "hyperspot"),
+        description: None,
+    };
+    let reg: Arc<dyn TypesRegistryClient> = Arc::new(MockRegistry::new(vec![entity]));
+    hub.register::<dyn TypesRegistryClient>(reg);
+    // plugin client NOT registered
+    let client = Arc::new(make_client_with_vendor(hub, "hyperspot"));
+    let proxy = UsageCollectorLocalClient::as_plugin_client(Arc::clone(&client));
+    let result = proxy.query_aggregated(minimal_agg_query()).await;
+    assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_query_aggregated_circuit_open_returns_error() {
+    let client = Arc::new(make_cb_client(
+        Arc::new(FailPlugin),
+        2,
+        Duration::from_secs(10),
+        Duration::from_millis(1),
+    ));
+    for _ in 0..2 {
+        drop(client.create_usage_record(record(Uuid::new_v4())).await);
+    }
+    let proxy = UsageCollectorLocalClient::as_plugin_client(Arc::clone(&client));
+    let err = proxy.query_aggregated(minimal_agg_query()).await.unwrap_err();
+    assert!(
+        matches!(err, UsageCollectorError::CircuitOpen),
+        "expected CircuitOpen after circuit opened by ingest failures, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_query_raw_circuit_open_returns_error() {
+    let client = Arc::new(make_cb_client(
+        Arc::new(FailPlugin),
+        2,
+        Duration::from_secs(10),
+        Duration::from_millis(1),
+    ));
+    for _ in 0..2 {
+        drop(client.create_usage_record(record(Uuid::new_v4())).await);
+    }
+    let proxy = UsageCollectorLocalClient::as_plugin_client(Arc::clone(&client));
+    let err = proxy.query_raw(minimal_raw_query()).await.unwrap_err();
+    assert!(
+        matches!(err, UsageCollectorError::CircuitOpen),
+        "expected CircuitOpen after circuit opened by ingest failures, got {err:?}"
+    );
+}
+
+#[tokio::test]
+async fn test_query_aggregated_scope_propagated_to_plugin() {
+    let captured = Arc::new(std::sync::Mutex::new(None::<AggregationQuery>));
+    let plugin = Arc::new(CapturingPlugin { captured: Arc::clone(&captured) });
+    let instance_id = format!(
+        "{}test._.capturing.v1",
+        UsageCollectorStoragePluginSpecV1::gts_schema_id()
+    );
+    let hub = hub_with_plugin(&instance_id, "hyperspot", plugin);
+    let client = Arc::new(UsageCollectorLocalClient::new(
+        UsageCollectorConfig {
+            vendor: "hyperspot".to_owned(),
+            ..UsageCollectorConfig::default()
+        },
+        hub,
+    ));
+    let proxy = UsageCollectorLocalClient::as_plugin_client(Arc::clone(&client));
+    let query = minimal_agg_query();
+    proxy.query_aggregated(query).await.expect("query should succeed");
+    let guard = captured.lock().unwrap();
+    let captured_query = guard.as_ref().expect("plugin should have received the query");
+    assert!(
+        captured_query.scope.is_deny_all(),
+        "scope must be propagated to the plugin unchanged"
+    );
 }
 
 /// After a failed probe from `HalfOpen`, the circuit re-opens and the next call returns `CircuitOpen`.

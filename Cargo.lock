@@ -1884,6 +1884,7 @@ dependencies = [
  "async-trait",
  "cf-modkit",
  "cf-modkit-macros",
+ "cf-modkit-security",
  "cf-types-registry-sdk",
  "cf-usage-collector-sdk",
  "chrono",
@@ -2337,6 +2338,7 @@ dependencies = [
  "anyhow",
  "async-trait",
  "axum",
+ "base64 0.22.1",
  "cf-authz-resolver-sdk",
  "cf-modkit",
  "cf-modkit-db",
@@ -2393,7 +2395,9 @@ name = "cf-usage-collector-sdk"
 version = "0.1.0"
 dependencies = [
  "async-trait",
+ "base64 0.22.1",
  "cf-modkit",
+ "cf-modkit-security",
  "chrono",
  "gts",
  "gts-macros",

@@ -8,7 +8,7 @@
 - [2. Entries](#2-entries)
   - [2.1 Core SDK, Emitter & In-Process Ingest ⏳ HIGH](#21-core-sdk-emitter--in-process-ingest--high)
   - [2.2 REST Client & Remote Ingest Delivery ⏳ HIGH](#22-rest-client--remote-ingest-delivery--high)
-  - [2.3 Usage Query API ⏳ HIGH](#23-usage-query-api--high)
+  - [2.3 Usage Query API ✅ HIGH](#23-usage-query-api--high)
   - [2.4 Production Storage Plugin ⏳ HIGH](#24-production-storage-plugin--high)
   - [2.5 Usage Type System ⏳ HIGH](#25-usage-type-system--high)
   - [2.6 Emission Rate Limiting ⏳ HIGH](#26-emission-rate-limiting--high)
@@ -192,9 +192,10 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 ---
 
-### 2.3 [Usage Query API](features/query-api/) ⏳ HIGH
+### 2.3 [Usage Query API](features/query-api/) ✅ HIGH
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-feature-query-api`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-feature-query-api`
+<!-- STATUS: IMPLEMENTED — all p1 and p2 DoD items verified and implemented. -->
 
 - **Type**: REST API Layer
 
@@ -214,24 +215,31 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Requirements Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-fr-query-aggregation`
-  - [ ] `p2` - `cpt-cf-usage-collector-fr-query-raw`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-workload-isolation`
+  - [x] `p1` - `cpt-cf-usage-collector-fr-query-aggregation`
+  - [x] `p2` - `cpt-cf-usage-collector-fr-query-raw`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-workload-isolation`
 
 - **Design Principles Covered**:
 
   - [ ] `p1` - `cpt-cf-usage-collector-principle-fail-closed`
   - [ ] `p1` - `cpt-cf-usage-collector-principle-tenant-from-ctx`
+  - [ ] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
 
 - **Design Constraints Covered**:
 
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-security-context`
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-no-business-logic`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-or-of-ands-preservation`
 
 - **Domain Model Entities**:
   - `AggregationQuery`
   - `AggregationResult`
   - `RawQuery`
+  - `PagedResult<T>`
+  - `Cursor`
+  - `AggregationFn`
+  - `BucketSize`
+  - `GroupByDimension`
 
 - **Design Components**:
 

@@ -7,6 +7,24 @@ use serde::Deserialize;
 use usage_collector_sdk::UsageKind;
 use usage_emitter::UsageEmitterConfig;
 
+/// Default number of raw records returned per page when `page_size` is absent.
+pub const DEFAULT_PAGE_SIZE: usize = 100;
+
+/// Maximum allowed value for `page_size` in raw queries.
+pub const MAX_PAGE_SIZE: usize = 1_000;
+
+/// Maximum number of rows `query_aggregated` may return before returning `QueryResultTooLarge`.
+pub const MAX_AGG_ROWS: usize = 10_000;
+
+/// Maximum byte length for string filter fields (`usage_type`, `resource_type`, `subject_type`, `source`).
+pub const MAX_FILTER_STRING_LEN: usize = 256;
+
+/// Maximum allowed query time range (from, to) per request (~1 year).
+pub const MAX_QUERY_TIME_RANGE: Duration = Duration::from_hours(8784);
+
+/// Maximum lifetime of a cursor token from the time of its creation.
+pub const CURSOR_TTL: Duration = Duration::from_hours(24);
+
 /// Per-metric allowed configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -69,6 +87,17 @@ impl UsageCollectorConfig {
         }
         if self.circuit_breaker_recovery_timeout > std::time::Duration::from_mins(5) {
             anyhow::bail!("circuit_breaker_recovery_timeout must not exceed 5min");
+        }
+        // Startup invariants for query configuration constants.
+        #[allow(clippy::assertions_on_constants)]
+        {
+            assert!(DEFAULT_PAGE_SIZE > 0, "DEFAULT_PAGE_SIZE must be greater than zero");
+            assert!(MAX_PAGE_SIZE > 0, "MAX_PAGE_SIZE must be greater than zero");
+            assert!(
+                DEFAULT_PAGE_SIZE <= MAX_PAGE_SIZE,
+                "DEFAULT_PAGE_SIZE must not exceed MAX_PAGE_SIZE"
+            );
+            assert!(MAX_FILTER_STRING_LEN > 0, "MAX_FILTER_STRING_LEN must be greater than zero");
         }
         Ok(())
     }
