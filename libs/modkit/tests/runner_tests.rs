@@ -1,5 +1,4 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
-#![cfg(feature = "db")]
 
 //! Comprehensive tests for the `ModKit` runner functionality
 //!
@@ -18,12 +17,13 @@ use uuid::Uuid;
 use modkit::{
     ModuleCtx,
     config::ConfigProvider,
-    contracts::{
-        DatabaseCapability, Module, OpenApiRegistry, RestApiCapability, RunnableCapability,
-    },
+    contracts::{Module, OpenApiRegistry, RestApiCapability, RunnableCapability},
     registry::{ModuleRegistry, RegistryBuilder},
     runtime::{DbOptions, RunOptions, ShutdownOptions, run},
 };
+
+#[cfg(feature = "db")]
+use modkit::contracts::DatabaseCapability;
 
 // Test tracking infrastructure
 #[allow(dead_code)]
@@ -154,6 +154,7 @@ impl Module for TestModule {
     }
 }
 
+#[cfg(feature = "db")]
 impl DatabaseCapability for TestModule {
     fn migrations(&self) -> Vec<Box<dyn sea_orm_migration::MigrationTrait>> {
         self.calls
@@ -168,13 +169,16 @@ impl DatabaseCapability for TestModule {
     }
 }
 
+#[cfg(feature = "db")]
 struct FailingMigration;
+#[cfg(feature = "db")]
 impl sea_orm_migration::MigrationName for FailingMigration {
     #[allow(clippy::unnecessary_literal_bound)]
     fn name(&self) -> &str {
         "m000_fail"
     }
 }
+#[cfg(feature = "db")]
 #[async_trait::async_trait]
 impl sea_orm_migration::MigrationTrait for FailingMigration {
     async fn up(
@@ -247,6 +251,7 @@ fn create_test_registry(modules: Vec<TestModule>) -> anyhow::Result<ModuleRegist
         let module = Arc::new(module);
 
         builder.register_core_with_meta(module_name_str, &[], module.clone() as Arc<dyn Module>);
+        #[cfg(feature = "db")]
         builder.register_db_with_meta(
             module_name_str,
             module.clone() as Arc<dyn DatabaseCapability>,
@@ -265,6 +270,7 @@ fn create_test_registry(modules: Vec<TestModule>) -> anyhow::Result<ModuleRegist
 }
 
 // Helper function to create a mock DbManager for testing
+#[cfg(feature = "db")]
 fn create_mock_db_manager() -> Arc<modkit_db::DbManager> {
     use figment::{Figment, providers::Serialized};
 
@@ -285,6 +291,7 @@ fn create_mock_db_manager() -> Arc<modkit_db::DbManager> {
     Arc::new(modkit_db::DbManager::from_figment(figment, home_dir).unwrap())
 }
 
+#[cfg(feature = "db")]
 #[tokio::test]
 async fn test_db_phase_failure_stops_lifecycle() {
     use modkit::runtime::HostRuntime;
@@ -383,6 +390,7 @@ async fn test_db_options_none() {
     assert!(result.is_ok());
 }
 
+#[cfg(feature = "db")]
 #[tokio::test]
 async fn test_db_options_manager() {
     let cancel = CancellationToken::new();
@@ -547,6 +555,7 @@ fn test_run_options_construction() {
     // Test that we can construct RunOptions with all variants
     match opts.db {
         DbOptions::None => {}
+        #[cfg(feature = "db")]
         DbOptions::Manager(_) => panic!("Expected DbOptions::None"),
     }
 
