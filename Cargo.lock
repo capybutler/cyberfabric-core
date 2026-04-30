@@ -1333,7 +1333,7 @@ dependencies = [
 
 [[package]]
 name = "cf-api-gateway"
-version = "0.2.2"
+version = "0.2.3"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1375,7 +1375,7 @@ dependencies = [
 
 [[package]]
 name = "cf-authn-resolver"
-version = "0.2.11"
+version = "0.2.12"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1395,7 +1395,7 @@ dependencies = [
 
 [[package]]
 name = "cf-authn-resolver-sdk"
-version = "0.3.11"
+version = "0.3.12"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1412,7 +1412,7 @@ dependencies = [
 
 [[package]]
 name = "cf-authz-resolver"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1432,7 +1432,7 @@ dependencies = [
 
 [[package]]
 name = "cf-authz-resolver-sdk"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1451,7 +1451,7 @@ dependencies = [
 
 [[package]]
 name = "cf-credstore"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1472,7 +1472,7 @@ dependencies = [
 
 [[package]]
 name = "cf-credstore-sdk"
-version = "0.1.19"
+version = "0.1.20"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1490,7 +1490,7 @@ dependencies = [
 
 [[package]]
 name = "cf-file-parser"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1518,7 +1518,7 @@ dependencies = [
 
 [[package]]
 name = "cf-grpc-hub"
-version = "0.2.1"
+version = "0.2.2"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1542,7 +1542,7 @@ dependencies = [
 
 [[package]]
 name = "cf-mini-chat"
-version = "0.1.26"
+version = "0.1.27"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1592,7 +1592,7 @@ dependencies = [
 
 [[package]]
 name = "cf-mini-chat-sdk"
-version = "0.10.1"
+version = "0.10.2"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1611,7 +1611,7 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit"
-version = "0.6.5"
+version = "0.6.6"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1972,7 +1972,7 @@ dependencies = [
 
 [[package]]
 name = "cf-module-orchestrator"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1995,7 +1995,7 @@ dependencies = [
 
 [[package]]
 name = "cf-nodes-registry"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2025,7 +2025,7 @@ dependencies = [
 
 [[package]]
 name = "cf-oagw"
-version = "0.2.20"
+version = "0.2.21"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2391,7 +2391,7 @@ dependencies = [
 
 [[package]]
 name = "cf-tenant-resolver-sdk"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "async-trait",
  "cf-modkit",
