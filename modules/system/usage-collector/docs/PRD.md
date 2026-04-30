@@ -360,7 +360,7 @@ The system **MUST** support pluggable storage backends. Each plugin provides per
 
 #### Aggregated Usage Query
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-query-aggregation`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-fr-query-aggregation`
 
 The system **MUST** provide an API for querying aggregated usage data. Queries **MUST** support:
 - Filtering by tenant (mandatory, derived from SecurityContext), time range (mandatory), and optionally by usage type, subject (subject ID and subject type), resource (resource ID and resource type), and source
@@ -374,7 +374,7 @@ The system **MUST** authorize each query via the platform PDP. The PDP decision 
 
 #### Raw Usage Query
 
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-fr-query-raw`
+- [x] `p2` - **ID**: `cpt-cf-usage-collector-fr-query-raw`
 
 The system **MUST** provide an API for querying raw usage records with cursor-based pagination. Queries **MUST** support filtering by tenant (mandatory, derived from SecurityContext), time range (mandatory), and optionally by usage type, subject (subject ID and subject type), and resource (resource ID and resource type).
 
@@ -545,7 +545,7 @@ The system **MUST** complete usage record ingestion within 200ms at p95 under no
 
 #### Workload Isolation
 
-- [ ] `p2` - **ID**: `cpt-cf-usage-collector-nfr-workload-isolation`
+- [x] `p2` - **ID**: `cpt-cf-usage-collector-nfr-workload-isolation`
 
 The system **MUST** ensure that retention enforcement jobs and aggregation query workloads do not degrade ingestion latency. These workloads **MUST** be isolated from the ingestion path such that concurrent execution maintains ingestion p95 latency within the `cpt-cf-usage-collector-nfr-ingestion-latency` threshold.
 

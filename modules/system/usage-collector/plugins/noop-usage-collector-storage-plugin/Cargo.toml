@@ -43,6 +43,9 @@ uuid = { workspace = true }
 tracing = { workspace = true }
 
 [dev-dependencies]
+# ModKit dependencies
+modkit-security = { workspace = true }
+
 # Data structures
 chrono = { workspace = true }
 

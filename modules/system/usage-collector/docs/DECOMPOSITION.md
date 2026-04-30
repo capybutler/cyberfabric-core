@@ -8,7 +8,7 @@
 - [2. Entries](#2-entries)
   - [2.1 Core SDK, Emitter & In-Process Ingest ⏳ HIGH](#21-core-sdk-emitter--in-process-ingest--high)
   - [2.2 REST Client & Remote Ingest Delivery ⏳ HIGH](#22-rest-client--remote-ingest-delivery--high)
-  - [2.3 Usage Query API ⏳ HIGH](#23-usage-query-api--high)
+  - [2.3 Usage Query API ✅ HIGH](#23-usage-query-api--high)
   - [2.4 Production Storage Plugin ⏳ HIGH](#24-production-storage-plugin--high)
   - [2.5 Usage Type System ⏳ HIGH](#25-usage-type-system--high)
   - [2.6 Emission Rate Limiting ⏳ HIGH](#26-emission-rate-limiting--high)
@@ -191,9 +191,10 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 ---
 
-### 2.3 [Usage Query API](features/query-api/) ⏳ HIGH
+### 2.3 [Usage Query API](features/query-api/) ✅ HIGH
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-feature-query-api`
+<!-- STATUS: IMPLEMENTED — all p1 and p2 DoD items verified and implemented. -->
 
 - **Type**: REST API Layer
 
@@ -202,7 +203,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 - **Depends On**: `cpt-cf-usage-collector-feature-sdk-and-ingest-core`
 
 - **Scope**:
-  - `usage-collector-sdk` additions: `AggregationQuery`, `AggregationResult`, `RawQuery`, `PagedResult` types; `query_aggregated` and `query_raw` operations on `UsageCollectorPluginClientV1`
+  - `usage-collector-sdk` additions: `AggregationQuery`, `AggregationResult`, `RawQuery` types; `query_aggregated` and `query_raw` operations on `UsageCollectorPluginClientV1`; pagination uses `Page<T>` and `CursorV1` from `modkit-odata`
   - `usage-collector` gateway: `GET /usage-collector/v1/aggregated` handler (tenant from SecurityContext, PDP authorization + constraint application, delegation to plugin), `GET /usage-collector/v1/raw` handler (same authorization pattern, cursor-based pagination)
   - Plugin trait query operations: `query_aggregated` (aggregation functions SUM/COUNT/MIN/MAX/AVG, optional filters, GROUP BY dimensions pushed down to storage engine), `query_raw` (tenant-scoped, optional filters, cursor pagination)
 
@@ -213,24 +214,31 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Requirements Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-fr-query-aggregation`
-  - [ ] `p2` - `cpt-cf-usage-collector-fr-query-raw`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-workload-isolation`
+  - [x] `p1` - `cpt-cf-usage-collector-fr-query-aggregation`
+  - [x] `p2` - `cpt-cf-usage-collector-fr-query-raw`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-workload-isolation`
 
 - **Design Principles Covered**:
 
   - [ ] `p1` - `cpt-cf-usage-collector-principle-fail-closed`
   - [ ] `p1` - `cpt-cf-usage-collector-principle-tenant-from-ctx`
+  - [ ] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
 
 - **Design Constraints Covered**:
 
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-security-context`
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-no-business-logic`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-or-of-ands-preservation`
 
 - **Domain Model Entities**:
   - `AggregationQuery`
   - `AggregationResult`
   - `RawQuery`
+  - `Page<T>` (from `modkit-odata`)
+  - `CursorV1` (from `modkit-odata`)
+  - `AggregationFn`
+  - `BucketSize`
+  - `GroupByDimension`
 
 - **Design Components**:
 

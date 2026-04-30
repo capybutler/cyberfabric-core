@@ -29,5 +29,11 @@ pub mod plugin_api;
 pub use api::UsageCollectorClientV1;
 pub use error::UsageCollectorError;
 pub use gts::UsageCollectorStoragePluginSpecV1;
-pub use models::{AllowedMetric, ModuleConfig, UsageKind, UsageRecord};
+pub use models::{
+    AggregationFn, AggregationQuery, AggregationResult, AllowedMetric, BucketSize,
+    GroupByDimension, ModuleConfig, RawQuery, UsageKind, UsageRecord,
+};
+// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6
+pub use modkit_odata::{CursorV1, Page, PageInfo};
+// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6
 pub use plugin_api::UsageCollectorPluginClientV1;

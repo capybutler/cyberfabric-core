@@ -2,15 +2,29 @@
 
 use std::sync::Arc;
 
-use axum::extract::Path;
+use authz_resolver_sdk::AuthZResolverClient;
+use axum::extract::{Path, Query};
 use axum::{Extension, Json};
+use chrono::{DateTime, Utc};
 use http::StatusCode;
 use modkit::api::problem::{Problem, internal_error};
 use modkit_security::SecurityContext;
-use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
+use usage_collector_sdk::models::{AggregationQuery, GroupByDimension, RawQuery};
+use usage_collector_sdk::{
+    CursorV1, Page, UsageCollectorClientV1, UsageCollectorError, UsageCollectorPluginClientV1,
+    UsageRecord,
+};
 use usage_emitter::{UsageEmitterError, UsageEmitterV1};
 
-use super::dto::{AllowedMetricResponse, CreateUsageRecordRequest, ModuleConfigResponse};
+use crate::config::{
+    DEFAULT_PAGE_SIZE, MAX_AGG_ROWS, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE,
+};
+use crate::domain::authz::{USAGE_RECORD_READ, actions, authorize_and_compile_scope};
+
+use super::dto::{
+    AggregatedQueryParams, AggregationResultDto, AllowedMetricResponse, CreateUsageRecordRequest,
+    ModuleConfigResponse, RawQueryParams,
+};
 
 /// Handler for `POST /usage-collector/v1/records`.
 ///
@@ -184,6 +198,350 @@ pub async fn handle_get_module_config(
 
     Ok(Json(response))
     // @cpt-end:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-5
+}
+
+/// Handler for `GET /usage-collector/v1/aggregated`.
+///
+/// # Errors
+/// Returns a [`Problem`] on authorization failure, validation errors, or plugin call failure.
+// @cpt-flow:cpt-cf-usage-collector-flow-query-api-aggregated:p1
+pub async fn handle_query_aggregated(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(authz): Extension<Arc<dyn AuthZResolverClient>>,
+    Extension(plugin): Extension<Arc<dyn UsageCollectorPluginClientV1>>,
+    Query(params): Query<AggregatedQueryParams>,
+) -> Result<Json<Vec<AggregationResultDto>>, Problem> {
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-1
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-2
+    // tenant_id is derived from ctx; params must not contain tenant_id
+    // (enforced by DTO definition — no tenant_id field in AggregatedQueryParams)
+    let mut errors: Vec<String> = Vec::new();
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-2
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-1
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3a
+    if params.from >= params.to {
+        errors.push("time range must be strictly ascending (from must be before to)".to_owned());
+    }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3a
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3b
+    if let Ok(d) = params.to.signed_duration_since(params.from).to_std()
+        && d > MAX_QUERY_TIME_RANGE
+    {
+        errors.push("time range exceeds maximum allowed duration".to_owned());
+    }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3b
+
+    if params
+        .group_by
+        .iter()
+        .any(|d| matches!(d, GroupByDimension::TimeBucket(_)))
+        && params.bucket_size.is_none()
+    {
+        errors.push("bucket_size: required when group_by includes time_bucket".to_owned());
+    }
+
+    if let Some(s) = &params.usage_type
+        && s.len() > MAX_FILTER_STRING_LEN
+    {
+        errors.push(format!(
+            "usage_type: exceeds maximum length of {MAX_FILTER_STRING_LEN} bytes"
+        ));
+    }
+    if let Some(s) = &params.resource_type
+        && s.len() > MAX_FILTER_STRING_LEN
+    {
+        errors.push(format!(
+            "resource_type: exceeds maximum length of {MAX_FILTER_STRING_LEN} bytes"
+        ));
+    }
+    if let Some(s) = &params.subject_type
+        && s.len() > MAX_FILTER_STRING_LEN
+    {
+        errors.push(format!(
+            "subject_type: exceeds maximum length of {MAX_FILTER_STRING_LEN} bytes"
+        ));
+    }
+    if let Some(s) = &params.source
+        && s.len() > MAX_FILTER_STRING_LEN
+    {
+        errors.push(format!(
+            "source: exceeds maximum length of {MAX_FILTER_STRING_LEN} bytes"
+        ));
+    }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-4
+    if !errors.is_empty() {
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-4a
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "Validation error",
+            serde_json::json!({
+                "error": "validation failed",
+                "code": "VALIDATION_ERROR",
+                "details": errors,
+            })
+            .to_string(),
+        ));
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-4a
+    }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-4
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-5
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6
+    let Ok(scope) =
+        authorize_and_compile_scope(&ctx, Arc::clone(&authz), &USAGE_RECORD_READ, actions::LIST)
+            .await
+    else {
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6a
+        return Err(Problem::new(
+            StatusCode::FORBIDDEN,
+            "Forbidden",
+            r#"{"error":"forbidden"}"#.to_owned(),
+        ));
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6a
+    };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-5
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-7
+    let query = AggregationQuery {
+        scope,
+        time_range: (params.from, params.to),
+        function: params.fn_,
+        group_by: params.group_by,
+        bucket_size: params.bucket_size,
+        usage_type: params.usage_type,
+        resource_id: params.resource_id,
+        resource_type: params.resource_type,
+        subject_id: params.subject_id,
+        subject_type: params.subject_type,
+        source: params.source,
+        max_rows: MAX_AGG_ROWS,
+    };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-7
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8
+    let rows = match plugin.query_aggregated(query).await {
+        Ok(rows) => rows,
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8b
+        Err(UsageCollectorError::QueryResultTooLarge { .. }) => {
+            return Err(Problem::new(
+                StatusCode::BAD_REQUEST,
+                "Query too broad",
+                r#"{"error":"query too broad"}"#.to_owned(),
+            ));
+        }
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8b
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8c
+        Err(e) => {
+            let correlation_id = ctx.subject_id().to_string();
+            tracing::error!(
+                correlation_id = %correlation_id,
+                error = %e,
+                "Storage plugin error during query_aggregated"
+            );
+            return Err(Problem::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Service unavailable",
+                serde_json::json!({
+                    "error": "service_unavailable",
+                    "correlation_id": correlation_id,
+                })
+                .to_string(),
+            ));
+        } // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8c
+    };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-9
+    let response: Vec<AggregationResultDto> =
+        rows.into_iter().map(AggregationResultDto::from).collect();
+    Ok(Json(response))
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-9
+}
+
+/// Handler for `GET /usage-collector/v1/raw`.
+///
+/// # Errors
+/// Returns a [`Problem`] on authorization failure, validation errors, or plugin call failure.
+// @cpt-flow:cpt-cf-usage-collector-flow-query-api-raw:p2
+pub async fn handle_query_raw(
+    Extension(ctx): Extension<SecurityContext>,
+    Extension(authz): Extension<Arc<dyn AuthZResolverClient>>,
+    Extension(plugin): Extension<Arc<dyn UsageCollectorPluginClientV1>>,
+    Query(params): Query<RawQueryParams>,
+) -> Result<Json<Page<UsageRecord>>, Problem> {
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-1
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-2
+    // tenant_id is derived from ctx; params must not contain tenant_id
+    // (enforced by DTO definition — no tenant_id field in RawQueryParams)
+    let mut errors: Vec<String> = Vec::new();
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-2
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-1
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3a
+    if params.from >= params.to {
+        errors.push("time range must be strictly ascending (from must be before to)".to_owned());
+    }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3a
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3b
+    if let Ok(d) = params.to.signed_duration_since(params.from).to_std()
+        && d > MAX_QUERY_TIME_RANGE
+    {
+        errors.push("time range exceeds maximum allowed duration".to_owned());
+    }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3b
+
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-0
+    let page_size = match params.page_size {
+        None => DEFAULT_PAGE_SIZE,
+        Some(0) => {
+            errors.push("page_size: must be at least 1".to_owned());
+            DEFAULT_PAGE_SIZE
+        }
+        Some(ps) if ps > MAX_PAGE_SIZE => {
+            errors.push(format!("page_size: must not exceed {MAX_PAGE_SIZE}"));
+            DEFAULT_PAGE_SIZE
+        }
+        Some(ps) => ps,
+    };
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-0
+
+    if let Some(s) = &params.usage_type
+        && s.len() > MAX_FILTER_STRING_LEN
+    {
+        errors.push(format!(
+            "usage_type: exceeds maximum length of {MAX_FILTER_STRING_LEN} bytes"
+        ));
+    }
+    if let Some(s) = &params.resource_type
+        && s.len() > MAX_FILTER_STRING_LEN
+    {
+        errors.push(format!(
+            "resource_type: exceeds maximum length of {MAX_FILTER_STRING_LEN} bytes"
+        ));
+    }
+    if let Some(s) = &params.subject_type
+        && s.len() > MAX_FILTER_STRING_LEN
+    {
+        errors.push(format!(
+            "subject_type: exceeds maximum length of {MAX_FILTER_STRING_LEN} bytes"
+        ));
+    }
+
+    let decoded_cursor = params.cursor.as_deref().and_then(|cursor_str| {
+        decode_and_validate_cursor(cursor_str, params.from, params.to, &mut errors)
+    });
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4
+    if !errors.is_empty() {
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4a
+        return Err(Problem::new(
+            StatusCode::BAD_REQUEST,
+            "Validation error",
+            serde_json::json!({
+                "error": "validation failed",
+                "code": "VALIDATION_ERROR",
+                "details": errors,
+            })
+            .to_string(),
+        ));
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4a
+    }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-5
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6
+    let Ok(scope) =
+        authorize_and_compile_scope(&ctx, Arc::clone(&authz), &USAGE_RECORD_READ, actions::LIST)
+            .await
+    else {
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6a
+        return Err(Problem::new(
+            StatusCode::FORBIDDEN,
+            "Forbidden",
+            r#"{"error":"forbidden"}"#.to_owned(),
+        ));
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6a
+    };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-5
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-7
+    let query = RawQuery {
+        scope,
+        time_range: (params.from, params.to),
+        cursor: decoded_cursor,
+        page_size,
+        usage_type: params.usage_type,
+        resource_id: params.resource_id,
+        resource_type: params.resource_type,
+        subject_type: params.subject_type,
+        subject_id: params.subject_id,
+    };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-7
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8
+    let paged = match plugin.query_raw(query).await {
+        Ok(p) => p,
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8b
+        Err(e) => {
+            let correlation_id = ctx.subject_id().to_string();
+            tracing::error!(
+                correlation_id = %correlation_id,
+                error = %e,
+                "Storage plugin error during query_raw"
+            );
+            return Err(Problem::new(
+                StatusCode::SERVICE_UNAVAILABLE,
+                "Service unavailable",
+                serde_json::json!({
+                    "error": "service_unavailable",
+                    "correlation_id": correlation_id,
+                })
+                .to_string(),
+            ));
+        } // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8b
+    };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-9
+    Ok(Json(paged))
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-9
+}
+
+fn decode_and_validate_cursor(
+    cursor_str: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    errors: &mut Vec<String>,
+) -> Option<CursorV1> {
+    let Ok(cursor) = CursorV1::decode(cursor_str) else {
+        errors.push("cursor: malformed cursor".to_owned());
+        return None;
+    };
+    if cursor.k.len() < 2 {
+        errors.push("cursor: malformed cursor".to_owned());
+        return None;
+    }
+    let ts_str = cursor.k[0].as_str();
+    let Ok(ts) = DateTime::parse_from_rfc3339(ts_str) else {
+        errors.push("cursor: malformed cursor".to_owned());
+        return None;
+    };
+    let ts_utc = ts.with_timezone(&Utc);
+    if ts_utc < from || ts_utc > to {
+        errors.push("cursor: timestamp is outside the requested [from, to] range".to_owned());
+        return None;
+    }
+    Some(cursor)
 }
 
 fn emitter_error_to_problem(e: UsageEmitterError) -> Problem {

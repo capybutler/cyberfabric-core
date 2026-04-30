@@ -49,6 +49,7 @@ anyhow = { workspace = true }
 thiserror = { workspace = true }
 
 # Serialization
+base64 = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 
@@ -64,6 +65,10 @@ types-registry-sdk = { workspace = true, features = ["test-util"] }
 
 # ModKit dependencies
 modkit-db = { workspace = true, features = ["sqlite"] }
+modkit-odata = { workspace = true }
 
 # HTTP testing
 tower = { workspace = true }
+
+# Async runtime
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }

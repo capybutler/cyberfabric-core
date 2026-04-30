@@ -2,14 +2,15 @@
 
 use std::sync::Arc;
 
+use authz_resolver_sdk::AuthZResolverClient;
 use axum::{Extension, Router};
 
 use modkit::api::operation_builder::LicenseFeature;
 use modkit::api::{OpenApiRegistry, OperationBuilder};
-use usage_collector_sdk::UsageCollectorClientV1;
+use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorPluginClientV1};
 use usage_emitter::UsageEmitterV1;
 
-use super::dto::{CreateUsageRecordRequest, ModuleConfigResponse};
+use super::dto::{AggregationResultDto, CreateUsageRecordRequest, ModuleConfigResponse};
 use super::handlers;
 
 const API_TAG: &str = "Usage Collector";
@@ -30,6 +31,8 @@ pub fn register_routes(
     openapi: &dyn OpenApiRegistry,
     emitter: Arc<dyn UsageEmitterV1>,
     collector: Arc<dyn UsageCollectorClientV1>,
+    authz_client: Arc<dyn AuthZResolverClient>,
+    plugin_client: Arc<dyn UsageCollectorPluginClientV1>,
 ) -> Router {
     let router = OperationBuilder::post("/usage-collector/v1/records")
         .operation_id("usage_collector.create_usage_record")
@@ -69,5 +72,47 @@ pub fn register_routes(
         .error_500(openapi)
         .register(router, openapi);
 
-    router.layer(Extension(emitter)).layer(Extension(collector))
+    let router = OperationBuilder::get("/usage-collector/v1/aggregated")
+        .operation_id("usage_collector.query_aggregated")
+        .summary("Query aggregated usage data")
+        .description(
+            "Returns aggregated usage statistics for the authenticated tenant, \
+             authorized via the platform PDP.",
+        )
+        .tag(API_TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(handlers::handle_query_aggregated)
+        .json_response_with_schema::<Vec<AggregationResultDto>>(
+            openapi,
+            http::StatusCode::OK,
+            "Aggregated usage data",
+        )
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    let router = OperationBuilder::get("/usage-collector/v1/raw")
+        .operation_id("usage_collector.query_raw")
+        .summary("Query raw usage records")
+        .description(
+            "Returns a paginated page of raw usage records for the authenticated tenant, \
+             authorized via the platform PDP. Null next_cursor in page_info signals the final page.",
+        )
+        .tag(API_TAG)
+        .authenticated()
+        .require_license_features::<License>([])
+        .handler(handlers::handle_query_raw)
+        .json_response(http::StatusCode::OK, "Paged raw usage records")
+        .error_400(openapi)
+        .error_403(openapi)
+        .error_500(openapi)
+        .register(router, openapi);
+
+    router
+        .layer(Extension(emitter))
+        .layer(Extension(collector))
+        .layer(Extension(authz_client))
+        .layer(Extension(plugin_client))
 }

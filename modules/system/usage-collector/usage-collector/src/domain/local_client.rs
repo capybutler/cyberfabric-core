@@ -15,8 +15,9 @@ use types_registry_sdk::{InstanceQuery, TypesRegistryClient};
 use usage_collector_sdk::AllowedMetric;
 use usage_collector_sdk::ModuleConfig;
 use usage_collector_sdk::{
-    UsageCollectorClientV1, UsageCollectorError, UsageCollectorPluginClientV1,
-    UsageCollectorStoragePluginSpecV1, UsageRecord,
+    AggregationQuery, AggregationResult, Page, RawQuery, UsageCollectorClientV1,
+    UsageCollectorError, UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1,
+    UsageRecord,
 };
 
 use crate::config::UsageCollectorConfig;
@@ -347,6 +348,111 @@ impl UsageCollectorClientV1 for UsageCollectorLocalClient {
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-get-module-config:p2:inst-cfg-p-4
         Ok(ModuleConfig { allowed_metrics })
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-get-module-config:p2:inst-cfg-p-4
+    }
+}
+
+/// Creates a [`UsageCollectorPluginClientV1`] proxy backed by this local client.
+///
+/// The returned proxy delegates all plugin operations to the resolved storage plugin
+/// via `get_plugin()`. Use this to obtain a `Arc<dyn UsageCollectorPluginClientV1>`
+/// for injection into query handlers without adding method-name conflicts with the
+/// `UsageCollectorClientV1` trait impl.
+impl UsageCollectorLocalClient {
+    pub(crate) fn as_plugin_client(local: Arc<Self>) -> Arc<dyn UsageCollectorPluginClientV1> {
+        Arc::new(LocalPluginProxy { inner: local })
+    }
+}
+
+/// Records a circuit breaker success or failure based on the result.
+///
+/// Only `Unavailable` errors count as failures; permanent errors (e.g. `Internal`,
+/// `AuthorizationFailed`, `QueryResultTooLarge`) do not trip the circuit because they
+/// indicate caller or schema problems rather than a temporarily unreachable backend.
+async fn record_circuit_breaker_outcome<T>(
+    circuit_breaker: &Mutex<CircuitBreaker>,
+    result: &Result<T, UsageCollectorError>,
+) {
+    match result {
+        Ok(_) => circuit_breaker.lock().await.record_success(),
+        Err(UsageCollectorError::Unavailable { .. }) => {
+            circuit_breaker.lock().await.record_failure();
+        }
+        Err(_) => {}
+    }
+}
+
+/// Thin proxy that implements [`UsageCollectorPluginClientV1`] by delegating to the
+/// resolved plugin instance via [`UsageCollectorLocalClient::get_plugin()`].
+#[domain_model]
+struct LocalPluginProxy {
+    inner: Arc<UsageCollectorLocalClient>,
+}
+
+#[async_trait]
+impl UsageCollectorPluginClientV1 for LocalPluginProxy {
+    async fn create_usage_record(&self, record: UsageRecord) -> Result<(), UsageCollectorError> {
+        let is_open = self.inner.circuit_breaker.lock().await.is_open();
+        if is_open {
+            return Err(UsageCollectorError::circuit_open());
+        }
+        let plugin = self.inner.get_plugin().await?;
+        let result = match timeout(
+            self.inner.config.plugin_timeout,
+            plugin.create_usage_record(record),
+        )
+        .await
+        {
+            Err(_elapsed) => {
+                self.inner.circuit_breaker.lock().await.record_failure();
+                return Err(UsageCollectorError::plugin_timeout());
+            }
+            Ok(r) => r,
+        };
+        record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
+        result
+    }
+
+    async fn query_aggregated(
+        &self,
+        query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        let is_open = self.inner.circuit_breaker.lock().await.is_open();
+        if is_open {
+            return Err(UsageCollectorError::circuit_open());
+        }
+        let plugin = self.inner.get_plugin().await?;
+        let result = match timeout(
+            self.inner.config.plugin_timeout,
+            plugin.query_aggregated(query),
+        )
+        .await
+        {
+            Err(_elapsed) => {
+                self.inner.circuit_breaker.lock().await.record_failure();
+                return Err(UsageCollectorError::plugin_timeout());
+            }
+            Ok(r) => r,
+        };
+        record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
+        result
+    }
+
+    async fn query_raw(&self, query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        let is_open = self.inner.circuit_breaker.lock().await.is_open();
+        if is_open {
+            return Err(UsageCollectorError::circuit_open());
+        }
+        let plugin = self.inner.get_plugin().await?;
+        let result = match timeout(self.inner.config.plugin_timeout, plugin.query_raw(query)).await
+        {
+            Err(_elapsed) => {
+                self.inner.circuit_breaker.lock().await.record_failure();
+                return Err(UsageCollectorError::plugin_timeout());
+            }
+            Ok(r) => r,
+        };
+        record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
+        result
     }
 }
 

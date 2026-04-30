@@ -10,15 +10,20 @@ use authz_resolver_sdk::models::{
 use authz_resolver_sdk::{AuthZResolverClient, AuthZResolverError, DenyReason};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
+use chrono::Utc;
 use modkit_db::migration_runner::run_migrations_for_testing;
 use modkit_db::outbox::outbox_migrations;
 use modkit_db::{ConnectOpts, connect_db};
+use modkit_odata::SortDir;
 use modkit_security::SecurityContext;
 use modkit_security::access_scope::pep_properties;
-use usage_collector::api::rest::handlers::{handle_create_usage_record, handle_get_module_config};
+use usage_collector::api::rest::handlers::{
+    handle_create_usage_record, handle_get_module_config, handle_query_aggregated, handle_query_raw,
+};
 use usage_collector_sdk::{
-    AllowedMetric, ModuleConfig, UsageCollectorClientV1, UsageCollectorError,
-    UsageCollectorPluginClientV1, UsageKind, UsageRecord,
+    AggregationQuery, AggregationResult, AllowedMetric, CursorV1, ModuleConfig, Page, PageInfo,
+    RawQuery, UsageCollectorClientV1, UsageCollectorError, UsageCollectorPluginClientV1, UsageKind,
+    UsageRecord,
 };
 use usage_emitter::{ScopedUsageEmitter, UsageEmitter, UsageEmitterConfig, UsageEmitterV1};
 use uuid::Uuid;
@@ -38,6 +43,7 @@ impl MockAuthZResolverClient {
         }
     }
 
+    #[allow(dead_code)]
     pub fn deny() -> Self {
         Self {
             allow: false,
@@ -116,11 +122,33 @@ impl UsageCollectorClientV1 for NotFoundCollector {
 
 // ── Plugin mock ───────────────────────────────────────────────────────────────
 
-pub struct MockUsageCollectorPluginClientV1;
+pub struct MockUsageCollectorPluginClientV1 {
+    too_large: bool,
+    with_cursor: bool,
+}
 
 impl MockUsageCollectorPluginClientV1 {
     pub fn new() -> Self {
-        Self
+        Self {
+            too_large: false,
+            with_cursor: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn too_large() -> Self {
+        Self {
+            too_large: true,
+            with_cursor: false,
+        }
+    }
+
+    #[allow(dead_code)]
+    pub fn with_raw_cursor() -> Self {
+        Self {
+            too_large: false,
+            with_cursor: true,
+        }
     }
 }
 
@@ -128,6 +156,54 @@ impl MockUsageCollectorPluginClientV1 {
 impl UsageCollectorPluginClientV1 for MockUsageCollectorPluginClientV1 {
     async fn create_usage_record(&self, _: UsageRecord) -> Result<(), UsageCollectorError> {
         Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        if self.too_large {
+            return Err(UsageCollectorError::query_result_too_large(10_001, 10_000));
+        }
+        Ok(vec![])
+    }
+
+    async fn query_raw(&self, _: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        if self.with_cursor {
+            let record = UsageRecord {
+                module: "test-module".to_owned(),
+                tenant_id: Uuid::new_v4(),
+                metric: "test.gauge".to_owned(),
+                kind: UsageKind::Gauge,
+                value: 1.0,
+                resource_id: Uuid::new_v4(),
+                resource_type: "test.resource".to_owned(),
+                subject_id: None,
+                subject_type: None,
+                idempotency_key: Uuid::new_v4().to_string(),
+                timestamp: Utc::now(),
+                metadata: None,
+            };
+            let cursor = CursorV1 {
+                k: vec![Utc::now().to_rfc3339(), Uuid::new_v4().to_string()],
+                o: SortDir::Asc,
+                s: "+timestamp,+id".to_owned(),
+                f: None,
+                d: "fwd".to_owned(),
+            };
+            let next_cursor = cursor
+                .encode()
+                .expect("CursorV1 encode is infallible for valid data");
+            return Ok(Page::new(
+                vec![record],
+                PageInfo {
+                    next_cursor: Some(next_cursor),
+                    prev_cursor: None,
+                    limit: 100,
+                },
+            ));
+        }
+        Ok(Page::empty(100))
     }
 }
 
@@ -211,6 +287,23 @@ impl AppHarness {
     }
 
     #[allow(dead_code)]
+    pub async fn with_plugin(plugin: Arc<dyn UsageCollectorPluginClientV1>) -> Self {
+        let emitter =
+            Arc::new(MockUsageEmitterV1::with_allow_authz().await) as Arc<dyn UsageEmitterV1>;
+        let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(MockUsageCollectorClientV1 {
+            config: ModuleConfig {
+                allowed_metrics: vec![AllowedMetric {
+                    name: "test.gauge".to_owned(),
+                    kind: UsageKind::Gauge,
+                }],
+            },
+        });
+        let authz: Arc<dyn AuthZResolverClient> =
+            Arc::new(MockAuthZResolverClient::allow(Uuid::new_v4()));
+        Self::build(emitter, collector, authz, plugin)
+    }
+
+    #[allow(dead_code)]
     pub fn with_emitter(emitter: Arc<dyn UsageEmitterV1>) -> Self {
         let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(MockUsageCollectorClientV1 {
             config: ModuleConfig {
@@ -276,6 +369,11 @@ impl AppHarness {
                 "/usage-collector/v1/modules/{module_name}/config",
                 get(handle_get_module_config),
             )
+            .route(
+                "/usage-collector/v1/aggregated",
+                get(handle_query_aggregated),
+            )
+            .route("/usage-collector/v1/raw", get(handle_query_raw))
             .layer(Extension(emitter))
             .layer(Extension(collector))
             .layer(Extension(authz))
@@ -283,4 +381,10 @@ impl AppHarness {
             .layer(Extension(ctx));
         Self { router }
     }
+}
+
+/// Percent-encode a `DateTime<Utc>` for use in URL query strings.
+#[allow(dead_code)]
+pub fn encode_dt(dt: chrono::DateTime<chrono::Utc>) -> String {
+    dt.to_rfc3339().replace('+', "%2B").replace(':', "%3A")
 }

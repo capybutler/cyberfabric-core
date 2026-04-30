@@ -3,22 +3,26 @@
 use std::sync::{Arc, Mutex};
 
 use async_trait::async_trait;
+use authz_resolver_sdk::constraints::{Constraint, InPredicate, Predicate};
 use authz_resolver_sdk::models::{
     EvaluationRequest, EvaluationResponse, EvaluationResponseContext,
 };
-use authz_resolver_sdk::{AuthZResolverClient, AuthZResolverError};
+use authz_resolver_sdk::{AuthZResolverClient, AuthZResolverError, DenyReason};
 use axum::Extension;
 use axum::Json;
-use axum::extract::Path;
+use axum::extract::{Path, Query};
 use chrono::Utc;
 use http::StatusCode;
 use modkit_db::migration_runner::run_migrations_for_testing;
 use modkit_db::outbox::outbox_migrations;
 use modkit_db::{ConnectOpts, connect_db};
+use modkit_odata::SortDir;
 use modkit_security::SecurityContext;
+use modkit_security::access_scope::pep_properties;
 use usage_collector_sdk::{
-    AllowedMetric, ModuleConfig, UsageCollectorClientV1, UsageCollectorError, UsageKind,
-    UsageRecord,
+    AggregationFn, AggregationQuery, AggregationResult, AllowedMetric, CursorV1, GroupByDimension,
+    ModuleConfig, Page, PageInfo, RawQuery, UsageCollectorClientV1, UsageCollectorError,
+    UsageCollectorPluginClientV1, UsageKind, UsageRecord,
 };
 use usage_emitter::{UsageEmitter, UsageEmitterError, UsageEmitterV1};
 use uuid::Uuid;
@@ -26,7 +30,12 @@ use uuid::Uuid;
 use super::emitter_error_to_problem;
 use super::handle_create_usage_record;
 use super::handle_get_module_config;
-use crate::api::rest::dto::CreateUsageRecordRequest;
+use super::handle_query_aggregated;
+use super::handle_query_raw;
+use crate::api::rest::dto::{AggregatedQueryParams, CreateUsageRecordRequest, RawQueryParams};
+use crate::config::{
+    DEFAULT_PAGE_SIZE, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE,
+};
 
 // ── emitter_error_to_problem ──────────────────────────────────────
 
@@ -576,5 +585,1206 @@ fn ingest_handler_subject_fields_absent_deserializes_to_none() {
     assert!(
         req.subject_type.is_none(),
         "subject_type must be None when absent from JSON"
+    );
+}
+
+// ── handle_query_aggregated ───────────────────────────────────────────────────
+
+/// Mock `AuthZ` that allows all requests with a single tenant constraint.
+struct AllowAuthZ {
+    tenant_id: Uuid,
+}
+
+#[async_trait]
+impl AuthZResolverClient for AllowAuthZ {
+    async fn evaluate(
+        &self,
+        _request: EvaluationRequest,
+    ) -> Result<EvaluationResponse, AuthZResolverError> {
+        Ok(EvaluationResponse {
+            decision: true,
+            context: EvaluationResponseContext {
+                constraints: vec![Constraint {
+                    predicates: vec![Predicate::In(InPredicate::new(
+                        pep_properties::OWNER_TENANT_ID,
+                        [self.tenant_id],
+                    ))],
+                }],
+                ..EvaluationResponseContext::default()
+            },
+        })
+    }
+}
+
+/// Mock `AuthZ` that denies all requests.
+struct DenyAuthZ;
+
+#[async_trait]
+impl AuthZResolverClient for DenyAuthZ {
+    async fn evaluate(
+        &self,
+        _request: EvaluationRequest,
+    ) -> Result<EvaluationResponse, AuthZResolverError> {
+        Ok(EvaluationResponse {
+            decision: false,
+            context: EvaluationResponseContext {
+                deny_reason: Some(DenyReason {
+                    error_code: "POLICY_DENIED".to_owned(),
+                    details: None,
+                }),
+                ..EvaluationResponseContext::default()
+            },
+        })
+    }
+}
+
+/// Mock `AuthZ` that returns a network/infrastructure error.
+struct NetworkErrorAuthZ;
+
+#[async_trait]
+impl AuthZResolverClient for NetworkErrorAuthZ {
+    async fn evaluate(
+        &self,
+        _request: EvaluationRequest,
+    ) -> Result<EvaluationResponse, AuthZResolverError> {
+        Err(AuthZResolverError::ServiceUnavailable(
+            "PDP unreachable".to_owned(),
+        ))
+    }
+}
+
+/// Mock plugin that returns an empty aggregation result.
+struct OkAggPlugin;
+
+#[async_trait]
+impl UsageCollectorPluginClientV1 for OkAggPlugin {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(&self, _query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(DEFAULT_PAGE_SIZE as u64))
+    }
+}
+
+/// Mock plugin that returns `QueryResultTooLarge`.
+struct TooLargePlugin;
+
+#[async_trait]
+impl UsageCollectorPluginClientV1 for TooLargePlugin {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Err(UsageCollectorError::query_result_too_large(10_001, 10_000))
+    }
+
+    async fn query_raw(&self, _query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(DEFAULT_PAGE_SIZE as u64))
+    }
+}
+
+/// Mock plugin that returns an internal storage error.
+struct InternalErrorPlugin;
+
+#[async_trait]
+impl UsageCollectorPluginClientV1 for InternalErrorPlugin {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Err(UsageCollectorError::internal("storage backend unavailable"))
+    }
+
+    async fn query_raw(&self, _query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(DEFAULT_PAGE_SIZE as u64))
+    }
+}
+
+fn test_ctx() -> SecurityContext {
+    SecurityContext::builder()
+        .subject_id(Uuid::new_v4())
+        .subject_tenant_id(Uuid::new_v4())
+        .build()
+        .expect("valid SecurityContext")
+}
+
+fn valid_params() -> AggregatedQueryParams {
+    let from = Utc::now() - chrono::Duration::hours(1);
+    let to = Utc::now();
+    AggregatedQueryParams {
+        fn_: AggregationFn::Sum,
+        from,
+        to,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        subject_id: None,
+        subject_type: None,
+        resource_id: None,
+        resource_type: None,
+        source: None,
+    }
+}
+
+/// TEST-FDESIGN-001 (inst-agg-9): PDP allows, plugin returns empty vec → 200 with empty array.
+#[tokio::test]
+async fn test_aggregated_200_empty_result() {
+    // scenario: inst-agg-9
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let result = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_params()),
+    )
+    .await;
+
+    let Json(body) = result.expect("handler should succeed");
+    assert!(
+        body.is_empty(),
+        "empty plugin result must yield empty array response"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-agg-3): absent `fn` parameter fails serde deserialization before handler.
+#[test]
+fn test_aggregated_400_missing_fn() {
+    // scenario: inst-agg-3 — fn is mandatory; deserialization fails when absent
+    let json = serde_json::json!({
+        "from": "2026-01-01T00:00:00Z",
+        "to": "2026-02-01T00:00:00Z",
+    });
+    let result = serde_json::from_value::<AggregatedQueryParams>(json);
+    assert!(
+        result.is_err(),
+        "missing fn must fail serde deserialization"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-agg-3): absent `from` parameter fails serde deserialization.
+#[test]
+fn test_aggregated_400_missing_from() {
+    // scenario: inst-agg-3 — from is mandatory; deserialization fails when absent
+    let json = serde_json::json!({
+        "fn": "sum",
+        "to": "2026-02-01T00:00:00Z",
+    });
+    let result = serde_json::from_value::<AggregatedQueryParams>(json);
+    assert!(
+        result.is_err(),
+        "missing from must fail serde deserialization"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-agg-3): absent `to` parameter fails serde deserialization.
+#[test]
+fn test_aggregated_400_missing_to() {
+    // scenario: inst-agg-3 — to is mandatory; deserialization fails when absent
+    let json = serde_json::json!({
+        "fn": "sum",
+        "from": "2026-01-01T00:00:00Z",
+    });
+    let result = serde_json::from_value::<AggregatedQueryParams>(json);
+    assert!(
+        result.is_err(),
+        "missing to must fail serde deserialization"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-agg-3a): from >= to returns 400 `VALIDATION_ERROR`.
+#[tokio::test]
+async fn test_aggregated_400_time_range_not_ascending() {
+    // scenario: inst-agg-3a
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let now = Utc::now();
+    let mut params = valid_params();
+    params.from = now;
+    params.to = now - chrono::Duration::hours(1); // to < from
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("from >= to must return error");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+    assert!(
+        detail["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap_or("").contains("strictly ascending")),
+        "validation detail must mention ascending time range"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-agg-3b): time range exceeds `MAX_QUERY_TIME_RANGE` → 400.
+#[tokio::test]
+async fn test_aggregated_400_time_range_too_wide() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let from = Utc::now() - chrono::Duration::hours(1);
+    let mut params = valid_params();
+    params.from = from;
+    // to = from + MAX_QUERY_TIME_RANGE + 1s — strictly exceeds the limit
+    params.to = from
+        + chrono::Duration::from_std(MAX_QUERY_TIME_RANGE).unwrap()
+        + chrono::Duration::seconds(1);
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("time range exceeding MAX_QUERY_TIME_RANGE must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+}
+
+/// TEST-FDESIGN-001 (inst-agg-3): `group_by` includes `time_bucket` but `bucket_size` absent → 400.
+#[tokio::test]
+async fn test_aggregated_400_bucket_size_absent_with_time_bucket() {
+    // scenario: inst-agg-3
+    use usage_collector_sdk::BucketSize;
+
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let mut params = valid_params();
+    params.group_by = vec![GroupByDimension::TimeBucket(BucketSize::Day)];
+    params.bucket_size = None; // required but absent
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("missing bucket_size with time_bucket must return error");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+    assert!(
+        detail["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap_or("").contains("bucket_size")),
+        "validation detail must mention bucket_size"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-agg-3): `usage_type` exceeding `MAX_FILTER_STRING_LEN` → 400.
+#[tokio::test]
+async fn test_aggregated_400_filter_string_too_long() {
+    // scenario: inst-agg-3
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let mut params = valid_params();
+    params.usage_type = Some("a".repeat(257)); // MAX_FILTER_STRING_LEN is 256
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("usage_type exceeding max length must return error");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+    assert!(
+        detail["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap_or("").contains("usage_type")),
+        "validation detail must mention usage_type"
+    );
+}
+
+/// TEST-FDESIGN-002 (inst-agg-6a): PDP returns Denied → 403 with generic body.
+#[tokio::test]
+async fn test_aggregated_403_pdp_deny() {
+    // scenario: inst-agg-6a
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(DenyAuthZ);
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_params()),
+    )
+    .await
+    .expect_err("PDP deny must return 403");
+
+    assert_eq!(err.status, StatusCode::FORBIDDEN);
+    assert_eq!(err.detail, r#"{"error":"forbidden"}"#);
+    // Must NOT contain PDP error details, constraint names, or policy names.
+    assert!(!err.detail.contains("POLICY_DENIED"));
+    assert!(!err.detail.contains("constraint"));
+    assert!(!err.detail.contains("policy"));
+}
+
+/// TEST-FDESIGN-002 (inst-authz-3b): PDP returns non-Denied error → 403 (fail-closed).
+#[tokio::test]
+async fn test_aggregated_403_pdp_non_denied_error() {
+    // scenario: inst-authz-3b
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(NetworkErrorAuthZ);
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_params()),
+    )
+    .await
+    .expect_err("PDP network error must return 403 (fail-closed)");
+
+    assert_eq!(err.status, StatusCode::FORBIDDEN);
+    assert_eq!(err.detail, r#"{"error":"forbidden"}"#);
+    // Must NOT contain PDP error details.
+    assert!(!err.detail.contains("PDP"));
+    assert!(!err.detail.contains("unreachable"));
+}
+
+/// TEST-FDESIGN-002 (inst-agg-8c): plugin returns internal error → 503 with `correlation_id`.
+#[tokio::test]
+async fn test_aggregated_503_plugin_error() {
+    // scenario: inst-agg-8c
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(InternalErrorPlugin);
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_params()),
+    )
+    .await
+    .expect_err("plugin internal error must return 503");
+
+    assert_eq!(err.status, StatusCode::SERVICE_UNAVAILABLE);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["error"], "service_unavailable");
+    let corr_id = detail["correlation_id"].as_str();
+    assert!(corr_id.is_some(), "503 body must include correlation_id");
+    assert!(
+        !corr_id.unwrap().is_empty(),
+        "correlation_id must not be empty"
+    );
+    // Must NOT contain plugin error details or stack traces.
+    assert!(!err.detail.contains("storage backend"));
+}
+
+/// TEST-FDESIGN-002 (inst-agg-8b): plugin returns `QueryResultTooLarge` → 400 'query too broad'.
+#[tokio::test]
+async fn test_aggregated_400_query_result_too_large() {
+    // scenario: inst-agg-8b
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(TooLargePlugin);
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_params()),
+    )
+    .await
+    .expect_err("QueryResultTooLarge must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    assert_eq!(err.detail, r#"{"error":"query too broad"}"#);
+}
+
+// ── handle_query_raw ──────────────────────────────────────────────────────────
+
+/// Mock plugin that returns a non-empty Page with a `next_cursor`.
+struct OkRawWithCursorPlugin;
+
+#[async_trait]
+impl UsageCollectorPluginClientV1 for OkRawWithCursorPlugin {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(&self, _query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        let record = UsageRecord {
+            module: "test-module".to_owned(),
+            tenant_id: Uuid::new_v4(),
+            metric: "test.gauge".to_owned(),
+            kind: UsageKind::Gauge,
+            value: 1.0,
+            resource_id: Uuid::new_v4(),
+            resource_type: "test.resource".to_owned(),
+            subject_id: None,
+            subject_type: None,
+            idempotency_key: Uuid::new_v4().to_string(),
+            timestamp: Utc::now(),
+            metadata: None,
+        };
+        let cursor = CursorV1 {
+            k: vec![Utc::now().to_rfc3339(), Uuid::new_v4().to_string()],
+            o: SortDir::Asc,
+            s: "+timestamp,+id".to_owned(),
+            f: None,
+            d: "fwd".to_owned(),
+        };
+        let next_cursor = cursor
+            .encode()
+            .expect("CursorV1 encode is infallible for valid data");
+        Ok(Page::new(
+            vec![record],
+            PageInfo {
+                next_cursor: Some(next_cursor),
+                prev_cursor: None,
+                limit: DEFAULT_PAGE_SIZE as u64,
+            },
+        ))
+    }
+}
+
+/// Mock plugin that returns an internal error from `query_raw`.
+struct RawErrorPlugin;
+
+#[async_trait]
+impl UsageCollectorPluginClientV1 for RawErrorPlugin {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(&self, _query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Err(UsageCollectorError::internal("storage backend unavailable"))
+    }
+}
+
+/// Mock plugin that captures the `page_size` field from the `RawQuery`.
+struct CapturingRawPlugin {
+    captured_page_size: Arc<std::sync::Mutex<Option<usize>>>,
+}
+
+#[async_trait]
+impl UsageCollectorPluginClientV1 for CapturingRawPlugin {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+        Ok(())
+    }
+
+    async fn query_aggregated(
+        &self,
+        _query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        Ok(vec![])
+    }
+
+    async fn query_raw(&self, query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        *self.captured_page_size.lock().unwrap() = Some(query.page_size);
+        Ok(Page::empty(DEFAULT_PAGE_SIZE as u64))
+    }
+}
+
+fn valid_raw_params() -> RawQueryParams {
+    let from = Utc::now() - chrono::Duration::hours(1);
+    let to = Utc::now();
+    RawQueryParams {
+        from,
+        to,
+        cursor: None,
+        page_size: None,
+        usage_type: None,
+        subject_id: None,
+        subject_type: None,
+        resource_id: None,
+        resource_type: None,
+    }
+}
+
+/// TEST-FDESIGN-001 (inst-raw-9): valid request → 200 with empty items and no `next_cursor`.
+#[tokio::test]
+async fn test_raw_200_empty_final_page() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let result = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_raw_params()),
+    )
+    .await;
+
+    let axum::Json(body) = result.expect("handler should succeed");
+    assert!(
+        body.items.is_empty(),
+        "empty plugin result must yield empty items"
+    );
+    assert!(
+        body.page_info.next_cursor.is_none(),
+        "absent next_cursor signals final page"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-raw-9): plugin returns items and cursor → 200 with `next_cursor` present.
+#[tokio::test]
+async fn test_raw_200_with_items_and_next_cursor() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkRawWithCursorPlugin);
+
+    let result = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_raw_params()),
+    )
+    .await;
+
+    let axum::Json(body) = result.expect("handler should succeed");
+    assert!(!body.items.is_empty(), "response must contain items");
+    let cursor_str = body
+        .page_info
+        .next_cursor
+        .expect("next_cursor must be present");
+    assert!(
+        !cursor_str.is_empty(),
+        "next_cursor must be a non-empty base64 string"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3): malformed cursor → 400 `VALIDATION_ERROR`.
+#[tokio::test]
+async fn test_raw_400_malformed_cursor() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let mut params = valid_raw_params();
+    params.cursor = Some("not-valid-base64!!!".to_owned());
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("malformed cursor must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+    assert!(
+        detail["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap_or("").contains("cursor")),
+        "validation details must mention cursor"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3): cursor timestamp outside [from, to] → 400 `VALIDATION_ERROR`.
+#[tokio::test]
+async fn test_raw_400_cursor_timestamp_out_of_range() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let from = Utc::now() - chrono::Duration::hours(2);
+    let to = Utc::now() - chrono::Duration::hours(1);
+    // cursor timestamp is after 'to' — outside [from, to]
+    let cursor_ts = Utc::now();
+    let cursor = CursorV1 {
+        k: vec![cursor_ts.to_rfc3339(), Uuid::new_v4().to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor
+        .encode()
+        .expect("CursorV1 encode is infallible for valid data");
+
+    let params = RawQueryParams {
+        from,
+        to,
+        cursor: Some(cursor_str),
+        page_size: None,
+        usage_type: None,
+        subject_id: None,
+        subject_type: None,
+        resource_id: None,
+        resource_type: None,
+    };
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("cursor outside [from, to] must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3): `page_size` = 0 → 400 `VALIDATION_ERROR`.
+#[tokio::test]
+async fn test_raw_400_page_size_zero() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let mut params = valid_raw_params();
+    params.page_size = Some(0);
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("page_size=0 must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+    assert!(
+        detail["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap_or("").contains("page_size")),
+        "validation details must mention page_size"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3): `page_size` > `MAX_PAGE_SIZE` → 400 `VALIDATION_ERROR`.
+#[tokio::test]
+async fn test_raw_400_page_size_too_large() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let mut params = valid_raw_params();
+    params.page_size = Some(MAX_PAGE_SIZE + 1);
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("page_size > MAX_PAGE_SIZE must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+    assert!(
+        detail["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap_or("").contains("page_size")),
+        "validation details must mention page_size"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3b): time range exceeds `MAX_QUERY_TIME_RANGE` → 400.
+#[tokio::test]
+async fn test_raw_400_time_range_too_wide() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let from = Utc::now() - chrono::Duration::hours(1);
+    let mut params = valid_raw_params();
+    params.from = from;
+    params.to = from
+        + chrono::Duration::from_std(MAX_QUERY_TIME_RANGE).unwrap()
+        + chrono::Duration::seconds(1);
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("time range exceeding MAX_QUERY_TIME_RANGE must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3): `page_size` = `MAX_PAGE_SIZE` (exact boundary) → 200.
+#[tokio::test]
+async fn test_raw_200_max_page_size() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let mut params = valid_raw_params();
+    params.page_size = Some(MAX_PAGE_SIZE); // exact boundary — must be accepted
+
+    let result = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "page_size = MAX_PAGE_SIZE must be accepted (validator uses >, not >=): {result:?}"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3): absent `page_size` → `DEFAULT_PAGE_SIZE` used in `RawQuery`.
+#[tokio::test]
+async fn test_raw_200_default_page_size() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let captured = Arc::new(std::sync::Mutex::new(None));
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(CapturingRawPlugin {
+        captured_page_size: Arc::clone(&captured),
+    });
+
+    let mut params = valid_raw_params();
+    params.page_size = None;
+
+    let result = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "absent page_size must not cause a validation error: {result:?}"
+    );
+    assert_eq!(
+        *captured.lock().unwrap(),
+        Some(DEFAULT_PAGE_SIZE),
+        "absent page_size must default to DEFAULT_PAGE_SIZE"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3): string filter field exceeding `MAX_FILTER_STRING_LEN` → 400.
+#[tokio::test]
+async fn test_raw_400_filter_string_too_long() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let mut params = valid_raw_params();
+    params.usage_type = Some("a".repeat(MAX_FILTER_STRING_LEN + 1));
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("oversized filter string must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+    assert!(
+        detail["details"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|d| d.as_str().unwrap_or("").contains("usage_type")),
+        "validation details must mention usage_type"
+    );
+}
+
+/// TEST-FDESIGN-002 (inst-raw-6a): PDP returns Denied → 403 with generic body.
+#[tokio::test]
+async fn test_raw_403_pdp_deny() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(DenyAuthZ);
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_raw_params()),
+    )
+    .await
+    .expect_err("PDP deny must return 403");
+
+    assert_eq!(err.status, StatusCode::FORBIDDEN);
+    assert_eq!(err.detail, r#"{"error":"forbidden"}"#);
+    assert!(!err.detail.contains("POLICY_DENIED"));
+}
+
+/// TEST-FDESIGN-002 (inst-authz-3b): PDP returns non-Denied error → 403 (fail-closed).
+#[tokio::test]
+async fn test_raw_403_pdp_non_denied_error() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(NetworkErrorAuthZ);
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_raw_params()),
+    )
+    .await
+    .expect_err("PDP network error must return 403 (fail-closed)");
+
+    assert_eq!(err.status, StatusCode::FORBIDDEN);
+    assert_eq!(err.detail, r#"{"error":"forbidden"}"#);
+    assert!(!err.detail.contains("unreachable"));
+}
+
+/// TEST-FDESIGN-002 (inst-raw-8b): plugin returns internal error → 503 with `correlation_id`.
+#[tokio::test]
+async fn test_raw_503_plugin_error() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(RawErrorPlugin);
+
+    let err = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(valid_raw_params()),
+    )
+    .await
+    .expect_err("plugin internal error must return 503");
+
+    assert_eq!(err.status, StatusCode::SERVICE_UNAVAILABLE);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["error"], "service_unavailable");
+    let corr_id = detail["correlation_id"].as_str();
+    assert!(corr_id.is_some(), "503 body must include correlation_id");
+    assert!(
+        !corr_id.unwrap().is_empty(),
+        "correlation_id must not be empty"
+    );
+    assert!(
+        !err.detail.contains("storage backend"),
+        "error details must not leak plugin errors"
+    );
+}
+
+/// `CursorV1` migration: cursor TTL check removed — cursor within [from, to] always succeeds.
+/// The bespoke cursor included an `issued_at` field for TTL validation; `CursorV1` has no such field.
+#[tokio::test]
+async fn test_raw_200_cursor_within_range_succeeds() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let now = Utc::now();
+    let cursor_ts = now - chrono::Duration::hours(1);
+    let from = cursor_ts - chrono::Duration::hours(1);
+    let to = now;
+    let cursor = CursorV1 {
+        k: vec![cursor_ts.to_rfc3339(), Uuid::new_v4().to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor
+        .encode()
+        .expect("CursorV1 encode is infallible for valid data");
+
+    let params = RawQueryParams {
+        from,
+        to,
+        cursor: Some(cursor_str),
+        page_size: None,
+        usage_type: None,
+        subject_id: None,
+        subject_type: None,
+        resource_id: None,
+        resource_type: None,
+    };
+
+    let result = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await;
+    assert!(
+        result.is_ok(),
+        "cursor within [from, to] must succeed with CursorV1: {result:?}"
+    );
+}
+
+/// `CursorV1` migration: cursor with an old data timestamp (48h ago) but within [from, to] succeeds.
+/// With `CursorV1` there is no TTL — only the data-position timestamp range check applies.
+#[tokio::test]
+async fn test_raw_200_cursor_not_expired_old_data() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let now = Utc::now();
+    // cursor_ts is 48 hours ago (old data record position); from extends to cover it
+    let cursor_ts = now - chrono::Duration::hours(48);
+    let from = cursor_ts - chrono::Duration::hours(1);
+    let to = now;
+    let cursor = CursorV1 {
+        k: vec![cursor_ts.to_rfc3339(), Uuid::new_v4().to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor
+        .encode()
+        .expect("CursorV1 encode is infallible for valid data");
+
+    let params = RawQueryParams {
+        from,
+        to,
+        cursor: Some(cursor_str),
+        page_size: None,
+        usage_type: None,
+        subject_id: None,
+        subject_type: None,
+        resource_id: None,
+        resource_type: None,
+    };
+
+    let result = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await;
+
+    assert!(
+        result.is_ok(),
+        "cursor with old data timestamp within [from, to] must succeed: {result:?}"
+    );
+}
+
+/// A structurally valid `CursorV1` with empty k vector must be rejected with 400.
+#[tokio::test]
+async fn test_raw_400_cursor_empty_k_vector() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> = Arc::new(AllowAuthZ {
+        tenant_id: Uuid::new_v4(),
+    });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let cursor = CursorV1 {
+        k: vec![],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor
+        .encode()
+        .expect("CursorV1 encode is infallible for valid data");
+
+    let now = Utc::now();
+    let params = RawQueryParams {
+        from: now - chrono::Duration::hours(1),
+        to: now,
+        cursor: Some(cursor_str),
+        page_size: None,
+        usage_type: None,
+        subject_id: None,
+        subject_type: None,
+        resource_id: None,
+        resource_type: None,
+    };
+
+    let result = handle_query_raw(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await;
+    assert!(
+        result.is_err(),
+        "cursor with empty k vector must be rejected"
+    );
+    let err = result.unwrap_err();
+    assert_eq!(
+        err.status,
+        StatusCode::BAD_REQUEST,
+        "cursor with empty k must return 400"
+    );
+}
+
+/// `CursorV1` encode/decode round-trip test.
+#[test]
+fn test_cursor_encode_decode_round_trip() {
+    let timestamp = Utc::now();
+    let id = Uuid::new_v4();
+    let cursor = CursorV1 {
+        k: vec![timestamp.to_rfc3339(), id.to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+
+    let encoded = cursor
+        .encode()
+        .expect("CursorV1 encode is infallible for valid data");
+    let decoded = CursorV1::decode(&encoded)
+        .expect("CursorV1 decode must succeed for freshly encoded cursor");
+
+    assert_eq!(
+        decoded.k[1],
+        id.to_string(),
+        "UUID must survive encode/decode round-trip"
+    );
+    assert_eq!(
+        decoded.k[0],
+        timestamp.to_rfc3339(),
+        "timestamp must survive encode/decode round-trip"
+    );
+    assert!(
+        matches!(decoded.o, SortDir::Asc),
+        "sort direction must survive round-trip"
+    );
+    assert_eq!(
+        decoded.s, "+timestamp,+id",
+        "sort spec must survive round-trip"
+    );
+    assert_eq!(
+        decoded.d, "fwd",
+        "pagination direction must survive round-trip"
     );
 }

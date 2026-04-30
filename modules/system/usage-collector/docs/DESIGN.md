@@ -1,8 +1,17 @@
 ---
 cpt:
   kind: DESIGN
-  version: "0.3.0"
+  version: "0.5.0"
   changelog:
+    - version: "0.5.0"
+      date: "2026-05-03"
+      changes:
+        - "Replace bespoke Cursor domain model entry with CursorV1 from modkit-odata in §3.1 Domain Model table; update §3.7 sequence diagram to use Page<UsageRecord> instead of PagedResult<UsageRecord>"
+    - version: "0.4.0"
+      date: "2026-04-30"
+      changes:
+        - "Added constraint cpt-cf-usage-collector-constraint-or-of-ands-preservation to §2.2 Constraints"
+        - "Added SDK types AggregationFn, BucketSize, GroupByDimension, Cursor to §3.1 Domain Model table"
     - version: "0.3.0"
       date: "2026-04-28"
       changes:
@@ -261,6 +270,12 @@ The Usage Collector does not implement pricing, rating, billing rules, invoice g
 
 All plugin connections to ClickHouse and TimescaleDB MUST use TLS; connection parameters are managed via `SecureConn`. Storage backends MUST be configured to reject unencrypted connections. Encryption at rest is mandatory and governed by platform infrastructure policy (ClickHouse native AES-128 encryption or filesystem-level encryption; TimescaleDB encrypted tablespace or OS-level encryption). Encryption key management is the responsibility of the platform secret management system. Record deletion via retention enforcement (`cpt-cf-usage-collector-fr-retention-policies`) constitutes secure disposal; no per-module key rotation is required for non-PII usage data.
 
+#### OR-of-ANDs Preservation
+
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-constraint-or-of-ands-preservation`
+
+AccessScope compilation MUST preserve the disjunction of constraint groups produced by the PDP. Flattening multiple constraint groups into a single independent set of AND conditions is a security violation: it widens access beyond the authorized scope by allowing records that satisfy any single original group's conditions in isolation. Each constraint group from the PDP response MUST be compiled into a separate SQL/filter branch; the branches MUST be combined with OR, not merged into a single AND predicate. See `cpt-cf-usage-collector-principle-fail-closed`.
+
 ## 3. Technical Architecture
 
 ### 3.1 Domain Model
@@ -274,9 +289,15 @@ All plugin connections to ClickHouse and TimescaleDB MUST use TLS; connection pa
 | Entity | Description | Schema |
 |--------|-------------|--------|
 | `UsageRecord` | Single measurement of resource consumption: tenant ID, source module (`module` field), metric kind (`kind` field: counter/gauge), metric name, numeric value, timestamp; idempotency key (required for counter metrics, optional for gauge metrics), resource ID and resource type (both required), subject ID/type, metadata (opaque JSON); status (`active` \| `inactive`) | [`usage-collector-sdk/src/models.rs`](../../usage-collector/usage-collector-sdk/src/models.rs) |
-| `AggregationQuery` | Query parameters: tenant ID (derived from SecurityContext), time range (mandatory), aggregation function (SUM/COUNT/MIN/MAX/AVG); optional filters: usage type, subject (subject_id, subject_type), resource (resource_id, resource_type), source; optional GROUP BY dimensions: time bucket granularity, usage type, subject, resource, source | `AggregationQuery` is not yet present in the SDK (target-state) |
-| `AggregationResult` | Result row: aggregation function applied, aggregated numeric value; dimension values present for each active GROUP BY dimension: time bucket start timestamp (when grouped by time), usage type (when grouped by usage type), subject ID + subject type (when grouped by subject), resource ID + resource type (when grouped by resource), source module (when grouped by source); absent dimensions are null | `AggregationResult` is not yet present in the SDK (target-state) |
-| `RawQuery` | Raw record query parameters: tenant ID (derived from SecurityContext), time range (mandatory), optional pagination cursor; optional filters: usage type, subject (subject_id, subject_type), resource (resource_id, resource_type) | `RawQuery` is not yet present in the SDK (target-state) |
+| `AggregationQuery` | Query parameters: tenant ID (derived from SecurityContext), time range (mandatory), aggregation function (SUM/COUNT/MIN/MAX/AVG); optional filters: usage type, subject (subject_id, subject_type), resource (resource_id, resource_type), source; optional GROUP BY dimensions: time bucket granularity, usage type, subject, resource, source | [`usage-collector-sdk/src/models.rs`](../../usage-collector/usage-collector-sdk/src/models.rs) |
+| `AggregationResult` | Result row: aggregation function applied, aggregated numeric value; dimension values present for each active GROUP BY dimension: time bucket start timestamp (when grouped by time), usage type (when grouped by usage type), subject ID + subject type (when grouped by subject), resource ID + resource type (when grouped by resource), source module (when grouped by source); absent dimensions are null | [`usage-collector-sdk/src/models.rs`](../../usage-collector/usage-collector-sdk/src/models.rs) |
+| `RawQuery` | Raw record query parameters: tenant ID (derived from SecurityContext), time range (mandatory), optional pagination cursor; optional filters: usage type, subject (subject_id, subject_type), resource (resource_id, resource_type) | [`usage-collector-sdk/src/models.rs`](../../usage-collector/usage-collector-sdk/src/models.rs) |
+| `AggregationFn` | Enumeration of supported aggregation functions: `Sum`, `Count`, `Min`, `Max`, `Avg`. Used in `AggregationQuery` to specify the reduction applied over matching records within each group. | [`usage-collector-sdk/src/models.rs`](../../usage-collector/usage-collector-sdk/src/models.rs) |
+| `BucketSize` | Time granularity for `TimeBucket` grouping in aggregation queries. Specifies the width of each time window when `GroupByDimension::TimeBucket` is active (e.g., minute, hour, day). | [`usage-collector-sdk/src/models.rs`](../../usage-collector/usage-collector-sdk/src/models.rs) |
+| `GroupByDimension` | Enumeration of dimensions by which aggregation results may be grouped: `TimeBucket(BucketSize)`, `UsageType`, `Subject`, `Resource`, `Source`. Multiple dimensions may be active simultaneously in a single `AggregationQuery`. | [`usage-collector-sdk/src/models.rs`](../../usage-collector/usage-collector-sdk/src/models.rs) |
+| `CursorV1` | Opaque keyset cursor for raw record queries, sourced from `modkit-odata`. Encodes `k=[timestamp_rfc3339, id_uuid]`, sort direction `Asc`, sort spec `+timestamp,+id`, and pagination direction `fwd`; represents the exclusive lower bound for the next page. Opaque to API callers; the storage plugin owns encoding and decoding via `CursorV1::encode()`/`CursorV1::decode()`. | `modkit_odata::CursorV1` (from `modkit-odata` crate) |
+| `Page<T>` | Generic paginated response container: `items: Vec<T>` (current page records) and `page_info: PageInfo`. Sourced from `modkit-odata`. Returned by `query_raw` and `query_aggregated`. | `modkit_odata::Page` (from `modkit-odata` crate) |
+| `PageInfo` | Pagination metadata carried inside `Page<T>`: `next_cursor: Option<String>` (encoded `CursorV1` for the next page, absent when the page is exhausted), `prev_cursor: Option<String>` (reserved, always absent in current implementation), `limit: u64` (effective page size). Sourced from `modkit-odata`. | `modkit_odata::PageInfo` (from `modkit-odata` crate) |
 | `AuthorizedUsageEmitter` | Time-limited authorization handle returned by `authorize_for()` / `authorize()`; carries the PDP permit result, the authorized `tenant_id`/`resource_id`/`resource_type`, the subject identity (`subject_id`/`subject_type`) bound at authorization time (accepted from the caller with PDP authorization or derived from `SecurityContext` when absent), the allowed-metrics list for the source module, and a monotonic issuance timestamp. `enqueue()` verifies the token has not exceeded its maximum age before proceeding. | `AuthorizedUsageEmitter` is not yet present in the SDK (target-state); see `usage-emitter` crate |
 | `RetentionPolicy` | Retention rule: scope (`global` \| `tenant` \| `usage-type`), target identifier, retention duration. The global policy is mandatory and cannot be deleted; it applies when no more-specific policy matches. Precedence: per-usage-type > per-tenant > global. | `RetentionPolicy` is not yet present in the SDK (target-state) |
 | `BackfillOperation` | Backfill request: operator identity, target `tenant_id` (PDP-authorized: gateway verifies the caller is permitted to backfill for the specified tenant before accepting the request), usage type, time range, historical records to insert | `BackfillOperation` is not yet present in the SDK (target-state) |
@@ -838,8 +859,8 @@ sequenceDiagram
     GW->>Plugin: query_raw(ctx, raw_query)
     Plugin->>DB: SELECT * WHERE tenant_id = ? AND timestamp BETWEEN ? [AND filters] ORDER BY timestamp LIMIT ? AFTER cursor
     DB-->>Plugin: record page + next cursor
-    Plugin-->>GW: PagedResult<UsageRecord>
-    GW-->>Consumer: 200 OK, PagedResult<UsageRecord>
+    Plugin-->>GW: Page<UsageRecord>
+    GW-->>Consumer: 200 OK, Page<UsageRecord>
 ```
 
 **Description**: Usage consumer requests a page of raw usage records for auditing or detailed analysis. The gateway derives tenant ID from SecurityContext, then authorizes the query via the platform PDP — the PDP decision determines whether the caller is permitted, and any returned constraints are applied as additional query filters. The gateway delegates to the plugin with the full query including optional filters (usage type, subject, resource). The cursor is opaque to the consumer; omitting the cursor returns the first page. An exhausted cursor returns an empty page.

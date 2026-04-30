@@ -445,6 +445,20 @@ impl CursorV1 {
     }
 }
 
+impl serde::Serialize for CursorV1 {
+    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
+        let s = self.encode().map_err(serde::ser::Error::custom)?;
+        serializer.serialize_str(&s)
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for CursorV1 {
+    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
+        let s = String::deserialize(deserializer)?;
+        CursorV1::decode(&s).map_err(serde::de::Error::custom)
+    }
+}
+
 // base64url helpers (no padding)
 mod base64_url {
     use base64::Engine;
