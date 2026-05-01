@@ -1334,7 +1334,7 @@ dependencies = [
 
 [[package]]
 name = "cf-api-gateway"
-version = "0.2.4"
+version = "0.2.5"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1376,7 +1376,7 @@ dependencies = [
 
 [[package]]
 name = "cf-authn-resolver"
-version = "0.2.13"
+version = "0.2.14"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1396,7 +1396,7 @@ dependencies = [
 
 [[package]]
 name = "cf-authn-resolver-sdk"
-version = "0.3.13"
+version = "0.3.14"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1413,7 +1413,7 @@ dependencies = [
 
 [[package]]
 name = "cf-authz-resolver"
-version = "0.1.20"
+version = "0.1.21"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1433,7 +1433,7 @@ dependencies = [
 
 [[package]]
 name = "cf-authz-resolver-sdk"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1452,7 +1452,7 @@ dependencies = [
 
 [[package]]
 name = "cf-credstore"
-version = "0.1.19"
+version = "0.1.20"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1473,7 +1473,7 @@ dependencies = [
 
 [[package]]
 name = "cf-credstore-sdk"
-version = "0.1.21"
+version = "0.1.22"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1491,7 +1491,7 @@ dependencies = [
 
 [[package]]
 name = "cf-file-parser"
-version = "0.1.23"
+version = "0.1.24"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1520,7 +1520,7 @@ dependencies = [
 
 [[package]]
 name = "cf-grpc-hub"
-version = "0.2.3"
+version = "0.2.4"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1544,7 +1544,7 @@ dependencies = [
 
 [[package]]
 name = "cf-mini-chat"
-version = "0.1.28"
+version = "0.1.29"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1594,7 +1594,7 @@ dependencies = [
 
 [[package]]
 name = "cf-mini-chat-sdk"
-version = "0.10.3"
+version = "0.10.4"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -1613,7 +1613,7 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit"
-version = "0.6.7"
+version = "0.6.8"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -1706,7 +1706,7 @@ dependencies = [
 
 [[package]]
 name = "cf-modkit-canonical-errors"
-version = "0.7.1"
+version = "0.7.2"
 dependencies = [
  "axum",
  "cf-modkit-canonical-errors-macro",
@@ -1979,7 +1979,7 @@ dependencies = [
 
 [[package]]
 name = "cf-module-orchestrator"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2002,7 +2002,7 @@ dependencies = [
 
 [[package]]
 name = "cf-nodes-registry"
-version = "0.1.22"
+version = "0.1.23"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2032,7 +2032,7 @@ dependencies = [
 
 [[package]]
 name = "cf-oagw"
-version = "0.2.22"
+version = "0.2.23"
 dependencies = [
  "anyhow",
  "arc-swap",
@@ -2112,7 +2112,7 @@ dependencies = [
 
 [[package]]
 name = "cf-resource-group"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2145,7 +2145,7 @@ dependencies = [
 
 [[package]]
 name = "cf-resource-group-sdk"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -2164,7 +2164,7 @@ dependencies = [
 
 [[package]]
 name = "cf-rg-tr-plugin"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2256,7 +2256,7 @@ dependencies = [
 
 [[package]]
 name = "cf-single-tenant-tr-plugin"
-version = "0.1.19"
+version = "0.1.20"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2276,7 +2276,7 @@ dependencies = [
 
 [[package]]
 name = "cf-static-authn-plugin"
-version = "0.2.8"
+version = "0.2.9"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2296,7 +2296,7 @@ dependencies = [
 
 [[package]]
 name = "cf-static-authz-plugin"
-version = "0.1.17"
+version = "0.1.18"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2315,7 +2315,7 @@ dependencies = [
 
 [[package]]
 name = "cf-static-credstore-plugin"
-version = "0.1.15"
+version = "0.1.16"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2335,7 +2335,7 @@ dependencies = [
 
 [[package]]
 name = "cf-static-tr-plugin"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2377,7 +2377,7 @@ dependencies = [
 
 [[package]]
 name = "cf-tenant-resolver"
-version = "0.1.18"
+version = "0.1.19"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2398,7 +2398,7 @@ dependencies = [
 
 [[package]]
 name = "cf-tenant-resolver-sdk"
-version = "0.3.3"
+version = "0.3.4"
 dependencies = [
  "async-trait",
  "cf-modkit",
@@ -2415,7 +2415,7 @@ dependencies = [
 
 [[package]]
 name = "cf-tr-authz-plugin"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2435,7 +2435,7 @@ dependencies = [
 
 [[package]]
 name = "cf-types-registry"
-version = "0.1.19"
+version = "0.1.20"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -2460,7 +2460,7 @@ dependencies = [
 
 [[package]]
 name = "cf-types-registry-sdk"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "async-trait",
  "gts",
@@ -2710,7 +2710,7 @@ dependencies = [
  "phf 0.13.1",
  "phf_codegen",
  "rustc-hash",
- "smallvec 1.15.1",
+ "smallvec",
  "typed-arena",
 ]
 
@@ -3476,7 +3476,7 @@ dependencies = [
  "lebe",
  "miniz_oxide",
  "rayon-core",
- "smallvec 1.15.1",
+ "smallvec",
  "zune-inflate",
 ]
 
@@ -3896,22 +3896,22 @@ dependencies = [
  "portable-atomic",
  "quanta",
  "rand 0.9.4",
- "smallvec 1.15.1",
+ "smallvec",
  "spinning_top",
  "web-time",
 ]
 
 [[package]]
 name = "gts"
-version = "0.8.4"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3cf70de49935aad158ecc91b335a5e1361757a7048417a26e19bd72b2d5bb44d"
+checksum = "349ca150e5a2a61cfe91dda57e841fffa122b876e73f8522b6810630fccebed1"
 dependencies = [
  "gts-id",
  "jsonschema",
  "schemars 1.2.1",
  "serde",
- "serde-saphyr 0.0.10",
+ "serde-saphyr 0.0.24",
  "serde_json",
  "shellexpand",
  "thiserror 2.0.18",
@@ -3930,18 +3930,18 @@ dependencies = [
 
 [[package]]
 name = "gts-id"
-version = "0.8.4"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b2d137decd946d1034f918cb972069ca22928fe8416348dbbb142b9d4a5eb922"
+checksum = "097854f3aade247a143b6f2e8e6f1e7159cf11b0dc01f7d5fbe2d4cefca2cd7b"
 dependencies = [
  "thiserror 2.0.18",
 ]
 
 [[package]]
 name = "gts-macros"
-version = "0.8.4"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "d9140ff93e4f92f38ce91c47a3b7b27df6d581d05d94e435cb31ce91ee4fb391"
+checksum = "bc810e788e605a74035282e6bbf88b79c4e312460a9561e8866d938d5597333a"
 dependencies = [
  "gts-id",
  "proc-macro2",
@@ -3952,9 +3952,9 @@ dependencies = [
 
 [[package]]
 name = "gts-validator"
-version = "0.8.4"
+version = "0.9.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "69aba10fcc6ce1d91152d4e86d177a017652ddfcc66b7461e6ad9b28b0b11122"
+checksum = "2033098e2a3b6c0f71c6c10a61fb2a4a5c6a93c51bd1309b179e5344e756cd62"
 dependencies = [
  "anyhow",
  "clap",
@@ -3962,7 +3962,7 @@ dependencies = [
  "gts",
  "regex",
  "serde",
- "serde-saphyr 0.0.10",
+ "serde-saphyr 0.0.24",
  "serde_json",
  "walkdir",
 ]
@@ -4307,7 +4307,7 @@ dependencies = [
  "httpdate",
  "itoa",
  "pin-project-lite",
- "smallvec 1.15.1",
+ "smallvec",
  "tokio",
  "want",
 ]
@@ -4498,7 +4498,7 @@ dependencies = [
  "icu_normalizer_data",
  "icu_properties",
  "icu_provider",
- "smallvec 1.15.1",
+ "smallvec",
  "zerovec",
 ]
 
@@ -4562,7 +4562,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "3b0875f23caa03898994f6ddc501886a45c7d3d62d04d2d90788d47be1b1e4de"
 dependencies = [
  "idna_adapter",
- "smallvec 1.15.1",
+ "smallvec",
  "utf8_iter",
 ]
 
@@ -5659,7 +5659,7 @@ dependencies = [
  "num-iter",
  "num-traits",
  "rand 0.8.5",
- "smallvec 1.15.1",
+ "smallvec",
  "zeroize",
 ]
 
@@ -6076,7 +6076,7 @@ dependencies = [
  "cfg-if",
  "libc",
  "redox_syscall 0.5.18",
- "smallvec 1.15.1",
+ "smallvec",
  "windows-link",
 ]
 
@@ -6129,7 +6129,7 @@ version = "0.8.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a97453bc21a968f722df730bfe11bd08745cb50d1300b0df2bda131dece136"
 dependencies = [
- "smallvec 1.15.1",
+ "smallvec",
 ]
 
 [[package]]
@@ -7669,23 +7669,24 @@ dependencies = [
 ]
 
 [[package]]
-name = "saphyr-parser"
-version = "0.0.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fb771b59f6b1985d1406325ec28f97cfb14256abcec4fdfb37b36a1766d6af7"
-dependencies = [
- "arraydeque",
- "hashlink",
-]
-
-[[package]]
 name = "saphyr-parser-bw"
 version = "0.0.610"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "6d643f5e972f17219245b82f038c22cd3c74320bb17c6e8f7e8537de268b1bc6"
 dependencies = [
  "arraydeque",
- "smallvec 1.15.1",
+ "smallvec",
+ "thiserror 2.0.18",
+]
+
+[[package]]
+name = "saphyr-parser-bw"
+version = "0.0.611"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "67dec0c833db75dc98957956b303fe447ffc5eb13f2325ef4c2350f7f3aa69e3"
+dependencies = [
+ "arraydeque",
+ "smallvec",
  "thiserror 2.0.18",
 ]
 
@@ -7981,24 +7982,6 @@ dependencies = [
 
 [[package]]
 name = "serde-saphyr"
-version = "0.0.10"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "9b9e06cddad47cc6214c0c456cf209b99a58b54223e7af2f6d4b88a5a9968499"
-dependencies = [
- "ahash 0.8.12",
- "base64 0.22.1",
- "encoding_rs_io",
- "nohash-hasher",
- "num-traits",
- "ryu",
- "saphyr-parser",
- "serde",
- "serde_json",
- "smallvec 2.0.0-alpha.12",
-]
-
-[[package]]
-name = "serde-saphyr"
 version = "0.0.22"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "546b4da4f679832602a8f8ab8ddc10b6b1d2e1a13b4f9dddcaee499436fa06ad"
@@ -8011,9 +7994,28 @@ dependencies = [
  "nohash-hasher",
  "num-traits",
  "regex",
- "saphyr-parser-bw",
+ "saphyr-parser-bw 0.0.610",
  "serde",
- "smallvec 1.15.1",
+ "smallvec",
+ "zmij",
+]
+
+[[package]]
+name = "serde-saphyr"
+version = "0.0.24"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "f83ad47c2f14654528a89495f8d0dbc64173176f8512c7c72386cbe81009f661"
+dependencies = [
+ "ahash 0.8.12",
+ "annotate-snippets",
+ "base64 0.22.1",
+ "encoding_rs_io",
+ "getrandom 0.3.4",
+ "nohash-hasher",
+ "num-traits",
+ "saphyr-parser-bw 0.0.611",
+ "serde",
+ "smallvec",
  "zmij",
 ]
 
@@ -8124,7 +8126,7 @@ dependencies = [
  "ryu",
  "serde",
  "serde_json",
- "smallvec 1.15.1",
+ "smallvec",
  "smol_str",
  "thiserror 2.0.18",
 ]
@@ -8342,12 +8344,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "smallvec"
-version = "2.0.0-alpha.12"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ef784004ca8777809dcdad6ac37629f0a97caee4c685fcea805278d81dd8b857"
-
-[[package]]
 name = "smol_str"
 version = "0.3.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -8458,7 +8454,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "smallvec 1.15.1",
+ "smallvec",
  "thiserror 2.0.18",
  "time",
  "tokio",
@@ -8543,7 +8539,7 @@ dependencies = [
  "serde",
  "sha1",
  "sha2",
- "smallvec 1.15.1",
+ "smallvec",
  "sqlx-core",
  "stringprep",
  "thiserror 2.0.18",
@@ -8584,7 +8580,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sha2",
- "smallvec 1.15.1",
+ "smallvec",
  "sqlx-core",
  "stringprep",
  "thiserror 2.0.18",
@@ -9429,7 +9425,7 @@ checksum = "1ac28f2d093c6c477eaa76b23525478f38de514fa9aeb1285738d4b97a9552fc"
 dependencies = [
  "js-sys",
  "opentelemetry",
- "smallvec 1.15.1",
+ "smallvec",
  "tracing",
  "tracing-core",
  "tracing-log",
@@ -9460,7 +9456,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sharded-slab",
- "smallvec 1.15.1",
+ "smallvec",
  "thread_local",
  "time",
  "tracing",
