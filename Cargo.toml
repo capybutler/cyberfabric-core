@@ -523,7 +523,7 @@ temp-env = { version = "0.3", features = ["async_closure"] }
 nanoid = "0.4"
 
 # Metrics
-tokio-metrics = { version = "0.4", features = ["rt"] }
+tokio-metrics = { version = "0.5", features = ["rt"] }
 
 # GTS dependencies
 jsonschema = { version = "0.40", default-features = false }
