@@ -34,7 +34,7 @@ use super::handle_query_raw;
 use crate::api::rest::dto::{
     AggregatedQueryParams, CreateUsageRecordRequest, RawQueryParams, cursor_encode,
 };
-use crate::config::{DEFAULT_PAGE_SIZE, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE};
+use crate::config::{DEFAULT_PAGE_SIZE, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE};
 
 // ── emitter_error_to_problem ──────────────────────────────────────
 
@@ -762,6 +762,37 @@ async fn test_aggregated_400_time_range_not_ascending() {
     );
 }
 
+/// TEST-FDESIGN-001 (inst-agg-3b): time range exceeds MAX_QUERY_TIME_RANGE → 400.
+#[tokio::test]
+async fn test_aggregated_400_time_range_too_wide() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> =
+        Arc::new(AllowAuthZ { tenant_id: Uuid::new_v4() });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let from = Utc::now() - chrono::Duration::hours(1);
+    let mut params = valid_params();
+    params.from = from;
+    // to = from + MAX_QUERY_TIME_RANGE + 1s — strictly exceeds the limit
+    params.to = from
+        + chrono::Duration::from_std(MAX_QUERY_TIME_RANGE).unwrap()
+        + chrono::Duration::seconds(1);
+
+    let err = handle_query_aggregated(
+        Extension(ctx),
+        Extension(authz),
+        Extension(plugin),
+        Query(params),
+    )
+    .await
+    .expect_err("time range exceeding MAX_QUERY_TIME_RANGE must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+}
+
 /// TEST-FDESIGN-001 (inst-agg-3): group_by includes time_bucket but bucket_size absent → 400.
 #[tokio::test]
 async fn test_aggregated_400_bucket_size_absent_with_time_bucket() {
@@ -1119,7 +1150,7 @@ async fn test_raw_400_cursor_timestamp_out_of_range() {
     let to = Utc::now() - chrono::Duration::hours(1);
     // cursor timestamp is after 'to' — outside [from, to]
     let cursor_ts = Utc::now();
-    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4());
+    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4(), Utc::now());
 
     let params = RawQueryParams {
         from,
@@ -1198,6 +1229,52 @@ async fn test_raw_400_page_size_too_large() {
             .iter()
             .any(|d| d.as_str().unwrap_or("").contains("page_size")),
         "validation details must mention page_size"
+    );
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3b): time range exceeds MAX_QUERY_TIME_RANGE → 400.
+#[tokio::test]
+async fn test_raw_400_time_range_too_wide() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> =
+        Arc::new(AllowAuthZ { tenant_id: Uuid::new_v4() });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let from = Utc::now() - chrono::Duration::hours(1);
+    let mut params = valid_raw_params();
+    params.from = from;
+    params.to = from
+        + chrono::Duration::from_std(MAX_QUERY_TIME_RANGE).unwrap()
+        + chrono::Duration::seconds(1);
+
+    let err = handle_query_raw(Extension(ctx), Extension(authz), Extension(plugin), Query(params))
+        .await
+        .expect_err("time range exceeding MAX_QUERY_TIME_RANGE must return 400");
+
+    assert_eq!(err.status, StatusCode::BAD_REQUEST);
+    let detail: serde_json::Value =
+        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
+    assert_eq!(detail["code"], "VALIDATION_ERROR");
+}
+
+/// TEST-FDESIGN-001 (inst-raw-3): page_size = MAX_PAGE_SIZE (exact boundary) → 200.
+#[tokio::test]
+async fn test_raw_200_max_page_size() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> =
+        Arc::new(AllowAuthZ { tenant_id: Uuid::new_v4() });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let mut params = valid_raw_params();
+    params.page_size = Some(MAX_PAGE_SIZE); // exact boundary — must be accepted
+
+    let result =
+        handle_query_raw(Extension(ctx), Extension(authz), Extension(plugin), Query(params))
+            .await;
+
+    assert!(
+        result.is_ok(),
+        "page_size = MAX_PAGE_SIZE must be accepted (validator uses >, not >=): {result:?}"
     );
 }
 
@@ -1311,7 +1388,8 @@ async fn test_raw_503_plugin_error() {
     assert!(!err.detail.contains("storage backend"), "error details must not leak plugin errors");
 }
 
-/// TEST-FDESIGN-001 (inst-sdk-6a): cursor timestamp age exceeds CURSOR_TTL → 410 Gone.
+/// TEST-FDESIGN-001 (inst-sdk-6a): issued_at age exceeds CURSOR_TTL (24h) → 410 Gone.
+/// cursor_ts (data position) is within [from, to]; only issued_at is expired.
 #[tokio::test]
 async fn test_raw_410_cursor_expired() {
     let ctx = test_ctx();
@@ -1319,11 +1397,13 @@ async fn test_raw_410_cursor_expired() {
         Arc::new(AllowAuthZ { tenant_id: Uuid::new_v4() });
     let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
 
-    // Cursor timestamp is 25 hours in the past — exceeds CURSOR_TTL (24h)
-    let cursor_ts = Utc::now() - chrono::Duration::hours(25);
+    let now = Utc::now();
+    // cursor_ts is valid data within [from, to]; issued_at is 25 hours ago (exceeds CURSOR_TTL)
+    let cursor_ts = now - chrono::Duration::hours(1);
     let from = cursor_ts - chrono::Duration::hours(1);
-    let to = Utc::now();
-    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4());
+    let to = now;
+    let issued_at = now - chrono::Duration::hours(25);
+    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4(), issued_at);
 
     let params = RawQueryParams {
         from,
@@ -1348,14 +1428,54 @@ async fn test_raw_410_cursor_expired() {
     assert_eq!(detail["code"], "CURSOR_EXPIRED");
 }
 
+/// TEST-FDESIGN-001 (inst-sdk-6a): old data timestamp + fresh issued_at → not 410.
+/// Verifies cursor TTL is based on issuance time, not data record age.
+#[tokio::test]
+async fn test_raw_200_cursor_not_expired_old_data() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> =
+        Arc::new(AllowAuthZ { tenant_id: Uuid::new_v4() });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let now = Utc::now();
+    // cursor_ts is 48 hours ago (old data record position) but issued_at is 1 second ago (fresh)
+    let cursor_ts = now - chrono::Duration::hours(48);
+    let from = cursor_ts - chrono::Duration::hours(1);
+    let to = now;
+    let issued_at = now - chrono::Duration::seconds(1);
+    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4(), issued_at);
+
+    let params = RawQueryParams {
+        from,
+        to,
+        cursor: Some(cursor_str),
+        page_size: None,
+        usage_type: None,
+        subject_id: None,
+        subject_type: None,
+        resource_id: None,
+        resource_type: None,
+    };
+
+    let result =
+        handle_query_raw(Extension(ctx), Extension(authz), Extension(plugin), Query(params)).await;
+
+    // Key assertion: old data timestamp with fresh issued_at must NOT return 410
+    assert!(
+        result.is_ok(),
+        "cursor with old data timestamp but fresh issued_at must not return 410: {result:?}"
+    );
+}
+
 /// TEST-FDESIGN-001 (inst-sdk-6): cursor encode/decode round-trip test.
 #[test]
 fn test_cursor_encode_decode_round_trip() {
     let timestamp = Utc::now();
     let id = Uuid::new_v4();
+    let issued_at = Utc::now();
 
-    let encoded = cursor_encode(timestamp, id);
-    let (decoded_ts, decoded_id) =
+    let encoded = cursor_encode(timestamp, id, issued_at);
+    let (decoded_ts, decoded_id, decoded_issued_at) =
         crate::api::rest::dto::cursor_decode(&encoded).expect("should decode successfully");
 
     assert_eq!(decoded_id, id, "UUID must survive encode/decode round-trip");
@@ -1369,5 +1489,10 @@ fn test_cursor_encode_decode_round_trip() {
         decoded_ts.timestamp_subsec_nanos(),
         timestamp.timestamp_subsec_nanos(),
         "timestamp nanoseconds must survive encode/decode round-trip"
+    );
+    assert_eq!(
+        decoded_issued_at.timestamp(),
+        issued_at.timestamp(),
+        "issued_at seconds must survive encode/decode round-trip"
     );
 }

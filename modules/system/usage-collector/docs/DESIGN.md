@@ -268,7 +268,7 @@ All plugin connections to ClickHouse and TimescaleDB MUST use TLS; connection pa
 
 #### OR-of-ANDs Preservation
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-constraint-or-of-ands-preservation`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-constraint-or-of-ands-preservation`
 
 AccessScope compilation MUST preserve the disjunction of constraint groups produced by the PDP. Flattening multiple constraint groups into a single independent set of AND conditions is a security violation: it widens access beyond the authorized scope by allowing records that satisfy any single original group's conditions in isolation. Each constraint group from the PDP response MUST be compiled into a separate SQL/filter branch; the branches MUST be combined with OR, not merged into a single AND predicate. See `cpt-cf-usage-collector-principle-fail-closed`.
 

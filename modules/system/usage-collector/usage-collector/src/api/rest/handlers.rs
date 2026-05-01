@@ -15,7 +15,7 @@ use usage_collector_sdk::{
 };
 use usage_emitter::{UsageEmitterError, UsageEmitterV1};
 
-use crate::config::{CURSOR_TTL, DEFAULT_PAGE_SIZE, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE};
+use crate::config::{CURSOR_TTL, DEFAULT_PAGE_SIZE, MAX_AGG_ROWS, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE};
 use crate::domain::authz::{USAGE_RECORD_READ, actions, authorize_and_compile_scope};
 
 use super::dto::{
@@ -179,33 +179,38 @@ pub async fn handle_get_module_config(
 }
 
 /// Handler for `GET /usage-collector/v1/aggregated`.
+// @cpt-flow:cpt-cf-usage-collector-flow-query-api-aggregated:p1
 pub async fn handle_query_aggregated(
     Extension(ctx): Extension<SecurityContext>,
     Extension(authz): Extension<Arc<dyn AuthZResolverClient>>,
     Extension(plugin): Extension<Arc<dyn UsageCollectorPluginClientV1>>,
     Query(params): Query<AggregatedQueryParams>,
 ) -> Result<Json<Vec<AggregationResultDto>>, Problem> {
-    // inst-agg-2: tenant_id is derived from ctx; params must not contain tenant_id
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-1
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-2
+    // tenant_id is derived from ctx; params must not contain tenant_id
     // (enforced by DTO definition — no tenant_id field in AggregatedQueryParams)
-
-    // inst-agg-3: validate parameters
     let mut errors: Vec<String> = Vec::new();
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-2
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-1
 
-    // inst-agg-3a: time range must be strictly ascending
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3a
     if params.from >= params.to {
         errors.push(
             "time range must be strictly ascending (from must be before to)".to_owned(),
         );
     }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3a
 
-    // inst-agg-3b: time range must not exceed MAX_QUERY_TIME_RANGE
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3b
     if let Ok(d) = params.to.signed_duration_since(params.from).to_std()
         && d > MAX_QUERY_TIME_RANGE
     {
         errors.push("time range exceeds maximum allowed duration".to_owned());
     }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3b
 
-    // bucket_size required when group_by includes TimeBucket
     if params.group_by.iter().any(|d| matches!(d, GroupByDimension::TimeBucket(_)))
         && params.bucket_size.is_none()
     {
@@ -214,7 +219,6 @@ pub async fn handle_query_aggregated(
         );
     }
 
-    // string filter field length validation
     if let Some(s) = &params.usage_type
         && s.len() > MAX_FILTER_STRING_LEN
     {
@@ -243,9 +247,11 @@ pub async fn handle_query_aggregated(
             "source: exceeds maximum length of {MAX_FILTER_STRING_LEN} bytes"
         ));
     }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-3
 
-    // inst-agg-4a: return 400 if any validation errors
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-4
     if !errors.is_empty() {
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-4a
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
             "Validation error",
@@ -256,22 +262,28 @@ pub async fn handle_query_aggregated(
             })
             .to_string(),
         ));
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-4a
     }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-4
 
-    // inst-agg-5: authorize and compile scope
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-5
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6
     let Ok(scope) =
         authorize_and_compile_scope(&ctx, Arc::clone(&authz), &USAGE_RECORD_READ, actions::LIST)
             .await
     else {
-        // inst-agg-6a: PDP denied or any error → 403 (fail-closed)
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6a
         return Err(Problem::new(
             StatusCode::FORBIDDEN,
             "Forbidden",
             r#"{"error":"forbidden"}"#.to_owned(),
         ));
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6a
     };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-5
 
-    // inst-agg-7: build AggregationQuery
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-7
     let query = AggregationQuery {
         scope,
         time_range: (params.from, params.to),
@@ -284,12 +296,14 @@ pub async fn handle_query_aggregated(
         subject_id: params.subject_id,
         subject_type: params.subject_type,
         source: params.source,
+        max_rows: MAX_AGG_ROWS,
     };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-7
 
-    // inst-agg-8: delegate to plugin
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8
     let rows = match plugin.query_aggregated(query).await {
         Ok(rows) => rows,
-        // inst-agg-8b: result too large → 400
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8b
         Err(UsageCollectorError::QueryResultTooLarge { .. }) => {
             return Err(Problem::new(
                 StatusCode::BAD_REQUEST,
@@ -297,7 +311,8 @@ pub async fn handle_query_aggregated(
                 r#"{"error":"query too broad"}"#.to_owned(),
             ));
         }
-        // inst-agg-8c: other errors → log with correlation ID → 503
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8b
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8c
         Err(e) => {
             let correlation_id = ctx.subject_id().to_string();
             tracing::error!(
@@ -315,39 +330,51 @@ pub async fn handle_query_aggregated(
                 .to_string(),
             ));
         }
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8c
     };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8
 
-    // inst-agg-9: return 200
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-9
     let response: Vec<AggregationResultDto> =
         rows.into_iter().map(AggregationResultDto::from).collect();
     Ok(Json(response))
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-9
 }
 
 /// Handler for `GET /usage-collector/v1/raw`.
+// @cpt-flow:cpt-cf-usage-collector-flow-query-api-raw:p2
 pub async fn handle_query_raw(
     Extension(ctx): Extension<SecurityContext>,
     Extension(authz): Extension<Arc<dyn AuthZResolverClient>>,
     Extension(plugin): Extension<Arc<dyn UsageCollectorPluginClientV1>>,
     Query(params): Query<RawQueryParams>,
 ) -> Result<Json<PagedResultResponse>, Problem> {
-    // inst-raw-2: tenant_id derived from SecurityContext; never from query params
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-1
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-2
+    // tenant_id is derived from ctx; params must not contain tenant_id
+    // (enforced by DTO definition — no tenant_id field in RawQueryParams)
     let mut errors: Vec<String> = Vec::new();
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-2
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-1
 
-    // inst-raw-3a: time range must be strictly ascending
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3a
     if params.from >= params.to {
         errors.push(
             "time range must be strictly ascending (from must be before to)".to_owned(),
         );
     }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3a
 
-    // inst-raw-3b: time range must not exceed MAX_QUERY_TIME_RANGE
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3b
     if let Ok(d) = params.to.signed_duration_since(params.from).to_std()
         && d > MAX_QUERY_TIME_RANGE
     {
         errors.push("time range exceeds maximum allowed duration".to_owned());
     }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3b
 
-    // inst-raw-3: validate page_size
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-0
     let page_size = match params.page_size {
         None => DEFAULT_PAGE_SIZE,
         Some(0) => {
@@ -360,8 +387,8 @@ pub async fn handle_query_raw(
         }
         Some(ps) => ps,
     };
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-0
 
-    // inst-raw-3: validate string filter field lengths
     if let Some(s) = &params.usage_type
         && s.len() > MAX_FILTER_STRING_LEN
     {
@@ -384,17 +411,16 @@ pub async fn handle_query_raw(
         ));
     }
 
-    // inst-raw-3: decode and validate cursor
     let decoded_cursor = if let Some(ref cursor_str) = params.cursor {
         match cursor_decode(cursor_str) {
-            Ok((ts, id)) => {
+            Ok((ts, id, issued_at)) => {
                 if ts < params.from || ts > params.to {
                     errors.push(
                         "cursor: timestamp is outside the requested [from, to] range".to_owned(),
                     );
                     None
                 } else {
-                    Some((ts, id))
+                    Some((ts, id, issued_at))
                 }
             }
             Err(CursorError::Malformed) => {
@@ -405,9 +431,11 @@ pub async fn handle_query_raw(
     } else {
         None
     };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3
 
-    // inst-raw-4a: return 400 if any validation errors
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4
     if !errors.is_empty() {
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4a
         return Err(Problem::new(
             StatusCode::BAD_REQUEST,
             "Validation error",
@@ -418,20 +446,12 @@ pub async fn handle_query_raw(
             })
             .to_string(),
         ));
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4a
     }
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4
 
-    // inst-sdk-6a: cursor TTL check (only reached when all other validations pass)
-    if let Some((cursor_ts, _)) = &decoded_cursor
-        && cursor_check_ttl(*cursor_ts, Utc::now(), CURSOR_TTL)
-    {
-        return Err(Problem::new(
-            StatusCode::GONE,
-            "Cursor expired",
-            r#"{"error":"cursor expired","code":"CURSOR_EXPIRED"}"#.to_owned(),
-        ));
-    }
-
-    // inst-raw-5: authorize and compile scope
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-5
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6
     let Ok(scope) = authorize_and_compile_scope(
         &ctx,
         Arc::clone(&authz),
@@ -440,16 +460,31 @@ pub async fn handle_query_raw(
     )
     .await
     else {
-        // inst-raw-6a: PDP denied or any error → 403 (fail-closed)
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6a
         return Err(Problem::new(
             StatusCode::FORBIDDEN,
             "Forbidden",
             r#"{"error":"forbidden"}"#.to_owned(),
         ));
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6a
     };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-5
 
-    // inst-raw-7: build RawQuery
-    let cursor = decoded_cursor.map(|(timestamp, id)| Cursor { timestamp, id });
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6a
+    if let Some((_, _, issued_at)) = &decoded_cursor
+        && cursor_check_ttl(*issued_at, Utc::now(), CURSOR_TTL)
+    {
+        return Err(Problem::new(
+            StatusCode::GONE,
+            "Cursor expired",
+            r#"{"error":"cursor expired","code":"CURSOR_EXPIRED"}"#.to_owned(),
+        ));
+    }
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6a
+
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-7
+    let cursor = decoded_cursor.map(|(timestamp, id, _)| Cursor { timestamp, id });
     let query = RawQuery {
         scope,
         time_range: (params.from, params.to),
@@ -461,11 +496,12 @@ pub async fn handle_query_raw(
         subject_type: params.subject_type,
         subject_id: params.subject_id,
     };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-7
 
-    // inst-raw-8: delegate to plugin
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8
     let paged = match plugin.query_raw(query).await {
         Ok(p) => p,
-        // inst-raw-8b: error → log with correlation ID → 503
+        // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8b
         Err(e) => {
             let correlation_id = ctx.subject_id().to_string();
             tracing::error!(
@@ -483,14 +519,17 @@ pub async fn handle_query_raw(
                 .to_string(),
             ));
         }
+        // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8b
     };
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8
 
-    // inst-raw-9: return 200 with PagedResult
-    let next_cursor = paged.next_cursor.map(|c| cursor_encode(c.timestamp, c.id));
+    // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-9
+    let next_cursor = paged.next_cursor.map(|c| cursor_encode(c.timestamp, c.id, Utc::now()));
     Ok(Json(PagedResultResponse {
         items: paged.items,
         next_cursor,
     }))
+    // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-9
 }
 
 fn emitter_error_to_problem(e: UsageEmitterError) -> Problem {

@@ -46,25 +46,39 @@ pub mod actions {
 ///
 /// Returns [`UsageCollectorError::AuthorizationFailed`] on any PDP error (Denied or
 /// non-Denied). No allow-all path exists for any PDP error condition.
+// @cpt-algo:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1
 pub async fn authorize_and_compile_scope(
     ctx: &SecurityContext,
     authz: Arc<dyn AuthZResolverClient>,
     resource_type: &ResourceType,
     action: &str,
 ) -> Result<AccessScope, UsageCollectorError> {
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-1
     let request = AccessRequest::new().require_constraints(true);
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-1
 
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-2
     let result = PolicyEnforcer::new(authz)
         .access_scope_with(ctx, resource_type, action, None, &request)
         .await;
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-2
 
     match result {
+        // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-4
+        // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-5
         Ok(scope) => Ok(scope),
+        // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-5
+        // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-4
 
+        // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3
         Err(EnforcerError::Denied { .. }) => {
+            // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3a
             Err(UsageCollectorError::authorization_failed("permission denied"))
+            // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3a
         }
+        // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3
 
+        // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3b
         Err(e) => {
             error!(
                 subject_id = %ctx.subject_id(),
@@ -75,6 +89,7 @@ pub async fn authorize_and_compile_scope(
             );
             Err(UsageCollectorError::authorization_failed("permission denied"))
         }
+        // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3b
     }
 }
 

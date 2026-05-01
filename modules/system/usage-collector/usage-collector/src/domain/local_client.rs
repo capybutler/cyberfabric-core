@@ -364,14 +364,28 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
         &self,
         query: AggregationQuery,
     ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
-        self.inner.get_plugin().await?.query_aggregated(query).await
+        let is_open = self.inner.circuit_breaker.lock().await.is_open();
+        if is_open {
+            return Err(UsageCollectorError::circuit_open());
+        }
+        let plugin = self.inner.get_plugin().await?;
+        timeout(self.inner.config.plugin_timeout, plugin.query_aggregated(query))
+            .await
+            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?
     }
 
     async fn query_raw(
         &self,
         query: RawQuery,
     ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        self.inner.get_plugin().await?.query_raw(query).await
+        let is_open = self.inner.circuit_breaker.lock().await.is_open();
+        if is_open {
+            return Err(UsageCollectorError::circuit_open());
+        }
+        let plugin = self.inner.get_plugin().await?;
+        timeout(self.inner.config.plugin_timeout, plugin.query_raw(query))
+            .await
+            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?
     }
 }
 

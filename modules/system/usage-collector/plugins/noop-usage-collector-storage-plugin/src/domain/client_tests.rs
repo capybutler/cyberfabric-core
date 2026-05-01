@@ -59,6 +59,7 @@ async fn noop_query_aggregated_returns_empty_vec() {
         subject_id: None,
         subject_type: None,
         source: None,
+        max_rows: 0,
     };
     let result = svc.query_aggregated(query).await;
     assert!(result.is_ok());

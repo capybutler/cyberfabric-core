@@ -14,7 +14,6 @@ pub const DEFAULT_PAGE_SIZE: usize = 100;
 pub const MAX_PAGE_SIZE: usize = 1_000;
 
 /// Maximum number of rows `query_aggregated` may return before returning `QueryResultTooLarge`.
-#[allow(dead_code)]
 pub const MAX_AGG_ROWS: usize = 10_000;
 
 /// Maximum byte length for string filter fields (`usage_type`, `resource_type`, `subject_type`, `source`).

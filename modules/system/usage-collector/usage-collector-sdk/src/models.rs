@@ -69,6 +69,7 @@ pub struct UsageRecord {
     pub metadata: Option<serde_json::Value>,
 }
 
+// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-1
 /// Aggregation function applied over matching usage records.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -79,7 +80,9 @@ pub enum AggregationFn {
     Max,
     Avg,
 }
+// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-1
 
+// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-2
 /// Time granularity for time-bucket grouping in aggregation queries.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -90,7 +93,9 @@ pub enum BucketSize {
     Week,
     Month,
 }
+// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-2
 
+// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-3
 /// Dimension by which aggregation results may be grouped.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, utoipa::ToSchema)]
 #[serde(rename_all = "snake_case")]
@@ -101,7 +106,9 @@ pub enum GroupByDimension {
     Resource,
     Source,
 }
+// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-3
 
+// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-4
 /// Parameters for an aggregated usage query delegated to the storage plugin.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AggregationQuery {
@@ -135,8 +142,14 @@ pub struct AggregationQuery {
     /// Optional filter: source module name.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub source: Option<String>,
+    /// Maximum number of result rows; populated by the gateway from `MAX_AGG_ROWS`.
+    /// Storage plugins MUST NOT return more rows than this limit.
+    #[serde(skip)]
+    pub max_rows: usize,
 }
+// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-4
 
+// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-5
 /// A single row in an aggregation result set.
 ///
 /// Option fields are absent (not null) in JSON when the corresponding
@@ -160,6 +173,7 @@ pub struct AggregationResult {
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub source: Option<String>,
 }
+// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-5
 
 /// Error decoding a cursor.
 #[derive(Debug, thiserror::Error)]
@@ -176,6 +190,7 @@ pub enum CursorDecodeError {
     InvalidUuid,
 }
 
+// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6
 /// Opaque pagination cursor encoding an exclusive lower bound (timestamp, id).
 ///
 /// Serializes as a base64-encoded string in JSON responses.
@@ -223,6 +238,7 @@ impl Cursor {
         Ok(Self { timestamp, id })
     }
 }
+// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6
 
 fn cursor_field(payload: &str, prefix: &str) -> Option<String> {
     payload
@@ -253,7 +269,12 @@ pub struct PagedResult<T> {
     pub next_cursor: Option<Cursor>,
 }
 
+// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-7
 /// Parameters for a raw usage record query delegated to the storage plugin.
+///
+/// Note: source-level filtering is intentionally absent from `RawQuery`.
+/// `AggregationQuery` supports source filtering via `AggregationQuery::source`;
+/// raw query source filtering is deferred to a future feature revision.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct RawQuery {
     /// Access scope compiled from PDP constraints. Excluded from serde (`AccessScope` is not serializable).
@@ -282,6 +303,7 @@ pub struct RawQuery {
     /// Number of records per page.
     pub page_size: usize,
 }
+// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-7
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]

@@ -215,9 +215,9 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Requirements Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-fr-query-aggregation`
-  - [ ] `p2` - `cpt-cf-usage-collector-fr-query-raw`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-workload-isolation`
+  - [x] `p1` - `cpt-cf-usage-collector-fr-query-aggregation`
+  - [x] `p2` - `cpt-cf-usage-collector-fr-query-raw`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-workload-isolation`
 
 - **Design Principles Covered**:
 
@@ -229,7 +229,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-security-context`
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-no-business-logic`
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-or-of-ands-preservation`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-or-of-ands-preservation`
 
 - **Domain Model Entities**:
   - `AggregationQuery`

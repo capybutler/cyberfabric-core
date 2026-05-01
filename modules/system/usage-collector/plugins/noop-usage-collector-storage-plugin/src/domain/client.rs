@@ -13,13 +13,20 @@ impl UsageCollectorPluginClientV1 for Service {
         Ok(())
     }
 
+    // @cpt-algo:cpt-cf-usage-collector-algo-query-api-noop-stubs:p1
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-8
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-noop-stubs:p1:inst-noop-1
     async fn query_aggregated(
         &self,
         _query: AggregationQuery,
     ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
         Ok(vec![])
     }
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-noop-stubs:p1:inst-noop-1
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-8
 
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-9
+    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-noop-stubs:p2:inst-noop-2
     async fn query_raw(
         &self,
         _query: RawQuery,
@@ -29,6 +36,8 @@ impl UsageCollectorPluginClientV1 for Service {
             next_cursor: None,
         })
     }
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-noop-stubs:p2:inst-noop-2
+    // @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-9
 }
 
 #[cfg(test)]

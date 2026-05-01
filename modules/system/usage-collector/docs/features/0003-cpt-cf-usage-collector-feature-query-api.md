@@ -131,22 +131,22 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 - `group_by` includes `time_bucket` but `bucket_size` is absent → 400 Bad Request
 
 **Steps**:
-1. [ ] - `p1` - Consumer: API: GET /usage-collector/v1/aggregated (?fn=, &from=, &to=, &group_by[]=, &bucket_size=, &usage_type=, &subject_id=, &subject_type=, &resource_id=, &resource_type=, &source=) - `inst-agg-1`
-2. [ ] - `p1` - Gateway: derive tenant_id from SecurityContext; never accept tenant_id as a query parameter - `inst-agg-2`
-3. [ ] - `p1` - Gateway: validate mandatory parameters: fn and time range (from, to) must be present; bucket_size must be present when group_by includes time_bucket; validate max-length of string filter fields (usage_type, resource_type, subject_type, source); reject with 400 if any exceeds MAX_FILTER_STRING_LEN - `inst-agg-3`
-   1. [ ] - `p1` - **IF** `from >= to` → **RETURN** 400 validation error (time range must be strictly ascending) - `inst-agg-3a`
-   2. [ ] - `p1` - **IF** `(to - from) > MAX_QUERY_TIME_RANGE` → **RETURN** 400 validation error (range exceeds configured limit; `MAX_QUERY_TIME_RANGE` defined in §7 OPS-FDESIGN-002) - `inst-agg-3b`
-4. [ ] - `p1` - **IF** validation fails - `inst-agg-4`
-   1. [ ] - `p1` - **RETURN** 400 Bad Request with body `{"error": "<message>", "code": "VALIDATION_ERROR", "details": ["<field>: <reason>", ...]}` - `inst-agg-4a`
-5. [ ] - `p1` - Gateway: invoke authorize-and-compile-scope (`cpt-cf-usage-collector-algo-query-api-authz-delegate`) for USAGE_RECORD_READ / LIST - `inst-agg-5`
-6. [ ] - `p1` - **IF** authorization failed - `inst-agg-6`
-   1. [ ] - `p1` - **RETURN** 403 Forbidden - `inst-agg-6a`
-7. [ ] - `p1` - Gateway: build AggregationQuery (scope from compiled AccessScope, time_range, function, group_by, bucket_size, user-supplied optional filters) - `inst-agg-7`
+1. [x] - `p1` - Consumer: API: GET /usage-collector/v1/aggregated (?fn=, &from=, &to=, &group_by[]=, &bucket_size=, &usage_type=, &subject_id=, &subject_type=, &resource_id=, &resource_type=, &source=) - `inst-agg-1`
+2. [x] - `p1` - Gateway: derive tenant_id from SecurityContext; never accept tenant_id as a query parameter - `inst-agg-2`
+3. [x] - `p1` - Gateway: validate mandatory parameters: fn and time range (from, to) must be present; bucket_size must be present when group_by includes time_bucket; validate max-length of string filter fields (usage_type, resource_type, subject_type, source); reject with 400 if any exceeds MAX_FILTER_STRING_LEN - `inst-agg-3`
+   1. [x] - `p1` - **IF** `from >= to` → **RETURN** 400 validation error (time range must be strictly ascending) - `inst-agg-3a`
+   2. [x] - `p1` - **IF** `(to - from) > MAX_QUERY_TIME_RANGE` → **RETURN** 400 validation error (range exceeds configured limit; `MAX_QUERY_TIME_RANGE` defined in §7 OPS-FDESIGN-002) - `inst-agg-3b`
+4. [x] - `p1` - **IF** validation fails - `inst-agg-4`
+   1. [x] - `p1` - **RETURN** 400 Bad Request with body `{"error": "<message>", "code": "VALIDATION_ERROR", "details": ["<field>: <reason>", ...]}` - `inst-agg-4a`
+5. [x] - `p1` - Gateway: invoke authorize-and-compile-scope (`cpt-cf-usage-collector-algo-query-api-authz-delegate`) for USAGE_RECORD_READ / LIST - `inst-agg-5`
+6. [x] - `p1` - **IF** authorization failed - `inst-agg-6`
+   1. [x] - `p1` - **RETURN** 403 Forbidden - `inst-agg-6a`
+7. [x] - `p1` - Gateway: build AggregationQuery (scope from compiled AccessScope, time_range, function, group_by, bucket_size, user-supplied optional filters) - `inst-agg-7`
    > The HTTP query parameter `usage_type=` maps directly to the `usage_type` field of `AggregationQuery`. No translation is required.
-8. [ ] - `p1` - Gateway: Plugin: query_aggregated(ctx, AggregationQuery) - `inst-agg-8`
-   1. [ ] - `p1` - **IF** plugin returns `Err(QueryResultTooLarge)` → **RETURN** 400 Bad Request with 'query too broad' error - `inst-agg-8b`
-   2. [ ] - `p1` - **IF** plugin returns `Err(e)` [that is not `QueryResultTooLarge`] → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-agg-8c`
-9. [ ] - `p1` - **RETURN** 200 OK with Vec<AggregationResult> - `inst-agg-9`
+8. [x] - `p1` - Gateway: Plugin: query_aggregated(ctx, AggregationQuery) - `inst-agg-8`
+   1. [x] - `p1` - **IF** plugin returns `Err(QueryResultTooLarge)` → **RETURN** 400 Bad Request with 'query too broad' error - `inst-agg-8b`
+   2. [x] - `p1` - **IF** plugin returns `Err(e)` [that is not `QueryResultTooLarge`] → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-agg-8c`
+9. [x] - `p1` - **RETURN** 200 OK with Vec<AggregationResult> - `inst-agg-9`
 
 ### Raw Usage Query
 
@@ -167,20 +167,20 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 - `cursor` is present but cannot be decoded as a valid (timestamp, id) composite → 400 Bad Request
 
 **Steps**:
-1. [ ] - `p2` - Consumer: API: GET /usage-collector/v1/raw (?from=, &to=, &cursor=, &page_size=, &usage_type=, &subject_id=, &subject_type=, &resource_id=, &resource_type=) - `inst-raw-1`
-2. [ ] - `p2` - Gateway: derive tenant_id from SecurityContext - `inst-raw-2`
-3. [ ] - `p2` - Gateway: validate mandatory parameters (from, to present); validate max-length of string filter fields (usage_type, resource_type, subject_type, source); reject with 400 if any exceeds MAX_FILTER_STRING_LEN; validate page_size ∈ [1, MAX_PAGE_SIZE]; use DEFAULT_PAGE_SIZE when page_size absent; return 400 if page_size out of range; if cursor is supplied, decode it and verify it is a well-formed (timestamp, id) composite; validate cursor.timestamp ∈ [from, to]; return 400 if out of range - `inst-raw-3`
-   1. [ ] - `p2` - **IF** `from >= to` → **RETURN** 400 validation error (time range must be strictly ascending) - `inst-raw-3a`
-   2. [ ] - `p2` - **IF** `(to - from) > MAX_QUERY_TIME_RANGE` → **RETURN** 400 validation error (range exceeds configured limit; `MAX_QUERY_TIME_RANGE` defined in §7 OPS-FDESIGN-002) - `inst-raw-3b`
-4. [ ] - `p2` - **IF** validation fails - `inst-raw-4`
-   1. [ ] - `p2` - **RETURN** 400 Bad Request with body `{"error": "<message>", "code": "VALIDATION_ERROR", "details": ["<field>: <reason>", ...]}` - `inst-raw-4a`
-5. [ ] - `p2` - Gateway: invoke authorize-and-compile-scope (`cpt-cf-usage-collector-algo-query-api-authz-delegate`) for USAGE_RECORD_READ / LIST - `inst-raw-5`
-6. [ ] - `p2` - **IF** authorization failed - `inst-raw-6`
-   1. [ ] - `p2` - **RETURN** 403 Forbidden - `inst-raw-6a`
-7. [ ] - `p2` - Gateway: build RawQuery (scope from compiled AccessScope, time_range, decoded cursor, page_size; pass user-supplied optional filters from HTTP query parameters: usage_type, resource_id, resource_type, subject_type, subject_id) - `inst-raw-7`
-8. [ ] - `p2` - Gateway: Plugin: query_raw(ctx, RawQuery) → PagedResult<UsageRecord> - `inst-raw-8`
-   1. [ ] - `p2` - **IF** plugin returns `Err(e)` [that is not `QueryResultTooLarge`] → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-raw-8b`
-9. [ ] - `p2` - **RETURN** 200 OK with PagedResult (items array + next_cursor; absent next_cursor signals the final page; empty items with absent next_cursor is a valid success) - `inst-raw-9`
+1. [x] - `p2` - Consumer: API: GET /usage-collector/v1/raw (?from=, &to=, &cursor=, &page_size=, &usage_type=, &subject_id=, &subject_type=, &resource_id=, &resource_type=) - `inst-raw-1`
+2. [x] - `p2` - Gateway: derive tenant_id from SecurityContext - `inst-raw-2`
+3. [x] - `p2` - Gateway: validate mandatory parameters (from, to present); validate max-length of string filter fields (usage_type, resource_type, subject_type, source); reject with 400 if any exceeds MAX_FILTER_STRING_LEN; validate page_size ∈ [1, MAX_PAGE_SIZE]; use DEFAULT_PAGE_SIZE when page_size absent; return 400 if page_size out of range; if cursor is supplied, decode it and verify it is a well-formed (timestamp, id) composite; validate cursor.timestamp ∈ [from, to]; return 400 if out of range - `inst-raw-3`
+   1. [x] - `p2` - **IF** `from >= to` → **RETURN** 400 validation error (time range must be strictly ascending) - `inst-raw-3a`
+   2. [x] - `p2` - **IF** `(to - from) > MAX_QUERY_TIME_RANGE` → **RETURN** 400 validation error (range exceeds configured limit; `MAX_QUERY_TIME_RANGE` defined in §7 OPS-FDESIGN-002) - `inst-raw-3b`
+4. [x] - `p2` - **IF** validation fails - `inst-raw-4`
+   1. [x] - `p2` - **RETURN** 400 Bad Request with body `{"error": "<message>", "code": "VALIDATION_ERROR", "details": ["<field>: <reason>", ...]}` - `inst-raw-4a`
+5. [x] - `p2` - Gateway: invoke authorize-and-compile-scope (`cpt-cf-usage-collector-algo-query-api-authz-delegate`) for USAGE_RECORD_READ / LIST - `inst-raw-5`
+6. [x] - `p2` - **IF** authorization failed - `inst-raw-6`
+   1. [x] - `p2` - **RETURN** 403 Forbidden - `inst-raw-6a`
+7. [x] - `p2` - Gateway: build RawQuery (scope from compiled AccessScope, time_range, decoded cursor, page_size; pass user-supplied optional filters from HTTP query parameters: usage_type, resource_id, resource_type, subject_type, subject_id) - `inst-raw-7`
+8. [x] - `p2` - Gateway: Plugin: query_raw(ctx, RawQuery) → PagedResult<UsageRecord> - `inst-raw-8`
+   1. [x] - `p2` - **IF** plugin returns `Err(e)` [that is not `QueryResultTooLarge`] → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-raw-8b`
+9. [x] - `p2` - **RETURN** 200 OK with PagedResult (items array + next_cursor; absent next_cursor signals the final page; empty items with absent next_cursor is a valid success) - `inst-raw-9`
 
 > **Retry guidance**: 4xx responses (400, 403) are not retryable. 5xx responses (503) should be retried by the caller with exponential backoff; the gateway does not retry internally.
 
@@ -195,15 +195,15 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 **Output**: `AccessScope` on success; `Err(PermissionDenied)` when PDP denies or returns no constraints
 
 **Steps**:
-1. [ ] - `p1` - Build AccessRequest with require_constraints(true) and BarrierMode::Respect; omit resource_property calls — no specific resource is known at query time - `inst-authz-1`
-2. [ ] - `p1` - Call PolicyEnforcer::new(authz).access_scope_with(ctx, &USAGE_RECORD_READ, actions::LIST, None, &request) - `inst-authz-2`
-3. [ ] - `p1` - **IF** PDP returns Err(Denied) — which includes the require_constraints(true) fail-closed path when no constraints are returned - `inst-authz-3`
-   1. [ ] - `p1` - **RETURN** Err(PermissionDenied); never fall through to a permissive path - `inst-authz-3a`
+1. [x] - `p1` - Build AccessRequest with require_constraints(true) and BarrierMode::Respect; omit resource_property calls — no specific resource is known at query time - `inst-authz-1`
+2. [x] - `p1` - Call PolicyEnforcer::new(authz).access_scope_with(ctx, &USAGE_RECORD_READ, actions::LIST, None, &request) - `inst-authz-2`
+3. [x] - `p1` - **IF** PDP returns Err(Denied) — which includes the require_constraints(true) fail-closed path when no constraints are returned - `inst-authz-3`
+   1. [x] - `p1` - **RETURN** Err(PermissionDenied); never fall through to a permissive path - `inst-authz-3a`
 > **Note (ID encoding)**: This step is logically step 3b (a sub-condition of the PDP Err handling started in step 3); it was renumbered to step 4 in v2.1 to avoid nested numbering. The ID `inst-authz-3b` is intentionally retained for traceability continuity.
 
-4. [ ] - `p1` - **IF** PDP returns any other `Err` variant (`NetworkError`, `Timeout`, `InternalError`, or any non-`Denied` error) → **LOG** at `ERROR` level with correlation ID: `"PDP infrastructure error (non-Denied): {variant_name}; correlation_id={id}"` (no PII, no raw error details) → **RETURN** `Err(PermissionDenied)`; fail-closed. No PDP error falls through to data access. - `inst-authz-3b`
-5. [ ] - `p1` - Compile Vec<Constraint> into AccessScope via compile_to_access_scope(). AccessScope encodes a disjunction of constraint groups (OR-of-ANDs): each Constraint becomes one AND-group. All fields within a single Constraint are combined with AND (conjunction); AccessScope is a disjunction (OR) of these AND-groups. compile_to_access_scope() preserves this structure without flattening. OR-of-ANDs constraint structure must be preserved exactly — flattening multiple constraints to independent AND conditions is a security violation. Flattening violates cpt-cf-usage-collector-principle-fail-closed (see `cpt-cf-usage-collector-constraint-or-of-ands-preservation`). - `inst-authz-4`
-6. [ ] - `p1` - **RETURN** AccessScope - `inst-authz-5`
+4. [x] - `p1` - **IF** PDP returns any other `Err` variant (`NetworkError`, `Timeout`, `InternalError`, or any non-`Denied` error) → **LOG** at `ERROR` level with correlation ID: `"PDP infrastructure error (non-Denied): {variant_name}; correlation_id={id}"` (no PII, no raw error details) → **RETURN** `Err(PermissionDenied)`; fail-closed. No PDP error falls through to data access. - `inst-authz-3b`
+5. [x] - `p1` - Compile Vec<Constraint> into AccessScope via compile_to_access_scope(). AccessScope encodes a disjunction of constraint groups (OR-of-ANDs): each Constraint becomes one AND-group. All fields within a single Constraint are combined with AND (conjunction); AccessScope is a disjunction (OR) of these AND-groups. compile_to_access_scope() preserves this structure without flattening. OR-of-ANDs constraint structure must be preserved exactly — flattening multiple constraints to independent AND conditions is a security violation. Flattening violates cpt-cf-usage-collector-principle-fail-closed (see `cpt-cf-usage-collector-constraint-or-of-ands-preservation`). - `inst-authz-4`
+6. [x] - `p1` - **RETURN** AccessScope - `inst-authz-5`
 
 ### SDK Type Additions
 
@@ -214,26 +214,26 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 **Output**: New types and trait operations exported from `usage-collector-sdk`
 
 **Steps**:
-0. [ ] - `p1` - **Note**: DateTime parameters (from, to in flows and time_range in queries): RFC 3339 UTC only. Offset-aware datetimes MUST be rejected with 400 Bad Request. page_size: when absent in request, default to DEFAULT_PAGE_SIZE. - `inst-sdk-0`
-1. [ ] - `p1` - Add `AggregationFn` enum to SDK models: variants Sum, Count, Min, Max, Avg - `inst-sdk-1`
-2. [ ] - `p1` - Add `BucketSize` type representing a time granularity for TimeBucket grouping - `inst-sdk-2`
-3. [ ] - `p1` - Add `GroupByDimension` enum: variants TimeBucket(BucketSize), UsageType, Subject, Resource, Source - `inst-sdk-3`
-4. [ ] - `p1` - Add `AggregationQuery` struct: fields scope: AccessScope, time_range: (DateTime<Utc>, DateTime<Utc>), function: AggregationFn, group_by: Vec<GroupByDimension>, bucket_size: Option<BucketSize>, usage_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, subject_id: Option<Uuid>, subject_type: Option<String>, source: Option<String> - `inst-sdk-4`
+0. [x] - `p1` - **Note**: DateTime parameters (from, to in flows and time_range in queries): RFC 3339 UTC only. Offset-aware datetimes MUST be rejected with 400 Bad Request. page_size: when absent in request, default to DEFAULT_PAGE_SIZE. - `inst-sdk-0`
+1. [x] - `p1` - Add `AggregationFn` enum to SDK models: variants Sum, Count, Min, Max, Avg - `inst-sdk-1`
+2. [x] - `p1` - Add `BucketSize` type representing a time granularity for TimeBucket grouping - `inst-sdk-2`
+3. [x] - `p1` - Add `GroupByDimension` enum: variants TimeBucket(BucketSize), UsageType, Subject, Resource, Source - `inst-sdk-3`
+4. [x] - `p1` - Add `AggregationQuery` struct: fields scope: AccessScope, time_range: (DateTime<Utc>, DateTime<Utc>), function: AggregationFn, group_by: Vec<GroupByDimension>, bucket_size: Option<BucketSize>, usage_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, subject_id: Option<Uuid>, subject_type: Option<String>, source: Option<String> - `inst-sdk-4`
    > **Parameterization**: String filter fields (usage_type, resource_type, subject_type, source) MUST be passed as parameterized storage query arguments; string interpolation into query strings is prohibited.
    >
    > **Filter composition**: All present optional filters AND the AccessScope scope are applied conjunctively (AND semantics).
-5. [ ] - `p1` - Add `AggregationResult` struct: fields function: AggregationFn, value: f64, bucket_start: Option<DateTime<Utc>>, usage_type: Option<String>, subject_id: Option<Uuid>, subject_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, source: Option<String>; each Option field is populated only when the corresponding GroupByDimension was requested. Option fields in AggregationResult are absent (not null) in JSON serialization when the corresponding GroupByDimension was not requested. - `inst-sdk-5`
-6. [ ] - `p2` - Add `Cursor` opaque type (wraps a base64-encoded composite of timestamp + record UUID as stable pagination position) and `PagedResult<T>` struct: fields items: Vec<T>, next_cursor: Option<Cursor>. Cursor encodes exclusive lower bound (timestamp, id). Plugin MUST return records ordered ascending by (timestamp, id) WHERE (timestamp, id) > (cursor.timestamp, cursor.id) within the requested time range. A Cursor from a different [from, to] range SHOULD be rejected with 400 Bad Request. Cursor stability: a Cursor is valid for the lifetime of the request that produced it. Concurrent data writes SHOULD NOT invalidate an in-progress pagination sequence; implementations MAY use snapshot isolation or equivalent to guarantee stability within a single paginated traversal. A Cursor obtained from a previous request SHOULD remain valid for at least the configured cursor TTL (gateway configuration constant, see §7 OPS-FDESIGN-002). Retry idempotency: repeating a raw query with the same Cursor (within cursor TTL) returns the same page. Delete consistency: records deleted between page fetches MAY cause a page to contain fewer items than `page_size`; the cursor still advances to the next position after the last returned record; callers MUST tolerate short pages. - `inst-sdk-6`
-   1. [ ] - `p2` - **IF** cursor TTL expired **RETURN** 410 Gone with body `{"error": "cursor expired", "code": "CURSOR_EXPIRED"}` - `inst-sdk-6a`
+5. [x] - `p1` - Add `AggregationResult` struct: fields function: AggregationFn, value: f64, bucket_start: Option<DateTime<Utc>>, usage_type: Option<String>, subject_id: Option<Uuid>, subject_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, source: Option<String>; each Option field is populated only when the corresponding GroupByDimension was requested. Option fields in AggregationResult are absent (not null) in JSON serialization when the corresponding GroupByDimension was not requested. - `inst-sdk-5`
+6. [x] - `p2` - Add `Cursor` opaque type (wraps a base64-encoded composite of timestamp + record UUID as stable pagination position) and `PagedResult<T>` struct: fields items: Vec<T>, next_cursor: Option<Cursor>. Cursor encodes exclusive lower bound (timestamp, id). Plugin MUST return records ordered ascending by (timestamp, id) WHERE (timestamp, id) > (cursor.timestamp, cursor.id) within the requested time range. A Cursor from a different [from, to] range SHOULD be rejected with 400 Bad Request. Cursor stability: a Cursor is valid for the lifetime of the request that produced it. Concurrent data writes SHOULD NOT invalidate an in-progress pagination sequence; implementations MAY use snapshot isolation or equivalent to guarantee stability within a single paginated traversal. A Cursor obtained from a previous request SHOULD remain valid for at least the configured cursor TTL (gateway configuration constant, see §7 OPS-FDESIGN-002). Retry idempotency: repeating a raw query with the same Cursor (within cursor TTL) returns the same page. Delete consistency: records deleted between page fetches MAY cause a page to contain fewer items than `page_size`; the cursor still advances to the next position after the last returned record; callers MUST tolerate short pages. - `inst-sdk-6`
+   1. [x] - `p2` - **IF** cursor TTL expired **RETURN** 410 Gone with body `{"error": "cursor expired", "code": "CURSOR_EXPIRED"}` - `inst-sdk-6a`
    > **Cursor encoding**: Cursor payload is base64-encoded opaque state. No HMAC signing is applied in this feature (tamper-resistance deferred to a future feature — see Known Limitations). No version prefix is embedded; format changes require a new cursor type.
-7. [ ] - `p2` - Add `RawQuery` struct: fields scope: AccessScope, time_range: (DateTime<Utc>, DateTime<Utc>), usage_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, subject_type: Option<String>, subject_id: Option<Uuid>, cursor: Option<Cursor>, page_size: usize - `inst-sdk-7`
+7. [x] - `p2` - Add `RawQuery` struct: fields scope: AccessScope, time_range: (DateTime<Utc>, DateTime<Utc>), usage_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, subject_type: Option<String>, subject_id: Option<Uuid>, cursor: Option<Cursor>, page_size: usize - `inst-sdk-7`
    > **Bounds**: page_size MUST be validated in [1, MAX_PAGE_SIZE]; absent page_size defaults to DEFAULT_PAGE_SIZE. MAX_PAGE_SIZE and DEFAULT_PAGE_SIZE are gateway configuration constants (see §7 OPS-FDESIGN-002).
    >
    > **Filter composition**: All present optional filters AND the AccessScope scope are applied conjunctively (AND semantics).
    >
    > **Feature flags**: Not applicable for this feature; see §7.
-8. [ ] - `p1` - Add `query_aggregated(&self, ctx: &SecurityContext, query: AggregationQuery) -> Result<Vec<AggregationResult>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-8`
-9. [ ] - `p2` - Add `query_raw(&self, ctx: &SecurityContext, query: RawQuery) -> Result<PagedResult<UsageRecord>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-9`
+8. [x] - `p1` - Add `query_aggregated(&self, ctx: &SecurityContext, query: AggregationQuery) -> Result<Vec<AggregationResult>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-8`
+9. [x] - `p2` - Add `query_raw(&self, ctx: &SecurityContext, query: RawQuery) -> Result<PagedResult<UsageRecord>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-9`
 
 ### Noop Plugin Query Stubs
 
@@ -244,8 +244,8 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 **Output**: Compiling, non-panicking stub implementations in `noop-usage-collector-storage-plugin`
 
 **Steps**:
-1. [ ] - `p1` - Implement `query_aggregated` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return Ok(vec![]) — no storage access, no error - `inst-noop-1`
-2. [ ] - `p2` - Implement `query_raw` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return Ok(PagedResult { items: vec![], next_cursor: None }) — no storage access, no error - `inst-noop-2`
+1. [x] - `p1` - Implement `query_aggregated` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return Ok(vec![]) — no storage access, no error - `inst-noop-1`
+2. [x] - `p2` - Implement `query_raw` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return Ok(PagedResult { items: vec![], next_cursor: None }) — no storage access, no error - `inst-noop-2`
 
 ### Plugin Trait Contract Requirements
 

@@ -2,8 +2,8 @@ use chrono::Utc;
 use uuid::Uuid;
 
 use super::{
-    AggregationFn, AggregationQuery, AggregationResult, BucketSize, Cursor, GroupByDimension,
-    PagedResult, RawQuery, UsageKind, UsageRecord,
+    AggregationFn, AggregationQuery, AggregationResult, BucketSize, Cursor, CursorDecodeError,
+    GroupByDimension, PagedResult, RawQuery, UsageKind, UsageRecord,
 };
 use modkit_security::AccessScope;
 
@@ -82,6 +82,7 @@ fn aggregation_query_roundtrip_serde() {
         subject_id: None,
         subject_type: None,
         source: None,
+        max_rows: 0,
     };
     let json = serde_json::to_string(&query).unwrap();
     let deserialized: AggregationQuery = serde_json::from_str(&json).unwrap();
@@ -198,4 +199,63 @@ fn cursor_decode_missing_field_returns_error() {
     let bad = BASE64.encode(b"timestamp=2026-01-01T00:00:00Z");
     let result = Cursor::decode(&bad);
     assert!(result.is_err());
+}
+
+// ── Enum serde name tests ─────────────────────────────────────────────────
+
+#[test]
+fn test_aggregation_fn_serde_names() {
+    assert_eq!(serde_json::to_string(&AggregationFn::Sum).unwrap(), "\"sum\"");
+    assert_eq!(serde_json::to_string(&AggregationFn::Count).unwrap(), "\"count\"");
+    assert_eq!(serde_json::to_string(&AggregationFn::Min).unwrap(), "\"min\"");
+    assert_eq!(serde_json::to_string(&AggregationFn::Max).unwrap(), "\"max\"");
+    assert_eq!(serde_json::to_string(&AggregationFn::Avg).unwrap(), "\"avg\"");
+    // Round-trip
+    assert_eq!(serde_json::from_str::<AggregationFn>("\"sum\"").unwrap(), AggregationFn::Sum);
+    assert_eq!(serde_json::from_str::<AggregationFn>("\"avg\"").unwrap(), AggregationFn::Avg);
+}
+
+#[test]
+fn test_bucket_size_serde_names() {
+    assert_eq!(serde_json::to_string(&BucketSize::Minute).unwrap(), "\"minute\"");
+    assert_eq!(serde_json::to_string(&BucketSize::Hour).unwrap(), "\"hour\"");
+    assert_eq!(serde_json::to_string(&BucketSize::Day).unwrap(), "\"day\"");
+    assert_eq!(serde_json::to_string(&BucketSize::Week).unwrap(), "\"week\"");
+    assert_eq!(serde_json::to_string(&BucketSize::Month).unwrap(), "\"month\"");
+    // Round-trip
+    assert_eq!(serde_json::from_str::<BucketSize>("\"hour\"").unwrap(), BucketSize::Hour);
+}
+
+#[test]
+fn test_group_by_dimension_serde_names() {
+    // Externally tagged enum: {"time_bucket":"day"} for TimeBucket(Day)
+    let tb_day = GroupByDimension::TimeBucket(BucketSize::Day);
+    let json = serde_json::to_string(&tb_day).unwrap();
+    assert!(
+        json.contains("time_bucket") && json.contains("day"),
+        "TimeBucket(Day) must serialize to externally-tagged JSON, got: {json}"
+    );
+    // Unit variants use snake_case
+    assert_eq!(serde_json::to_string(&GroupByDimension::UsageType).unwrap(), "\"usage_type\"");
+    assert_eq!(serde_json::to_string(&GroupByDimension::Subject).unwrap(), "\"subject\"");
+    assert_eq!(serde_json::to_string(&GroupByDimension::Resource).unwrap(), "\"resource\"");
+    assert_eq!(serde_json::to_string(&GroupByDimension::Source).unwrap(), "\"source\"");
+    // Round-trip for a unit variant
+    assert_eq!(
+        serde_json::from_str::<GroupByDimension>("\"usage_type\"").unwrap(),
+        GroupByDimension::UsageType
+    );
+}
+
+#[test]
+fn test_cursor_decode_invalid_timestamp() {
+    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+    // Construct a payload in the same format as Cursor::encode but with a non-RFC3339 timestamp
+    let bad_payload = "timestamp=not-a-date&id=00000000-0000-0000-0000-000000000000";
+    let encoded = BASE64.encode(bad_payload.as_bytes());
+    let result = Cursor::decode(&encoded);
+    assert!(
+        matches!(result, Err(CursorDecodeError::InvalidTimestamp)),
+        "non-RFC3339 timestamp must produce InvalidTimestamp error, got: {result:?}"
+    );
 }
