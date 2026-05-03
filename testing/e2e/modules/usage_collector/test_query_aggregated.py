@@ -12,7 +12,7 @@ from datetime import datetime, timedelta, timezone
 
 import pytest
 
-from .helpers import encode_dt, wait_for_record
+from .helpers import encode_dt, wait_for_n_records, wait_for_record
 
 
 MODULE = "e2e-test"
@@ -42,7 +42,7 @@ async def test_aggregated_sum(gateway_client):
         )
         assert resp.status_code == 204, f"expected 204, got {resp.status_code}: {resp.text}"
 
-    await wait_for_record(gateway_client, from_dt, to_dt, resource_id=resource_id)
+    await wait_for_n_records(gateway_client, from_dt, to_dt, 3, resource_id=resource_id)
 
     resp = await gateway_client.get(
         "/usage-collector/v1/aggregated",
@@ -83,7 +83,7 @@ async def test_aggregated_count(gateway_client):
         )
         assert resp.status_code == 204, f"expected 204, got {resp.status_code}: {resp.text}"
 
-    await wait_for_record(gateway_client, from_dt, to_dt, resource_id=resource_id)
+    await wait_for_n_records(gateway_client, from_dt, to_dt, 5, resource_id=resource_id)
 
     resp = await gateway_client.get(
         "/usage-collector/v1/aggregated",
@@ -122,7 +122,7 @@ async def test_aggregated_avg(gateway_client):
         )
         assert resp.status_code == 204, f"expected 204, got {resp.status_code}: {resp.text}"
 
-    await wait_for_record(gateway_client, from_dt, to_dt, resource_id=resource_id)
+    await wait_for_n_records(gateway_client, from_dt, to_dt, 4, resource_id=resource_id)
 
     resp = await gateway_client.get(
         "/usage-collector/v1/aggregated",

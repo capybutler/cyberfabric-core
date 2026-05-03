@@ -47,6 +47,8 @@ async def wait_for_record(
         "from": encode_dt(from_dt),
         "to": encode_dt(to_dt),
     }
+    if resource_id is not None:
+        params["resource_id"] = str(resource_id)
 
     loop = asyncio.get_running_loop()
     deadline = loop.time() + timeout
@@ -65,5 +67,57 @@ async def wait_for_record(
 
     raise TimeoutError(
         f"No matching record appeared within {timeout}s "
+        f"(from={encode_dt(from_dt)}, to={encode_dt(to_dt)}, resource_id={resource_id})"
+    )
+
+
+async def wait_for_n_records(
+    client,
+    from_dt: datetime,
+    to_dt: datetime,
+    n: int,
+    *,
+    resource_id: str | None = None,
+    timeout: float = 10.0,
+    interval: float = 0.3,
+) -> list[dict[str, Any]]:
+    """Poll GET /usage-collector/v1/raw until at least *n* matching records appear.
+
+    Args:
+        client: httpx.AsyncClient configured with the server base URL.
+        from_dt: Start of the time range (inclusive).
+        to_dt: End of the time range (inclusive).
+        n: Minimum number of records to wait for.
+        resource_id: Optional resource_id to filter by (sent as a server-side filter).
+        timeout: Maximum seconds to wait before raising TimeoutError.
+        interval: Seconds between polling attempts.
+
+    Returns:
+        The list of matching record dicts once at least *n* are present.
+
+    Raises:
+        TimeoutError: If fewer than *n* matching records appear within *timeout* seconds.
+    """
+    params: dict[str, str] = {
+        "from": encode_dt(from_dt),
+        "to": encode_dt(to_dt),
+    }
+    if resource_id is not None:
+        params["resource_id"] = str(resource_id)
+
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
+
+    while loop.time() < deadline:
+        resp = await client.get("/usage-collector/v1/raw", params=params)
+        resp.raise_for_status()
+        data = resp.json()
+        items = data.get("items", [])
+        if len(items) >= n:
+            return items
+        await asyncio.sleep(interval)
+
+    raise TimeoutError(
+        f"Expected at least {n} records but found fewer within {timeout}s "
         f"(from={encode_dt(from_dt)}, to={encode_dt(to_dt)}, resource_id={resource_id})"
     )

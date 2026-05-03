@@ -10,6 +10,7 @@ Binary selection:
 
 from __future__ import annotations
 
+import asyncio
 import os
 import socket
 import subprocess
@@ -212,16 +213,20 @@ def emitter_env(emitter_test_env):
 @pytest.fixture(scope="session")
 def gateway_client(test_env):
     """Pre-configured async HTTP client targeting the gateway (Instance 2)."""
-    return httpx.AsyncClient(
+    client = httpx.AsyncClient(
         base_url=f"{test_env.base_url}/cf",
         timeout=30.0,
     )
+    yield client
+    asyncio.run(client.aclose())
 
 
 @pytest.fixture(scope="session")
 def emitter_client(emitter_env):
     """Pre-configured async HTTP client targeting the emitter (Instance 1)."""
-    return httpx.AsyncClient(
+    client = httpx.AsyncClient(
         base_url=f"{emitter_env.base_url}/cf",
         timeout=30.0,
     )
+    yield client
+    asyncio.run(client.aclose())
