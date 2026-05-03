@@ -64,9 +64,13 @@ sea-orm-migration = { workspace = true }
 [dev-dependencies]
 # ModKit dependencies
 modkit-security = { workspace = true }
+modkit-db = { workspace = true, features = ["sqlite"] }
 
 # Async runtime
 tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 # HTTP mocking
 httpmock = { workspace = true }
+
+# Usage emitter for delivery handler tests
+usage-emitter = { workspace = true }

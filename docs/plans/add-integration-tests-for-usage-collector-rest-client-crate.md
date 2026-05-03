@@ -65,9 +65,9 @@ No validation commands defined.
 - `.plans/implement-rest-client-integration-tests/phase-02-delivery-pipeline-tests.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - This phase adds delivery-pipeline integration tests for the `cf-usage-collector-rest-client` crate. It creates `tests/delivery_pipeline_tests.rs` with six `async` tests that wire a real `UsageCollectorRestClient` into `DeliveryHandler` against a live `httpmock` server, covering success, auth-header forwarding, 500/429 retry paths, 401 reject, and AuthN-failure reject. It also updates `Cargo.toml` if the required dev-dependencies (`usage-emitter`, `modkit-db` with `sqlite` feature) are not yet present. After writing the file the phase runs the full test suite and verifies all tests pass.
