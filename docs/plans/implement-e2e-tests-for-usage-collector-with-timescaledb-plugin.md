@@ -181,9 +181,9 @@ No validation commands defined.
 - `.plans/implement-feature-e2e-tests-timescaledb/phase-05-aggregated-query-tests.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Write `testing/e2e/modules/usage_collector/test_query_aggregated.py` containing exactly five async pytest test functions that exercise the `GET /usage-collector/v1/aggregated` endpoint: sum, count, avg, group-by-resource, and time-range scenarios. All queries MUST include `resource_id` or `subject_id` as a query parameter so that routing goes through the raw hypertable path, making tests deterministic without depending on TimescaleDB's background continuous-aggregate refresh cycle. The cagg path is intentionally out of scope for e2e tests and is covered by the Rust integration tests.
