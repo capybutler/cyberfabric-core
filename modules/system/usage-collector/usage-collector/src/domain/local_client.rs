@@ -357,7 +357,19 @@ struct LocalPluginProxy {
 #[async_trait]
 impl UsageCollectorPluginClientV1 for LocalPluginProxy {
     async fn create_usage_record(&self, record: UsageRecord) -> Result<(), UsageCollectorError> {
-        self.inner.get_plugin().await?.create_usage_record(record).await
+        let is_open = self.inner.circuit_breaker.lock().await.is_open();
+        if is_open {
+            return Err(UsageCollectorError::circuit_open());
+        }
+        let plugin = self.inner.get_plugin().await?;
+        let result = timeout(self.inner.config.plugin_timeout, plugin.create_usage_record(record))
+            .await
+            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
+        match &result {
+            Ok(_) => self.inner.circuit_breaker.lock().await.record_success(),
+            Err(_) => self.inner.circuit_breaker.lock().await.record_failure(),
+        }
+        result
     }
 
     async fn query_aggregated(

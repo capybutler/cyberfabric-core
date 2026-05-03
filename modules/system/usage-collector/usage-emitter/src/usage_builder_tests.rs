@@ -346,12 +346,8 @@ async fn test_gauge_with_blank_idempotency_key_uses_uuid_fallback() {
     let payload = captured.lock().unwrap().take().unwrap();
     let record: UsageRecord = serde_json::from_slice(&payload).unwrap();
     assert!(
-        !record.idempotency_key.is_empty(),
-        "expected a non-empty UUID, got an empty string"
-    );
-    assert_ne!(
-        record.idempotency_key, "",
-        "blank idempotency key must not be stored as-is"
+        record.idempotency_key.is_empty(),
+        "gauge records must have empty idempotency_key so storage can store NULL"
     );
 }
 

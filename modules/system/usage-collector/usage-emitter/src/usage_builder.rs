@@ -145,9 +145,13 @@ impl<'a> UsageRecordBuilder<'a> {
             metric: self.metric,
             kind,
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5b
-            idempotency_key: match self.idempotency_key.as_deref() {
-                Some(k) if !k.trim().is_empty() => k.to_owned(),
-                _ => Uuid::new_v4().to_string(),
+            idempotency_key: if kind == UsageKind::Gauge {
+                String::new()
+            } else {
+                match self.idempotency_key.as_deref() {
+                    Some(k) if !k.trim().is_empty() => k.to_owned(),
+                    _ => Uuid::new_v4().to_string(),
+                }
             },
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5b
             value: self.value,

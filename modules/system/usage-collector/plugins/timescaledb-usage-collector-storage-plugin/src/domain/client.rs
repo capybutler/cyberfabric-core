@@ -128,11 +128,12 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         };
 
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+        self.metrics.record_ingestion_latency_ms(elapsed_ms);
         if rows_affected == 0 {
             self.metrics.record_dedup();
+        } else {
+            self.metrics.record_ingestion_success();
         }
-        self.metrics.record_ingestion_latency_ms(elapsed_ms);
-        self.metrics.record_ingestion_success();
 
         // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest:p1:inst-flow-ing-5
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-7
@@ -524,7 +525,8 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         if page_size < 1 {
             return Err(UsageCollectorError::internal("page_size must be >= 1"));
         }
-        add_arg(&mut args, page_size)?;
+        // Fetch one extra row to detect whether more pages exist without a separate COUNT query.
+        add_arg(&mut args, page_size + 1)?;
 
         let where_clause = where_clauses.join(" AND ");
         let sql = format!(
@@ -551,8 +553,11 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-6
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-7
-        let next_cursor = if rows.len() == query.page_size {
-            if let Some(last_row) = rows.last() {
+        let has_more = rows.len() > query.page_size;
+        let rows_page = if has_more { &rows[..query.page_size] } else { &rows[..] };
+
+        let next_cursor = if has_more {
+            if let Some(last_row) = rows_page.last() {
                 let last_ts: DateTime<Utc> = last_row
                     .try_get("timestamp")
                     .map_err(|e| UsageCollectorError::internal(format!("cursor extraction error: {e}")))?;
@@ -567,7 +572,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             None
         };
 
-        let records: Vec<UsageRecord> = rows
+        let records: Vec<UsageRecord> = rows_page
             .iter()
             .map(|row| -> Result<UsageRecord, UsageCollectorError> {
                 let kind_str: String = row

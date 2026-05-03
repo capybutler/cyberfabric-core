@@ -212,7 +212,7 @@ async fn test_create_usage_record_idempotent_insert() {
 
     assert!(result.is_ok());
     assert_eq!(metrics.dedup.load(Ordering::SeqCst), 1, "dedup counter must be incremented");
-    assert_eq!(metrics.ingestion_success.load(Ordering::SeqCst), 1, "Ok still reported for dedup");
+    assert_eq!(metrics.ingestion_success.load(Ordering::SeqCst), 0, "success not reported for dedup");
 }
 
 #[tokio::test]

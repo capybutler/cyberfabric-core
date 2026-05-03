@@ -40,7 +40,7 @@ impl OtelPluginMetrics {
 
 impl PluginMetrics for OtelPluginMetrics {
     fn record_ingestion_success(&self) {
-        self.ingestion_total.add(1, &[]);
+        self.ingestion_total.add(1, &[KeyValue::new("status", "success")]);
     }
 
     fn record_ingestion_error(&self) {
@@ -53,6 +53,7 @@ impl PluginMetrics for OtelPluginMetrics {
 
     fn record_dedup(&self) {
         self.dedup_total.add(1, &[]);
+        self.ingestion_total.add(1, &[KeyValue::new("status", "dedup")]);
     }
 
     fn record_schema_validation_error(&self) {
