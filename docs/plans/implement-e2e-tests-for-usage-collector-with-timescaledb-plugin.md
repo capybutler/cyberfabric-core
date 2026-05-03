@@ -48,9 +48,9 @@ No validation commands defined.
 - `.plans/implement-feature-e2e-tests-timescaledb/phase-02-e2e-infrastructure.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Create the Python e2e test module for `usage-collector` under `testing/e2e/modules/usage_collector/`. This phase delivers: a `TimescaleDB` Docker sidecar implementing `SidecarProtocol`, a two-server `conftest.py` supporting the federation topology (Instance 1 = emitter, Instance 2 = gateway with timescaledb plugin), a `config/base.yaml` template with placeholder markers, and a `helpers.py` module with `wait_for_record` and `encode_dt`. No test files are written in this phase; only the shared infrastructure that test phases 3–5 depend on.

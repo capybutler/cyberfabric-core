@@ -51,6 +51,9 @@ use usage_collector as _;
 #[cfg(feature = "timescaledb-usage-collector-storage-plugin")]
 use timescaledb_usage_collector_storage_plugin as _;
 
+#[cfg(feature = "usage-collector-rest-client")]
+use usage_collector_rest_client as _;
+
 // === Example Features ===
 
 #[cfg(feature = "users-info-example")]
