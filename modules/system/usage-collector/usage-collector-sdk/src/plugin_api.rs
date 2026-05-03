@@ -3,7 +3,7 @@
 use async_trait::async_trait;
 
 use crate::error::UsageCollectorError;
-use crate::models::{AggregationQuery, AggregationResult, PagedResult, RawQuery, UsageRecord};
+use crate::models::{AggregationQuery, AggregationResult, RawQuery, UsageRecord};
 
 /// Backend storage adapter for usage records.
 ///
@@ -23,5 +23,5 @@ pub trait UsageCollectorPluginClientV1: Send + Sync {
     async fn query_raw(
         &self,
         query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError>;
+    ) -> Result<modkit_odata::Page<UsageRecord>, UsageCollectorError>;
 }

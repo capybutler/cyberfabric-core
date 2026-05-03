@@ -2,7 +2,7 @@ use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
+use modkit_odata::CursorV1;
 use modkit_security::AccessScope;
 
 /// Kind of numeric usage observation (gauge vs counter).
@@ -175,100 +175,6 @@ pub struct AggregationResult {
 }
 // @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p1:inst-sdk-5
 
-/// Error decoding a cursor.
-#[derive(Debug, thiserror::Error)]
-pub enum CursorDecodeError {
-    #[error("invalid base64")]
-    InvalidBase64,
-    #[error("invalid UTF-8 in cursor payload")]
-    InvalidUtf8,
-    #[error("missing cursor field: {0}")]
-    MissingField(&'static str),
-    #[error("invalid timestamp in cursor")]
-    InvalidTimestamp,
-    #[error("invalid UUID in cursor")]
-    InvalidUuid,
-}
-
-// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6
-/// Opaque pagination cursor encoding an exclusive lower bound (timestamp, id).
-///
-/// Serializes as a base64-encoded string in JSON responses.
-/// Payload format: `timestamp=<RFC3339>&id=<UUID>` base64-encoded.
-#[derive(Debug, Clone, PartialEq)]
-pub struct Cursor {
-    pub timestamp: DateTime<Utc>,
-    pub id: Uuid,
-}
-
-impl Cursor {
-    /// Encode this cursor as a base64 string.
-    #[must_use]
-    pub fn encode(&self) -> String {
-        let payload = format!(
-            "timestamp={}&id={}",
-            self.timestamp.to_rfc3339(),
-            self.id
-        );
-        BASE64.encode(payload.as_bytes())
-    }
-
-    /// Decode a base64 cursor string.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the string is not valid base64 or the payload is malformed.
-    pub fn decode(encoded: &str) -> Result<Self, CursorDecodeError> {
-        let bytes = BASE64
-            .decode(encoded)
-            .map_err(|_| CursorDecodeError::InvalidBase64)?;
-        let payload =
-            String::from_utf8(bytes).map_err(|_| CursorDecodeError::InvalidUtf8)?;
-
-        let timestamp_str = cursor_field(&payload, "timestamp=")
-            .ok_or(CursorDecodeError::MissingField("timestamp"))?;
-        let id_str = cursor_field(&payload, "id=")
-            .ok_or(CursorDecodeError::MissingField("id"))?;
-
-        let timestamp = DateTime::parse_from_rfc3339(&timestamp_str)
-            .map_err(|_| CursorDecodeError::InvalidTimestamp)?
-            .with_timezone(&Utc);
-        let id = Uuid::parse_str(&id_str).map_err(|_| CursorDecodeError::InvalidUuid)?;
-
-        Ok(Self { timestamp, id })
-    }
-}
-// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6
-
-fn cursor_field(payload: &str, prefix: &str) -> Option<String> {
-    payload
-        .split('&')
-        .find(|part| part.starts_with(prefix))
-        .map(|part| part[prefix.len()..].to_owned())
-}
-
-impl Serialize for Cursor {
-    fn serialize<S: serde::Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        serializer.serialize_str(&self.encode())
-    }
-}
-
-impl<'de> Deserialize<'de> for Cursor {
-    fn deserialize<D: serde::Deserializer<'de>>(deserializer: D) -> Result<Self, D::Error> {
-        let s = String::deserialize(deserializer)?;
-        Cursor::decode(&s).map_err(serde::de::Error::custom)
-    }
-}
-
-/// Paginated result returned by `query_raw`.
-#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
-pub struct PagedResult<T> {
-    pub items: Vec<T>,
-    #[serde(skip_serializing_if = "Option::is_none", default)]
-    #[schema(value_type = Option<String>)]
-    pub next_cursor: Option<Cursor>,
-}
-
 // @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-7
 /// Parameters for a raw usage record query delegated to the storage plugin.
 ///
@@ -299,7 +205,7 @@ pub struct RawQuery {
     pub subject_id: Option<Uuid>,
     /// Pagination cursor for the next page.
     #[serde(skip_serializing_if = "Option::is_none", default)]
-    pub cursor: Option<Cursor>,
+    pub cursor: Option<CursorV1>,
     /// Number of records per page.
     pub page_size: usize,
 }

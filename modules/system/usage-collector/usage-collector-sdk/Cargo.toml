@@ -20,6 +20,7 @@ workspace = true
 [dependencies]
 # ModKit dependencies
 modkit = { workspace = true }
+modkit-odata = { workspace = true }
 modkit-security = { workspace = true }
 
 # Async runtime

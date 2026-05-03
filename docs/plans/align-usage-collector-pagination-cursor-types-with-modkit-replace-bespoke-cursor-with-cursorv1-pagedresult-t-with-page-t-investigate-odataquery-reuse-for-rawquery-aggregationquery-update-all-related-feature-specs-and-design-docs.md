@@ -62,9 +62,9 @@ No validation commands defined.
 - `.plans/implement-feature-query-api-modkit-alignment/phase-02-sdk-core-update.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Replace the bespoke `Cursor`, `CursorDecodeError`, `PagedResult<T>`, and the `cursor_field` helper in `models.rs` with the modkit-odata equivalents (`CursorV1` and `Page<T>`). Update `RawQuery.cursor` to use `Option<modkit_odata::CursorV1>` (or apply the ODataQuery strategy if Phase 1 recommended replacing `RawQuery` entirely). Update `plugin_api.rs` to change `query_raw`'s return type from `Result<PagedResult<UsageRecord>, UsageCollectorError>` to `Result<modkit_odata::Page<UsageRecord>, UsageCollectorError>`. Update `lib.rs` to replace the re-exports of bespoke cursor/page types with `Page` and `PageInfo` from `modkit_odata`. Add the `modkit-odata` workspace dependency to `Cargo.toml`. Write `out/phase-02-sdk-interface.md` listing all changed public type signatures for downstream phases.
