@@ -197,7 +197,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 ### Continuous Aggregate — 1h Bucket Pre-Aggregation
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate`
 
 **Input**: `sqlx::PgPool` — invoked as part of schema migrations after the hypertable exists; `continuous_aggregate_refresh_interval` operational parameter (default: 30-minute schedule, 2-hour start offset, 1-hour end offset)
 
@@ -206,11 +206,11 @@ Internal system functions and procedures that do not interact with actors direct
 **Operational parameter**: `continuous_aggregate_refresh_interval` — maximum refresh lag between latest ingested records and the pre-aggregated view; default schedule produces at most ~30 min lag; MUST be documented in plugin operator documentation and surfaced as a queryable parameter per DESIGN §3.7
 
 **Steps**:
-1. [ ] - `p1` - Create the `usage_agg_1h` continuous aggregate materialized view over `usage_records`, grouping by 1-hour time buckets (`timestamp`), `tenant_id`, `metric`, `module`, `resource_type`, and `subject_type`; aggregate columns: sum of `value`, count of records, min of `value`, max of `value`; exclude `resource_id` and `subject_id` from GROUP BY to prevent cardinality explosion; `AVG` is not stored — computed at query time as `sum / NULLIF(count, 0)` for correctness across bucket merges; defer initial data population (`WITH NO DATA`); if the view already exists, skip — `inst-cagg-1`
-2. [ ] - `p1` - Register an automated refresh policy for `usage_agg_1h`: schedule interval 30 minutes, start offset 2 hours, end offset 1 hour; if a policy already exists, skip — `inst-cagg-2`
-3. [ ] - `p1` - **IF** the view was newly created (not already present) — trigger an initial manual refresh to populate historical data up to 1 hour before the current time — `inst-cagg-3`
-4. [ ] - `p1` - Verify the view exists and the refresh policy is registered; **IF** verification fails — **RETURN** `MigrationError::ContinuousAggregateSetupFailed` - `inst-cagg-4`
-5. [ ] - `p1` - **RETURN** `Ok(())` - `inst-cagg-5`
+1. [x] - `p1` - Create the `usage_agg_1h` continuous aggregate materialized view over `usage_records`, grouping by 1-hour time buckets (`timestamp`), `tenant_id`, `metric`, `module`, `resource_type`, and `subject_type`; aggregate columns: sum of `value`, count of records, min of `value`, max of `value`; exclude `resource_id` and `subject_id` from GROUP BY to prevent cardinality explosion; `AVG` is not stored — computed at query time as `sum / NULLIF(count, 0)` for correctness across bucket merges; defer initial data population (`WITH NO DATA`); if the view already exists, skip — `inst-cagg-1`
+2. [x] - `p1` - Register an automated refresh policy for `usage_agg_1h`: schedule interval 30 minutes, start offset 2 hours, end offset 1 hour; if a policy already exists, skip — `inst-cagg-2`
+3. [x] - `p1` - **IF** the view was newly created (not already present) — trigger an initial manual refresh to populate historical data up to 1 hour before the current time — `inst-cagg-3`
+4. [x] - `p1` - Verify the view exists and the refresh policy is registered; **IF** verification fails — **RETURN** `MigrationError::ContinuousAggregateSetupFailed` - `inst-cagg-4`
+5. [x] - `p1` - **RETURN** `Ok(())` - `inst-cagg-5`
 
 **Implements**: `cpt-cf-usage-collector-fr-pluggable-storage` (plugin-owned acceleration structure), `cpt-cf-usage-collector-nfr-query-latency` (pre-aggregation meets ≤ 500ms p95 for 30-day single-tenant aggregation without `resource_id`/`subject_id` GROUP BY)
 

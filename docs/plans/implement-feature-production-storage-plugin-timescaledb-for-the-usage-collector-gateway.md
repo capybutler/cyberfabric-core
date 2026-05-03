@@ -124,9 +124,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-03-continuous-aggregate.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Implement `src/infra/continuous_aggregate.rs` inside the `timescaledb-usage-collector-storage-plugin` crate. The file must contain a single public async function `setup_continuous_aggregate(pool: &PgPool) -> Result<(), MigrationError>` that executes the 5-step idempotent setup defined by `inst-cagg-1` through `inst-cagg-5`: create the `usage_agg_1h` materialized view over `usage_records` grouping by 1-hour time buckets (with `WITH NO DATA`), register the automated 30-minute refresh policy, trigger an initial manual refresh only when the view was newly created, verify the view and policy exist, and return `Ok(())`. Each step must be wrapped with a matching `@cpt-begin`/`@cpt-end` marker pair. After creating the file, update `infra/mod.rs` to expose `pub mod continuous_aggregate` and mark `inst-cagg-1` through `inst-cagg-5` as `[x]` in the FEATURE spec.
