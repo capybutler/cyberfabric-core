@@ -530,7 +530,6 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
     ],
     "page_info": {
       "next_cursor": "eyJ2IjoxLCJrIjpbIjIwMjYtMDEtMDFUMDY6MDA6MDBaIiwiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIl0sIm8iOiJhc2MiLCJzIjoiK3RpbWVzdGFtcCwraWQiLCJkIjoiZndkIn0",
-      "prev_cursor": null,
       "limit": 2
     }
   }

@@ -3,7 +3,9 @@ use serde::{Deserialize, Serialize};
 #[cfg_attr(feature = "with-utoipa", derive(utoipa::ToSchema))]
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PageInfo {
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub next_cursor: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
     pub prev_cursor: Option<String>,
     pub limit: u64,
 }

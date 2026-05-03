@@ -524,7 +524,7 @@ fn decode_and_validate_cursor(
         errors.push("cursor: malformed cursor".to_owned());
         return None;
     }
-    let ts_str = cursor.k.first().map_or("", String::as_str);
+    let ts_str = cursor.k[0].as_str();
     let Ok(ts) = DateTime::parse_from_rfc3339(ts_str) else {
         errors.push("cursor: malformed cursor".to_owned());
         return None;
