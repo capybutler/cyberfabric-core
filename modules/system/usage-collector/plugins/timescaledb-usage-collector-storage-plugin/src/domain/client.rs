@@ -105,6 +105,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                     && db_err.code().as_deref() == Some("23505") {
                         tracing::warn!(error = %db_err, "unexpected unique constraint violation in usage_records");
                         self.metrics.record_ingestion_error();
+                        self.metrics.record_ingestion_latency_ms(start.elapsed().as_secs_f64() * 1000.0);
                         return Err(UsageCollectorError::internal(
                             "unexpected unique constraint violation",
                         ));
@@ -115,6 +116,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                 // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-5
                 if is_transient_error(&e) {
                     self.metrics.record_ingestion_error();
+                    self.metrics.record_ingestion_latency_ms(start.elapsed().as_secs_f64() * 1000.0);
                     return Err(UsageCollectorError::unavailable(format!(
                         "transient error: {e}"
                     )));
@@ -123,6 +125,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                 // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest:p1:inst-flow-ing-4
 
                 self.metrics.record_ingestion_error();
+                self.metrics.record_ingestion_latency_ms(start.elapsed().as_secs_f64() * 1000.0);
                 return Err(UsageCollectorError::internal(format!("storage error: {e}")));
             }
         };
@@ -378,6 +381,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
+                self.metrics.record_query_latency_ms("aggregated", start.elapsed().as_secs_f64() * 1000.0);
                 if is_transient_error(&e) {
                     UsageCollectorError::unavailable(format!("transient error: {e}"))
                 } else {
@@ -544,6 +548,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             .fetch_all(&self.pool)
             .await
             .map_err(|e| {
+                self.metrics.record_query_latency_ms("raw", start.elapsed().as_secs_f64() * 1000.0);
                 if is_transient_error(&e) {
                     UsageCollectorError::unavailable(format!("transient error: {e}"))
                 } else {
