@@ -97,7 +97,7 @@ async def test_aggregated_count(gateway_client):
     resp.raise_for_status()
     items = resp.json()
     assert len(items) > 0, "expected at least one aggregated row"
-    assert abs(items[0]["value"] - 5) < 0.001, f"expected count ~5, got {items[0]['value']}"
+    assert items[0]["value"] == 5, f"expected count 5, got {items[0]['value']}"
 
 
 @pytest.mark.asyncio

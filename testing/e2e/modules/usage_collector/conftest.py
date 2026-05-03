@@ -163,16 +163,18 @@ def emitter_env(emitter_test_env):
     logs_dir = PROJECT_ROOT / "testing" / "e2e" / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     log = logs_dir / f"hyperspot-e2e-{env.port}-uc-emitter.log"
-    log_fh = open(log, "w")
 
-    proc = subprocess.Popen(
-        [str(binary), "--config", str(config_path), "run"],
-        cwd=str(PROJECT_ROOT),
-        stdout=log_fh,
-        stderr=subprocess.STDOUT,
-    )
-
+    proc = None
+    log_fh = None
     try:
+        log_fh = open(log, "w")
+        proc = subprocess.Popen(
+            [str(binary), "--config", str(config_path), "run"],
+            cwd=str(PROJECT_ROOT),
+            stdout=log_fh,
+            stderr=subprocess.STDOUT,
+        )
+
         # Wait for health
         health_url = f"http://localhost:{env.port}{env.health_path}"
         deadline = time.monotonic() + env.health_timeout
@@ -198,13 +200,18 @@ def emitter_env(emitter_test_env):
         )
 
     finally:
-        proc.terminate()
-        try:
-            proc.wait(timeout=5)
-        except subprocess.TimeoutExpired:
-            proc.kill()
-            proc.wait(timeout=3)
-        log_fh.close()
+        if proc is not None:
+            proc.terminate()
+            try:
+                proc.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                proc.kill()
+                try:
+                    proc.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    pass
+        if log_fh is not None:
+            log_fh.close()
         config_path.unlink(missing_ok=True)
 
 
