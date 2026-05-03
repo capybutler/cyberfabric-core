@@ -273,9 +273,9 @@ No validation commands defined.
 - `.plans/implement-feature-query-api-modkit-alignment/phase-05-unit-test-updates.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Update the unit test files in three packages so they compile and pass against the new `CursorV1` and `Page<T>` types introduced by Phases 2-4. In `models_tests.rs`, replace all bespoke `Cursor` encode/decode tests with `CursorV1` round-trip equivalents and remove `CursorDecodeError` tests. In `noop-usage-collector-storage-plugin/src/domain/client_tests.rs`, update `PagedResult { items, next_cursor }` assertions to `Page { items, page_info }` shape. In `handlers_tests.rs`, search for all test cases that reference `PagedResult`, `Cursor`, `next_cursor`, or `page_size` and update only those cases to use the new response body shape; the remainder of the 1498-line file must be left unchanged.

@@ -1,9 +1,10 @@
 use chrono::Utc;
+use modkit_odata::{CursorV1, Page, PageInfo, SortDir};
 use uuid::Uuid;
 
 use super::{
-    AggregationFn, AggregationQuery, AggregationResult, BucketSize, Cursor, CursorDecodeError,
-    GroupByDimension, PagedResult, RawQuery, UsageKind, UsageRecord,
+    AggregationFn, AggregationQuery, AggregationResult, BucketSize, GroupByDimension, RawQuery,
+    UsageKind, UsageRecord,
 };
 use modkit_security::AccessScope;
 
@@ -141,64 +142,75 @@ fn raw_query_roundtrip_serde() {
     assert!(deserialized.scope.is_deny_all());
 }
 
-// ── PagedResult round-trip ────────────────────────────────────────────────
+// ── Page<T> round-trip ───────────────────────────────────────────────────
 
 #[test]
-fn paged_result_without_cursor_roundtrip_serde() {
-    let result: PagedResult<UsageRecord> = PagedResult {
-        items: vec![make_record()],
-        next_cursor: None,
-    };
-    let json = serde_json::to_string(&result).unwrap();
-    let deserialized: PagedResult<UsageRecord> = serde_json::from_str(&json).unwrap();
+fn page_without_cursor_roundtrip_serde() {
+    let page: Page<UsageRecord> = Page::new(
+        vec![make_record()],
+        PageInfo { next_cursor: None, prev_cursor: None, limit: 50 },
+    );
+    let json = serde_json::to_string(&page).unwrap();
+    let deserialized: Page<UsageRecord> = serde_json::from_str(&json).unwrap();
     assert_eq!(deserialized.items.len(), 1);
-    assert!(deserialized.next_cursor.is_none());
-    assert!(!json.contains("next_cursor"), "absent cursor must not appear in JSON");
+    assert!(deserialized.page_info.next_cursor.is_none());
 }
 
 #[test]
-fn paged_result_with_cursor_roundtrip_serde() {
-    let cursor = Cursor {
-        timestamp: "2026-01-01T06:00:00Z".parse::<chrono::DateTime<Utc>>().unwrap(),
-        id: Uuid::nil(),
+fn page_with_cursor_roundtrip_serde() {
+    let cursor = CursorV1 {
+        k: vec!["2026-01-01T06:00:00+00:00".to_owned(), Uuid::nil().to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
     };
-    let result: PagedResult<UsageRecord> = PagedResult {
-        items: vec![],
-        next_cursor: Some(cursor.clone()),
+    let encoded = cursor.encode().expect("CursorV1 encode is infallible for valid data");
+    let page: Page<UsageRecord> = Page::new(
+        vec![],
+        PageInfo { next_cursor: Some(encoded.clone()), prev_cursor: None, limit: 50 },
+    );
+    let json = serde_json::to_string(&page).unwrap();
+    let deserialized: Page<UsageRecord> = serde_json::from_str(&json).unwrap();
+    let cursor_str = deserialized.page_info.next_cursor.expect("next_cursor must be present");
+    assert_eq!(cursor_str, encoded);
+}
+
+// ── CursorV1 encode/decode ───────────────────────────────────────────────
+
+#[test]
+fn cursorv1_encode_decode_roundtrip() {
+    let original = CursorV1 {
+        k: vec![
+            "2026-01-01T06:00:00+00:00".to_owned(),
+            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap().to_string(),
+        ],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
     };
-    let json = serde_json::to_string(&result).unwrap();
-    let deserialized: PagedResult<UsageRecord> = serde_json::from_str(&json).unwrap();
-    assert!(deserialized.next_cursor.is_some());
-    let decoded = deserialized.next_cursor.unwrap();
-    assert_eq!(decoded, cursor);
-}
-
-// ── Cursor encode/decode ──────────────────────────────────────────────────
-
-#[test]
-fn cursor_encode_decode_roundtrip() {
-    let original = Cursor {
-        timestamp: "2026-01-01T06:00:00Z".parse::<chrono::DateTime<Utc>>().unwrap(),
-        id: Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap(),
-    };
-    let encoded = original.encode();
-    let decoded = Cursor::decode(&encoded).expect("decode must succeed");
-    assert_eq!(decoded, original);
+    let encoded = original.encode().expect("CursorV1 encode is infallible for valid data");
+    let decoded = CursorV1::decode(&encoded).expect("CursorV1 decode must succeed for freshly encoded cursor");
+    assert_eq!(decoded.k, original.k);
+    assert_eq!(decoded.o, original.o);
+    assert_eq!(decoded.s, original.s);
+    assert_eq!(decoded.f, original.f);
+    assert_eq!(decoded.d, original.d);
 }
 
 #[test]
-fn cursor_decode_malformed_base64_returns_error() {
-    let result = Cursor::decode("not-valid-base64!!!");
-    assert!(result.is_err(), "malformed base64 must return an error");
+fn cursorv1_decode_malformed_base64_returns_error() {
+    let result = CursorV1::decode("not-valid-base64url!!!");
+    assert!(result.is_err(), "malformed base64url must return an error");
 }
 
 #[test]
-fn cursor_decode_missing_field_returns_error() {
-    // valid base64 but missing 'id' field
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-    let bad = BASE64.encode(b"timestamp=2026-01-01T00:00:00Z");
-    let result = Cursor::decode(&bad);
-    assert!(result.is_err());
+fn cursorv1_decode_invalid_json_returns_error() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as BASE64URL};
+    let bad = BASE64URL.encode(b"not-json-at-all");
+    let result = CursorV1::decode(&bad);
+    assert!(result.is_err(), "invalid JSON payload must return an error");
 }
 
 // ── Enum serde name tests ─────────────────────────────────────────────────
@@ -247,15 +259,3 @@ fn test_group_by_dimension_serde_names() {
     );
 }
 
-#[test]
-fn test_cursor_decode_invalid_timestamp() {
-    use base64::{Engine as _, engine::general_purpose::STANDARD as BASE64};
-    // Construct a payload in the same format as Cursor::encode but with a non-RFC3339 timestamp
-    let bad_payload = "timestamp=not-a-date&id=00000000-0000-0000-0000-000000000000";
-    let encoded = BASE64.encode(bad_payload.as_bytes());
-    let result = Cursor::decode(&encoded);
-    assert!(
-        matches!(result, Err(CursorDecodeError::InvalidTimestamp)),
-        "non-RFC3339 timestamp must produce InvalidTimestamp error, got: {result:?}"
-    );
-}
