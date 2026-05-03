@@ -4,11 +4,12 @@ mod common;
 
 use httpmock::prelude::*;
 use serde_json::json;
-use usage_collector_rest_client::{UsageCollectorRestClient, UsageCollectorRestClientConfig};
+use usage_collector_rest_client::UsageCollectorRestClient;
+use usage_collector_sdk::models::UsageRecord;
 use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
 use uuid::Uuid;
 
-use common::{MockAuthN, make_client, test_cfg, test_record};
+use common::{MockAuthN, make_client, test_record};
 
 // --- create_usage_record tests ---
 
@@ -20,7 +21,6 @@ async fn create_usage_record_returns_ok_on_204() {
         then.status(204);
     });
 
-    let _cfg: UsageCollectorRestClientConfig = test_cfg(&server.base_url());
     let client: UsageCollectorRestClient = make_client(&server.base_url(), MockAuthN::with_token("tok"));
     assert!(client.create_usage_record(test_record()).await.is_ok());
 }
@@ -131,10 +131,30 @@ async fn create_usage_record_sends_subject_fields() {
         then.status(204);
     });
 
-    use usage_collector_sdk::models::UsageRecord;
     let record = UsageRecord {
         subject_id: Some(Uuid::nil()),
         subject_type: Some("test.subject".to_owned()),
+        ..test_record()
+    };
+    let client = make_client(&server.base_url(), MockAuthN::with_token("tok"));
+    client.create_usage_record(record).await.unwrap();
+    mock.assert();
+}
+
+#[tokio::test]
+async fn create_usage_record_omits_subject_fields_when_absent() {
+    let server = MockServer::start();
+    let mock = server.mock(|when, then| {
+        when.method(POST)
+            .path("/usage-collector/v1/records")
+            .body_excludes("\"subject_id\"")
+            .body_excludes("\"subject_type\"");
+        then.status(204);
+    });
+
+    let record = UsageRecord {
+        subject_id: None,
+        subject_type: None,
         ..test_record()
     };
     let client = make_client(&server.base_url(), MockAuthN::with_token("tok"));
@@ -232,7 +252,7 @@ async fn get_module_config_returns_module_not_found_on_404() {
 #[tokio::test]
 async fn get_module_config_percent_encodes_slash_in_module_name() {
     let server = MockServer::start();
-    let _mock = server.mock(|when, then| {
+    let mock = server.mock(|when, then| {
         when.method(GET)
             .path("/usage-collector/v1/modules/my%2Fmodule/config");
         then.status(200).json_body(json!({"allowed_metrics": []}));
@@ -244,12 +264,13 @@ async fn get_module_config_percent_encodes_slash_in_module_name() {
         result.is_ok(),
         "expected Ok but got Err: {result:?} — slash was not percent-encoded"
     );
+    mock.assert();
 }
 
 #[tokio::test]
 async fn get_module_config_percent_encodes_space_in_module_name() {
     let server = MockServer::start();
-    let _mock = server.mock(|when, then| {
+    let mock = server.mock(|when, then| {
         when.method(GET)
             .path("/usage-collector/v1/modules/my%20module/config");
         then.status(200).json_body(json!({"allowed_metrics": []}));
@@ -261,4 +282,5 @@ async fn get_module_config_percent_encodes_space_in_module_name() {
         result.is_ok(),
         "expected Ok but got Err: {result:?} — space was not percent-encoded"
     );
+    mock.assert();
 }

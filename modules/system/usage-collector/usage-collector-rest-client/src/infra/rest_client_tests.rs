@@ -130,6 +130,14 @@ fn authn_no_plugin_maps_to_internal() {
     assert!(matches!(out, UsageCollectorError::Internal { .. }));
 }
 
+#[test]
+fn authn_internal_error_maps_to_internal() {
+    let out = authn_error_to_usage_collector_error(AuthNResolverError::Internal(
+        "unexpected subsystem error".to_owned(),
+    ));
+    assert!(matches!(out, UsageCollectorError::Internal { .. }));
+}
+
 // --- Integration tests with mock HTTP server ---
 
 enum AuthNOutcome {
@@ -506,7 +514,7 @@ async fn get_module_config_percent_encodes_slash_in_module_name() {
     // segment so the raw '/' does not appear unencoded, and the server receives
     // the encoded form '%2F' rather than an extra path separator.
     let server = MockServer::start();
-    let _mock = server.mock(|when, then| {
+    let mock = server.mock(|when, then| {
         when.method(GET)
             .path("/usage-collector/v1/modules/my%2Fmodule/config");
         then.status(200).json_body(json!({"allowed_metrics": []}));
@@ -519,6 +527,7 @@ async fn get_module_config_percent_encodes_slash_in_module_name() {
         "expected Ok but got Err: {result:?} — the mock server only matches '%2F', \
          so a failure here means the slash was not percent-encoded"
     );
+    mock.assert();
 }
 
 #[tokio::test]
@@ -527,7 +536,7 @@ async fn get_module_config_percent_encodes_space_in_module_name() {
     // A module_name containing a space MUST be percent-encoded ('%20') in the
     // URL path segment.
     let server = MockServer::start();
-    let _mock = server.mock(|when, then| {
+    let mock = server.mock(|when, then| {
         when.method(GET)
             .path("/usage-collector/v1/modules/my%20module/config");
         then.status(200).json_body(json!({"allowed_metrics": []}));
@@ -540,4 +549,5 @@ async fn get_module_config_percent_encodes_space_in_module_name() {
         "expected Ok but got Err: {result:?} — the mock only matches '%20', \
          so a failure means the space was not percent-encoded"
     );
+    mock.assert();
 }

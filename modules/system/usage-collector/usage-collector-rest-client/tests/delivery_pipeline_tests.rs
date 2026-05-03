@@ -7,11 +7,11 @@ use std::sync::Arc;
 use chrono::Utc;
 use httpmock::prelude::*;
 use modkit_db::outbox::{LeasedMessageHandler, MessageResult, OutboxMessage};
-use usage_collector_rest_client::{UsageCollectorRestClient, UsageCollectorRestClientConfig};
+use usage_collector_rest_client::UsageCollectorRestClient;
 use usage_collector_sdk::models::UsageRecord;
 use usage_emitter::DeliveryHandler;
 
-use common::{MockAuthN, make_client, test_cfg, test_record};
+use common::{MockAuthN, make_client, test_record};
 
 fn make_outbox_msg(record: &UsageRecord) -> OutboxMessage {
     OutboxMessage {
@@ -32,7 +32,6 @@ async fn delivery_handler_with_rest_client_succeeds_on_204() {
         then.status(204);
     });
 
-    let _cfg: UsageCollectorRestClientConfig = test_cfg(&server.base_url());
     let client: UsageCollectorRestClient = make_client(&server.base_url(), MockAuthN::with_token("tok"));
     let handler = DeliveryHandler::new(Arc::new(client));
     let record = test_record();

@@ -189,6 +189,10 @@ fn authn_error_to_usage_collector_error(e: AuthNResolverError) -> UsageCollector
         AuthNResolverError::NoPluginAvailable => UsageCollectorError::internal(
             "no AuthN plugin available for client credentials exchange",
         ),
+        // Permanent: an internal error in the AuthN subsystem. Retrying will not fix this.
+        AuthNResolverError::Internal(msg) => UsageCollectorError::internal(format!(
+            "AuthN internal error during client credentials exchange: {msg}"
+        )),
         // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-4
         // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-3
         // Transient: the identity service is temporarily unreachable (network outage,
