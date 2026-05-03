@@ -16,8 +16,8 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use testcontainers::core::{ContainerPort, WaitFor};
 use testcontainers::{ContainerAsync, ContainerRequest, GenericImage, ImageExt, runners::AsyncRunner};
-use usage_collector_sdk::UsageCollectorPluginClientV1;
-use usage_collector_sdk::models::{AggregationFn, AggregationQuery, RawQuery, UsageKind, UsageRecord};
+use usage_collector_sdk::{UsageCollectorError, UsageCollectorPluginClientV1};
+use usage_collector_sdk::models::{AggregationFn, AggregationQuery, BucketSize, GroupByDimension, RawQuery, UsageKind, UsageRecord};
 use uuid::Uuid;
 
 use timescaledb_usage_collector_storage_plugin::domain::client::TimescaleDbPluginClient;
@@ -351,6 +351,23 @@ async fn cursor_stability_under_concurrent_inserts() {
     );
 }
 
+// ── Additional helpers ────────────────────────────────────────────────────────
+
+fn counter_record_with_value(tenant_id: Uuid, resource_id: Uuid, key: &str, value: f64) -> UsageRecord {
+    UsageRecord {
+        value,
+        ..counter_record(tenant_id, resource_id, key)
+    }
+}
+
+fn record_with_subject(tenant_id: Uuid, resource_id: Uuid, subject_id: Uuid, key: &str) -> UsageRecord {
+    UsageRecord {
+        subject_id: Some(subject_id),
+        subject_type: Some("user".to_string()),
+        ..counter_record(tenant_id, resource_id, key)
+    }
+}
+
 // ── Test 5: health_check_metric ───────────────────────────────────────────────
 
 #[cfg(feature = "integration")]
@@ -371,5 +388,1262 @@ async fn health_check_metric() {
     assert!(
         !probe_after_close,
         "liveness probe must fail after pool is closed (storage_health_status = 0)"
+    );
+}
+
+// ── Group A: all 5 aggregation functions on the raw path ──────────────────────
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_raw_sum() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    for (i, val) in [(0u32, 10.0f64), (1, 20.0), (2, 30.0)] {
+        client.create_usage_record(counter_record_with_value(tenant_id, resource_id, &format!("sum-raw-{i}"), val)).await.expect("insert failed");
+    }
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 60.0).abs() < 1e-6, "expected sum=60.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_raw_count() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    for i in 0u32..3 {
+        client.create_usage_record(counter_record(tenant_id, resource_id, &format!("count-raw-{i}"))).await.expect("insert failed");
+    }
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Count,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 3.0).abs() < 1e-6, "expected count=3.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_raw_min() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    for (i, val) in [(0u32, 10.0f64), (1, 20.0), (2, 30.0)] {
+        client.create_usage_record(counter_record_with_value(tenant_id, resource_id, &format!("min-raw-{i}"), val)).await.expect("insert failed");
+    }
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Min,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected min=10.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_raw_max() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    for (i, val) in [(0u32, 10.0f64), (1, 20.0), (2, 30.0)] {
+        client.create_usage_record(counter_record_with_value(tenant_id, resource_id, &format!("max-raw-{i}"), val)).await.expect("insert failed");
+    }
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Max,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 30.0).abs() < 1e-6, "expected max=30.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_raw_avg() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    for (i, val) in [(0u32, 10.0f64), (1, 20.0), (2, 30.0)] {
+        client.create_usage_record(counter_record_with_value(tenant_id, resource_id, &format!("avg-raw-{i}"), val)).await.expect("insert failed");
+    }
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Avg,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 20.0).abs() < 1e-6, "expected avg=20.0, got {}", results[0].value);
+}
+
+// ── Group B: all 5 aggregation functions on the cagg path ─────────────────────
+
+async fn cagg_refresh(pool: &sqlx::PgPool) {
+    sqlx::query(
+        "CALL refresh_continuous_aggregate(\
+             'usage_agg_1h', \
+             (NOW() - INTERVAL '5 hours')::timestamptz, \
+             (NOW() - INTERVAL '1 hour')::timestamptz\
+         )",
+    )
+    .execute(pool)
+    .await
+    .expect("manual cagg refresh failed");
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_cagg_sum() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    for (i, val) in [(0u32, 10.0f64), (1, 20.0), (2, 30.0)] {
+        let mut r = counter_record_with_value(tenant_id, resource_id, &format!("sum-cagg-{i}"), val);
+        r.timestamp = past_ts;
+        client.create_usage_record(r).await.expect("insert failed");
+    }
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 60.0).abs() < 1e-6, "expected cagg sum=60.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_cagg_count() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    for i in 0u32..3 {
+        let mut r = counter_record(tenant_id, resource_id, &format!("count-cagg-{i}"));
+        r.timestamp = past_ts;
+        client.create_usage_record(r).await.expect("insert failed");
+    }
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Count,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 3.0).abs() < 1e-6, "expected cagg count=3.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_cagg_min() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    for (i, val) in [(0u32, 10.0f64), (1, 20.0), (2, 30.0)] {
+        let mut r = counter_record_with_value(tenant_id, resource_id, &format!("min-cagg-{i}"), val);
+        r.timestamp = past_ts;
+        client.create_usage_record(r).await.expect("insert failed");
+    }
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Min,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected cagg min=10.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_cagg_max() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    for (i, val) in [(0u32, 10.0f64), (1, 20.0), (2, 30.0)] {
+        let mut r = counter_record_with_value(tenant_id, resource_id, &format!("max-cagg-{i}"), val);
+        r.timestamp = past_ts;
+        client.create_usage_record(r).await.expect("insert failed");
+    }
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Max,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 30.0).abs() < 1e-6, "expected cagg max=30.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_cagg_avg() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    for (i, val) in [(0u32, 10.0f64), (1, 20.0), (2, 30.0)] {
+        let mut r = counter_record_with_value(tenant_id, resource_id, &format!("avg-cagg-{i}"), val);
+        r.timestamp = past_ts;
+        client.create_usage_record(r).await.expect("insert failed");
+    }
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Avg,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 20.0).abs() < 1e-6, "expected cagg avg=20.0, got {}", results[0].value);
+}
+
+// ── Group C: GroupByDimension variants ────────────────────────────────────────
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_group_by_usage_type_raw() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(counter_record(tenant_id, resource_id, "gbu-type-raw-1")).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![GroupByDimension::UsageType],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].usage_type, Some("test.cpu".to_string()));
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_group_by_usage_type_cagg() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    let mut r = counter_record(tenant_id, resource_id, "gbu-type-cagg-1");
+    r.timestamp = past_ts;
+    client.create_usage_record(r).await.expect("insert failed");
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![GroupByDimension::UsageType],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!(results[0].usage_type.is_some(), "expected usage_type to be populated on cagg path");
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_group_by_resource() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(counter_record(tenant_id, resource_id, "gbr-raw-1")).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![GroupByDimension::Resource],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].resource_id, Some(resource_id));
+    assert_eq!(results[0].resource_type, Some("vm".to_string()));
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_group_by_subject() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let subject_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(record_with_subject(tenant_id, resource_id, subject_id, "gbs-raw-1")).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![GroupByDimension::Subject],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].subject_id, Some(subject_id));
+    assert_eq!(results[0].subject_type, Some("user".to_string()));
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_group_by_source() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(counter_record(tenant_id, resource_id, "gbsrc-raw-1")).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![GroupByDimension::Source],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert_eq!(results[0].source, Some("integration-test".to_string()));
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_group_by_time_bucket_raw() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(counter_record(tenant_id, resource_id, "gbtb-raw-1")).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![GroupByDimension::TimeBucket(BucketSize::Hour)],
+        bucket_size: Some(BucketSize::Hour),
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert!(!results.is_empty(), "expected at least one result row");
+    assert!(results[0].bucket_start.is_some(), "expected bucket_start to be populated");
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_group_by_time_bucket_cagg() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    let mut r = counter_record(tenant_id, resource_id, "gbtb-cagg-1");
+    r.timestamp = past_ts;
+    client.create_usage_record(r).await.expect("insert failed");
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![GroupByDimension::TimeBucket(BucketSize::Hour)],
+        bucket_size: Some(BucketSize::Hour),
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert!(!results.is_empty(), "expected at least one result row");
+    assert!(results[0].bucket_start.is_some(), "expected bucket_start to be populated on cagg path");
+}
+
+// ── Group D: query_aggregated filters on the raw path ─────────────────────────
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_usage_type_raw() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    // Insert "test.cpu" (value 10) and "test.mem" (value 20)
+    client.create_usage_record(counter_record_with_value(tenant_id, resource_id, "fut-cpu-1", 10.0)).await.expect("insert failed");
+    let mut mem_rec = counter_record_with_value(tenant_id, resource_id, "fut-mem-1", 20.0);
+    mem_rec.metric = "test.mem".to_string();
+    client.create_usage_record(mem_rec).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: Some("test.cpu".to_string()),
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected only test.cpu sum=10.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_resource_type_raw() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    // 2 "vm" records (value 10 each) and 1 "disk" record (value 20)
+    client.create_usage_record(counter_record_with_value(tenant_id, resource_id, "frt-vm-1", 10.0)).await.expect("insert failed");
+    client.create_usage_record(counter_record_with_value(tenant_id, resource_id, "frt-vm-2", 10.0)).await.expect("insert failed");
+    let mut disk_rec = counter_record_with_value(tenant_id, resource_id, "frt-disk-1", 20.0);
+    disk_rec.resource_type = "disk".to_string();
+    client.create_usage_record(disk_rec).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: Some("vm".to_string()),
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 20.0).abs() < 1e-6, "expected vm sum=20.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_subject_type_raw() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let subject_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    // 1 record with subject_type "user" (value 10) and 1 without (value 20)
+    client.create_usage_record(record_with_subject(tenant_id, resource_id, subject_id, "fst-user-1")).await.expect("insert failed");
+    client.create_usage_record(counter_record_with_value(tenant_id, resource_id, "fst-none-1", 20.0)).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: Some("user".to_string()),
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected user-only sum=10.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_source_raw() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    // 1 record from "mod-a" (value 10) and 1 from "mod-b" (value 20)
+    client.create_usage_record(counter_record_with_value(tenant_id, resource_id, "fsrc-a-1", 10.0)).await.expect("insert failed");
+    let mut mod_b = counter_record_with_value(tenant_id, resource_id, "fsrc-b-1", 20.0);
+    mod_b.module = "mod-b".to_string();
+    client.create_usage_record(mod_b).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: Some("integration-test".to_string()),
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected integration-test-only sum=10.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_multi_raw() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    // (cpu, vm, 10), (cpu, disk, 15), (mem, vm, 20), (mem, disk, 25)
+    client.create_usage_record(counter_record_with_value(tenant_id, resource_id, "fmulti-cv-1", 10.0)).await.expect("insert failed");
+    let mut cpu_disk = counter_record_with_value(tenant_id, resource_id, "fmulti-cd-1", 15.0);
+    cpu_disk.resource_type = "disk".to_string();
+    client.create_usage_record(cpu_disk).await.expect("insert failed");
+    let mut mem_vm = counter_record_with_value(tenant_id, resource_id, "fmulti-mv-1", 20.0);
+    mem_vm.metric = "test.mem".to_string();
+    client.create_usage_record(mem_vm).await.expect("insert failed");
+    let mut mem_disk = counter_record_with_value(tenant_id, resource_id, "fmulti-md-1", 25.0);
+    mem_disk.metric = "test.mem".to_string();
+    mem_disk.resource_type = "disk".to_string();
+    client.create_usage_record(mem_disk).await.expect("insert failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: Some("test.cpu".to_string()),
+        resource_id: Some(resource_id),
+        resource_type: Some("vm".to_string()),
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected multi-filter sum=10.0, got {}", results[0].value);
+}
+
+// ── Group E: query_aggregated filters on the cagg path ────────────────────────
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_usage_type_cagg() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    let mut cpu_rec = counter_record_with_value(tenant_id, resource_id, "fute-cpu-1", 10.0);
+    cpu_rec.timestamp = past_ts;
+    client.create_usage_record(cpu_rec).await.expect("insert failed");
+    let mut mem_rec = counter_record_with_value(tenant_id, resource_id, "fute-mem-1", 20.0);
+    mem_rec.metric = "test.mem".to_string();
+    mem_rec.timestamp = past_ts;
+    client.create_usage_record(mem_rec).await.expect("insert failed");
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: Some("test.cpu".to_string()),
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected cagg usage_type filter sum=10.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_resource_type_cagg() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    let mut vm_rec = counter_record_with_value(tenant_id, resource_id, "frte-vm-1", 10.0);
+    vm_rec.timestamp = past_ts;
+    client.create_usage_record(vm_rec).await.expect("insert failed");
+    let mut disk_rec = counter_record_with_value(tenant_id, resource_id, "frte-disk-1", 20.0);
+    disk_rec.resource_type = "disk".to_string();
+    disk_rec.timestamp = past_ts;
+    client.create_usage_record(disk_rec).await.expect("insert failed");
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: Some("vm".to_string()),
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected cagg resource_type filter sum=10.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_subject_type_cagg() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let subject_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    let mut user_rec = record_with_subject(tenant_id, resource_id, subject_id, "fste-user-1");
+    user_rec.timestamp = past_ts;
+    client.create_usage_record(user_rec).await.expect("insert failed");
+    let mut none_rec = counter_record_with_value(tenant_id, resource_id, "fste-none-1", 20.0);
+    none_rec.timestamp = past_ts;
+    client.create_usage_record(none_rec).await.expect("insert failed");
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: Some("user".to_string()),
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected cagg subject_type filter sum=10.0, got {}", results[0].value);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_filter_source_cagg() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let past_ts = Utc::now() - chrono::Duration::hours(3);
+    let time_range = (past_ts - chrono::Duration::hours(1), past_ts + chrono::Duration::hours(2));
+
+    let mut a_rec = counter_record_with_value(tenant_id, resource_id, "fsrce-a-1", 10.0);
+    a_rec.timestamp = past_ts;
+    client.create_usage_record(a_rec).await.expect("insert failed");
+    let mut b_rec = counter_record_with_value(tenant_id, resource_id, "fsrce-b-1", 20.0);
+    b_rec.module = "mod-b".to_string();
+    b_rec.timestamp = past_ts;
+    client.create_usage_record(b_rec).await.expect("insert failed");
+    cagg_refresh(&db.pool).await;
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: Some("integration-test".to_string()),
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected cagg source filter sum=10.0, got {}", results[0].value);
+}
+
+// ── Group F: query_aggregated scope isolation ──────────────────────────────────
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_scope_isolation() {
+    let db = setup_container_and_pool().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope_a = AccessScope::for_tenant(tenant_a);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    // Same resource_id, different tenants
+    client.create_usage_record(counter_record_with_value(tenant_a, resource_id, "scope-a-1", 10.0)).await.expect("insert tenant_a failed");
+    client.create_usage_record(counter_record_with_value(tenant_b, resource_id, "scope-b-1", 20.0)).await.expect("insert tenant_b failed");
+
+    let results = client.query_aggregated(AggregationQuery {
+        scope: scope_a,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: Some(resource_id),
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 100,
+    }).await.expect("query_aggregated failed");
+
+    assert_eq!(results.len(), 1);
+    assert!((results[0].value - 10.0).abs() < 1e-6, "expected only tenant_a sum=10.0, got {}", results[0].value);
+}
+
+// ── Group G: QueryResultTooLarge ──────────────────────────────────────────────
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_aggregated_result_too_large() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    // 3 records with distinct resource_ids → group by Resource yields 3 rows
+    for i in 0u32..3 {
+        let rid = Uuid::new_v4();
+        client.create_usage_record(counter_record(tenant_id, rid, &format!("too-large-{i}"))).await.expect("insert failed");
+    }
+
+    let result = client.query_aggregated(AggregationQuery {
+        scope,
+        time_range,
+        function: AggregationFn::Sum,
+        group_by: vec![GroupByDimension::Resource],
+        bucket_size: None,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_id: None,
+        subject_type: None,
+        source: None,
+        max_rows: 2,
+    }).await;
+
+    assert!(
+        matches!(result, Err(ref e) if matches!(e, UsageCollectorError::QueryResultTooLarge { .. })),
+        "expected QueryResultTooLarge, got {result:?}"
+    );
+}
+
+// ── Group H: query_raw filters ────────────────────────────────────────────────
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_raw_filter_usage_type() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(counter_record(tenant_id, resource_id, "rut-cpu-1")).await.expect("insert failed");
+    let mut mem_rec = counter_record(tenant_id, resource_id, "rut-mem-1");
+    mem_rec.metric = "test.mem".to_string();
+    client.create_usage_record(mem_rec).await.expect("insert failed");
+
+    let page = client.query_raw(RawQuery {
+        scope,
+        time_range,
+        usage_type: Some("test.cpu".to_string()),
+        resource_id: None,
+        resource_type: None,
+        subject_type: None,
+        subject_id: None,
+        cursor: None,
+        page_size: 100,
+    }).await.expect("query_raw failed");
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].metric, "test.cpu");
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_raw_filter_resource_id() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id_a = Uuid::new_v4();
+    let resource_id_b = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(counter_record(tenant_id, resource_id_a, "rrid-a-1")).await.expect("insert failed");
+    client.create_usage_record(counter_record(tenant_id, resource_id_b, "rrid-b-1")).await.expect("insert failed");
+
+    let page = client.query_raw(RawQuery {
+        scope,
+        time_range,
+        usage_type: None,
+        resource_id: Some(resource_id_a),
+        resource_type: None,
+        subject_type: None,
+        subject_id: None,
+        cursor: None,
+        page_size: 100,
+    }).await.expect("query_raw failed");
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].resource_id, resource_id_a);
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_raw_filter_resource_type() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(counter_record(tenant_id, resource_id, "rrtype-vm-1")).await.expect("insert failed");
+    let mut disk_rec = counter_record(tenant_id, resource_id, "rrtype-disk-1");
+    disk_rec.resource_type = "disk".to_string();
+    client.create_usage_record(disk_rec).await.expect("insert failed");
+
+    let page = client.query_raw(RawQuery {
+        scope,
+        time_range,
+        usage_type: None,
+        resource_id: None,
+        resource_type: Some("vm".to_string()),
+        subject_type: None,
+        subject_id: None,
+        cursor: None,
+        page_size: 100,
+    }).await.expect("query_raw failed");
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].resource_type, "vm");
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_raw_filter_subject_id() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let subject_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(record_with_subject(tenant_id, resource_id, subject_id, "rsid-with-1")).await.expect("insert failed");
+    client.create_usage_record(counter_record(tenant_id, resource_id, "rsid-without-1")).await.expect("insert failed");
+
+    let page = client.query_raw(RawQuery {
+        scope,
+        time_range,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_type: None,
+        subject_id: Some(subject_id),
+        cursor: None,
+        page_size: 100,
+    }).await.expect("query_raw failed");
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].subject_id, Some(subject_id));
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_raw_filter_subject_type() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let subject_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope = AccessScope::for_tenant(tenant_id);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(record_with_subject(tenant_id, resource_id, subject_id, "rst-user-1")).await.expect("insert failed");
+    client.create_usage_record(counter_record(tenant_id, resource_id, "rst-none-1")).await.expect("insert failed");
+
+    let page = client.query_raw(RawQuery {
+        scope,
+        time_range,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_type: Some("user".to_string()),
+        subject_id: None,
+        cursor: None,
+        page_size: 100,
+    }).await.expect("query_raw failed");
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].subject_type, Some("user".to_string()));
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn query_raw_scope_isolation() {
+    let db = setup_container_and_pool().await;
+    let tenant_a = Uuid::new_v4();
+    let tenant_b = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+    let scope_a = AccessScope::for_tenant(tenant_a);
+    let now = Utc::now();
+    let time_range = (now - chrono::Duration::hours(1), now + chrono::Duration::hours(1));
+
+    client.create_usage_record(counter_record(tenant_a, resource_id, "rscope-a-1")).await.expect("insert tenant_a failed");
+    client.create_usage_record(counter_record(tenant_b, resource_id, "rscope-b-1")).await.expect("insert tenant_b failed");
+
+    let page = client.query_raw(RawQuery {
+        scope: scope_a,
+        time_range,
+        usage_type: None,
+        resource_id: None,
+        resource_type: None,
+        subject_type: None,
+        subject_id: None,
+        cursor: None,
+        page_size: 100,
+    }).await.expect("query_raw failed");
+
+    assert_eq!(page.items.len(), 1);
+    assert_eq!(page.items[0].tenant_id, tenant_a, "must only return tenant_a records");
+}
+
+// ── Group I: create_usage_record validation errors ────────────────────────────
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn create_record_negative_counter_value() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+
+    let mut record = counter_record(tenant_id, resource_id, "neg-val-key");
+    record.value = -1.0;
+
+    let err = client.create_usage_record(record).await.unwrap_err();
+    assert!(
+        matches!(err, UsageCollectorError::Internal { .. }),
+        "expected Internal error for negative counter value, got {err:?}"
+    );
+}
+
+#[cfg(feature = "integration")]
+#[tokio::test]
+async fn create_record_empty_idempotency_key() {
+    let db = setup_container_and_pool().await;
+    let tenant_id = Uuid::new_v4();
+    let resource_id = Uuid::new_v4();
+    let client = make_client(db.pool.clone());
+
+    let record = counter_record(tenant_id, resource_id, "");
+
+    let err = client.create_usage_record(record).await.unwrap_err();
+    assert!(
+        matches!(err, UsageCollectorError::Internal { .. }),
+        "expected Internal error for empty idempotency_key, got {err:?}"
     );
 }
