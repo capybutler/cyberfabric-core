@@ -80,6 +80,11 @@ modules:
       circuit_breaker_failure_threshold: 5
       circuit_breaker_window: "10s"
       circuit_breaker_recovery_timeout: "30s"
+      metrics:
+        e2e.gauge:
+          kind: gauge
+        e2e.counter:
+          kind: counter
 
   # Gateway instance: uses the TimescaleDB storage plugin.
   # Emitter instance: this section is present but the module is not compiled in

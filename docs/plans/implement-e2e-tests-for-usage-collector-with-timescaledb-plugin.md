@@ -101,9 +101,9 @@ No validation commands defined.
 - `.plans/implement-feature-e2e-tests-timescaledb/phase-03-ingestion-tests.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Write `testing/e2e/modules/usage_collector/test_ingest.py` containing four async pytest test functions that cover the full ingestion path: local ingest, local idempotency deduplication, remote federation ingest (emitter to gateway), and remote idempotency deduplication via the plugin. Each test verifies the complete async delivery path from the SQLite outbox through the TimescaleDB plugin by using `wait_for_record` to confirm records appear in the GET /raw endpoint on the gateway.
