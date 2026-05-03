@@ -174,7 +174,7 @@ impl ScopedUsageEmitter {
         resource_type: String,
     ) -> Result<AuthorizedUsageEmitter, UsageEmitterError> {
         let subject_id = Some(ctx.subject_id());
-        let subject_type = Some(ctx.subject_type().unwrap_or("").to_owned());
+        let subject_type = ctx.subject_type().map(str::to_owned);
         self.authorize_for(
             ctx,
             ctx.subject_tenant_id(),

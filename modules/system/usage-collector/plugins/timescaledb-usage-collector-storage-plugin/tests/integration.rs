@@ -239,9 +239,11 @@ async fn query_aggregated_routing_decision() {
         .await
         .expect("raw hypertable path query failed");
 
+    assert_eq!(raw_results.len(), 1, "raw hypertable path must return exactly one aggregated row");
     assert!(
-        raw_results.iter().any(|r| r.value > 0.0),
-        "raw hypertable path must return non-zero aggregated value for the inserted records"
+        (raw_results[0].value - 30.0).abs() < 1e-6,
+        "raw hypertable path must return sum=30.0, got {}",
+        raw_results[0].value
     );
 
     // Continuous aggregate path: no resource_id/subject_id → routed to usage_agg_1h
@@ -263,9 +265,11 @@ async fn query_aggregated_routing_decision() {
         .await
         .expect("continuous aggregate path query failed");
 
+    assert_eq!(cagg_results.len(), 1, "continuous aggregate path must return exactly one aggregated row");
     assert!(
-        cagg_results.iter().any(|r| r.value > 0.0),
-        "continuous aggregate path must return non-zero sum after manual refresh"
+        (cagg_results[0].value - 30.0).abs() < 1e-6,
+        "continuous aggregate path must return sum=30.0 after manual refresh, got {}",
+        cagg_results[0].value
     );
 }
 
