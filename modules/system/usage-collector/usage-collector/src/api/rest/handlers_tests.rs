@@ -1407,7 +1407,7 @@ async fn test_raw_503_plugin_error() {
 /// CursorV1 migration: cursor TTL check removed — cursor within [from, to] always succeeds.
 /// The bespoke cursor included an issued_at field for TTL validation; CursorV1 has no such field.
 #[tokio::test]
-async fn test_raw_410_cursor_expired() {
+async fn test_raw_200_cursor_within_range_succeeds() {
     let ctx = test_ctx();
     let authz: Arc<dyn AuthZResolverClient> =
         Arc::new(AllowAuthZ { tenant_id: Uuid::new_v4() });
@@ -1485,6 +1485,43 @@ async fn test_raw_200_cursor_not_expired_old_data() {
         result.is_ok(),
         "cursor with old data timestamp within [from, to] must succeed: {result:?}"
     );
+}
+
+/// A structurally valid CursorV1 with empty k vector must be rejected with 400.
+#[tokio::test]
+async fn test_raw_400_cursor_empty_k_vector() {
+    let ctx = test_ctx();
+    let authz: Arc<dyn AuthZResolverClient> =
+        Arc::new(AllowAuthZ { tenant_id: Uuid::new_v4() });
+    let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
+
+    let cursor = CursorV1 {
+        k: vec![],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor.encode().expect("CursorV1 encode is infallible for valid data");
+
+    let now = Utc::now();
+    let params = RawQueryParams {
+        from: now - chrono::Duration::hours(1),
+        to: now,
+        cursor: Some(cursor_str),
+        page_size: None,
+        usage_type: None,
+        subject_id: None,
+        subject_type: None,
+        resource_id: None,
+        resource_type: None,
+    };
+
+    let result =
+        handle_query_raw(Extension(ctx), Extension(authz), Extension(plugin), Query(params)).await;
+    assert!(result.is_err(), "cursor with empty k vector must be rejected");
+    let err = result.unwrap_err();
+    assert_eq!(err.status, StatusCode::BAD_REQUEST, "cursor with empty k must return 400");
 }
 
 /// CursorV1 encode/decode round-trip test.

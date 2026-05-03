@@ -97,7 +97,7 @@ async fn query_raw_page_size_exceeds_max() {
 
 /// CursorV1 migration: TTL check removed — cursor within [from, to] now always succeeds.
 #[tokio::test]
-async fn query_raw_cursor_expired() {
+async fn query_raw_cursor_within_range_succeeds() {
     let harness = AppHarness::new().await;
 
     let now = Utc::now();
@@ -125,6 +125,9 @@ async fn query_raw_cursor_expired() {
 
     let response = harness.router.oneshot(request).await.unwrap();
     assert_eq!(response.status(), StatusCode::OK);
+    let body = to_bytes(response.into_body(), usize::MAX).await.unwrap();
+    let json: serde_json::Value = serde_json::from_slice(&body).unwrap();
+    assert!(json["items"].is_array(), "response body must contain items array");
 }
 
 #[tokio::test]

@@ -425,20 +425,26 @@ pub async fn handle_query_raw(
 
     let decoded_cursor = if let Some(ref cursor_str) = params.cursor {
         if let Ok(cursor) = CursorV1::decode(cursor_str) {
-            let ts_str = cursor.k.first().map_or("", String::as_str);
-            if let Ok(ts) = DateTime::parse_from_rfc3339(ts_str) {
-                let ts_utc = ts.with_timezone(&Utc);
-                if ts_utc < params.from || ts_utc > params.to {
-                    errors.push(
-                        "cursor: timestamp is outside the requested [from, to] range".to_owned(),
-                    );
-                    None
-                } else {
-                    Some(cursor)
-                }
-            } else {
+            if cursor.k.len() < 2 {
                 errors.push("cursor: malformed cursor".to_owned());
                 None
+            } else {
+                let ts_str = cursor.k.first().map_or("", String::as_str);
+                if let Ok(ts) = DateTime::parse_from_rfc3339(ts_str) {
+                    let ts_utc = ts.with_timezone(&Utc);
+                    if ts_utc < params.from || ts_utc > params.to {
+                        errors.push(
+                            "cursor: timestamp is outside the requested [from, to] range"
+                                .to_owned(),
+                        );
+                        None
+                    } else {
+                        Some(cursor)
+                    }
+                } else {
+                    errors.push("cursor: malformed cursor".to_owned());
+                    None
+                }
             }
         } else {
             errors.push("cursor: malformed cursor".to_owned());

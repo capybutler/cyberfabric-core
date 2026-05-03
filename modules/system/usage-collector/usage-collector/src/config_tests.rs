@@ -59,6 +59,32 @@ fn test_validate_rejects_circuit_breaker_failure_threshold_above_100() {
 }
 
 #[test]
+fn test_validate_rejects_plugin_timeout_below_100ms() {
+    let cfg = UsageCollectorConfig {
+        plugin_timeout: Duration::from_millis(50),
+        ..UsageCollectorConfig::default()
+    };
+    let err = cfg.validate().unwrap_err();
+    assert!(
+        err.to_string().contains("plugin_timeout"),
+        "error must mention plugin_timeout, got: {err}"
+    );
+}
+
+#[test]
+fn test_validate_rejects_circuit_breaker_window_below_100ms() {
+    let cfg = UsageCollectorConfig {
+        circuit_breaker_window: Duration::ZERO,
+        ..UsageCollectorConfig::default()
+    };
+    let err = cfg.validate().unwrap_err();
+    assert!(
+        err.to_string().contains("circuit_breaker_window"),
+        "error must mention circuit_breaker_window, got: {err}"
+    );
+}
+
+#[test]
 fn test_validate_rejects_circuit_breaker_recovery_timeout_zero() {
     let cfg = UsageCollectorConfig {
         circuit_breaker_recovery_timeout: Duration::ZERO,

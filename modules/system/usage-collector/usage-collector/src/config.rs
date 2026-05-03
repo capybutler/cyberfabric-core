@@ -67,8 +67,8 @@ pub struct UsageCollectorConfig {
 
 impl UsageCollectorConfig {
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.plugin_timeout.is_zero() {
-            anyhow::bail!("plugin_timeout must be greater than zero");
+        if self.plugin_timeout < std::time::Duration::from_millis(100) {
+            anyhow::bail!("plugin_timeout must be at least 100ms");
         }
         if self.plugin_timeout > std::time::Duration::from_secs(30) {
             anyhow::bail!("plugin_timeout must not exceed 30s");
@@ -78,6 +78,9 @@ impl UsageCollectorConfig {
         }
         if self.circuit_breaker_failure_threshold > 100 {
             anyhow::bail!("circuit_breaker_failure_threshold must not exceed 100");
+        }
+        if self.circuit_breaker_window < std::time::Duration::from_millis(100) {
+            anyhow::bail!("circuit_breaker_window must be at least 100ms");
         }
         if self.circuit_breaker_recovery_timeout.is_zero() {
             anyhow::bail!("circuit_breaker_recovery_timeout must be greater than zero");

@@ -98,7 +98,7 @@ pub fn register_routes(
         .summary("Query raw usage records")
         .description(
             "Returns a paginated page of raw usage records for the authenticated tenant, \
-             authorized via the platform PDP. Absent next_cursor signals the final page.",
+             authorized via the platform PDP. Null next_cursor in page_info signals the final page.",
         )
         .tag(API_TAG)
         .authenticated()

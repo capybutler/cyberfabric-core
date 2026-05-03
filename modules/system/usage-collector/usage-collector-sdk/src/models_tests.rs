@@ -213,6 +213,33 @@ fn cursorv1_decode_invalid_json_returns_error() {
     assert!(result.is_err(), "invalid JSON payload must return an error");
 }
 
+#[test]
+fn cursorv1_encode_decode_roundtrip_desc() {
+    let original = CursorV1 {
+        k: vec![
+            "2026-01-01T06:00:00+00:00".to_owned(),
+            Uuid::parse_str("550e8400-e29b-41d4-a716-446655440000").unwrap().to_string(),
+        ],
+        o: SortDir::Desc,
+        s: "-timestamp,-id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let encoded = original.encode().expect("CursorV1 encode is infallible for valid data");
+    let decoded = CursorV1::decode(&encoded).expect("CursorV1 decode must succeed for freshly encoded cursor");
+    assert_eq!(decoded.o, SortDir::Desc);
+    assert_eq!(decoded.k, original.k);
+}
+
+#[test]
+fn cursorv1_decode_missing_k_field_returns_error() {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as BASE64URL};
+    let json_missing_k = r#"{"o":"asc","s":"+timestamp,+id","d":"fwd"}"#;
+    let encoded = BASE64URL.encode(json_missing_k.as_bytes());
+    let result = CursorV1::decode(&encoded);
+    assert!(result.is_err(), "CursorV1 missing required k field must return an error");
+}
+
 // ── Enum serde name tests ─────────────────────────────────────────────────
 
 #[test]

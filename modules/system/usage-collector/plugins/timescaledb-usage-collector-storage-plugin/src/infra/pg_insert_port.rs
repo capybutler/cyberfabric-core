@@ -57,7 +57,9 @@ impl InsertPort for PgInsertPort {
             .rows_affected();
 
             if claimed == 0 {
-                tx.rollback().await.ok();
+                if let Err(e) = tx.rollback().await {
+                    tracing::warn!(error = %e, "rollback failed after idempotency key conflict");
+                }
                 return Ok(0);
             }
 

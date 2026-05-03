@@ -35,7 +35,7 @@ pub struct ModuleConfig {
 ///
 /// All fields are public for direct construction, serde, and tests.
 /// For emission from source modules, use the `usage-emitter` crate.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct UsageRecord {
     /// Name of the module that emitted this record.
     pub module: String,
