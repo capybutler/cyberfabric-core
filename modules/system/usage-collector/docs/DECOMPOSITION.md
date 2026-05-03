@@ -194,7 +194,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 ### 2.3 [Usage Query API](features/query-api/) ✅ HIGH
 
-- [x] `p1` - **ID**: `cpt-cf-usage-collector-feature-query-api`
+- [ ] `p1` - **ID**: `cpt-cf-usage-collector-feature-query-api`
 <!-- STATUS: IMPLEMENTED — all p1 and p2 DoD items verified and implemented. -->
 
 - **Type**: REST API Layer
@@ -276,8 +276,6 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
   - First production plugin crate implementing the full storage plugin trait
   - Idempotent record ingest keyed on idempotency key; counter delta accumulation semantics
   - Aggregation query pushdown to the storage engine with optional pre-aggregated acceleration; cursor-based raw query pagination with tenant and dimension filtering
-  - Operator write operations: backfill ingest, record amendment, record deactivation
-  - Retention enforcement and watermark retrieval operations
   - GTS schema registration, database schema migrations, encrypted connections to the storage backend
 
 - **Out of scope**:
@@ -291,7 +289,6 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
   - [ ] `p1` - `cpt-cf-usage-collector-nfr-throughput`
   - [ ] `p1` - `cpt-cf-usage-collector-nfr-rpo` (applies-to: all — F4 must independently satisfy the RPO constraint via durable storage backend)
   - [ ] `p1` - `cpt-cf-usage-collector-nfr-recovery` (applies-to: all — F4 must independently satisfy recovery via storage backend durability guarantees)
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-retention`
 
 - **Design Principles Covered**:
 
@@ -302,6 +299,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-single-plugin`
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-types-registry` (GTS schema for plugin registration)
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-encryption`
+  - [ ] `p1` - `cpt-cf-usage-collector-constraint-or-of-ands-preservation` (scope-to-sql translator preserves OR-of-ANDs PDP constraint structure)
 
 - **Domain Model Entities**:
   - `UsageRecord` — USES: UsageRecord (defined in F1) — reads and persists records for storage
@@ -323,13 +321,11 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 - **Data**:
   - `usage-records` table (primary storage: idempotent upsert on ingest, read for aggregation and raw queries)
   - [ ] `cpt-cf-usage-collector-dbtable-records`
-  - [ ] `cpt-cf-usage-collector-dbtable-counter-accumulation`
 
 - **Phases/Milestones**:
-  - Phase 1: Storage backend selection (ClickHouse or TimescaleDB) and schema design
+  - Phase 1: TimescaleDB schema design — hypertable for `usage_records`, SUM-over-records counter accumulation (no separate accumulation table), migration scaffolding, and GTS schema registration
   - Phase 2: Ingest operations — idempotent upsert, counter delta accumulation, GTS schema registration, migrations
   - Phase 3: Query operations — aggregation pushdown, cursor-based raw pagination
-  - Phase 4: Operator write operations — backfill ingest, record amendment, deactivation, watermarks, retention enforcement
 
 ---
 

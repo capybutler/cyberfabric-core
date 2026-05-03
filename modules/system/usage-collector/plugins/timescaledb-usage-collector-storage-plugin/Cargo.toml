@@ -1,0 +1,51 @@
+[package]
+name = "timescaledb-usage-collector-storage-plugin"
+version = "0.1.0"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+authors.workspace = true
+repository.workspace = true
+description = "TimescaleDB production storage plugin for the usage-collector gateway"
+readme = "README.md"
+keywords = ["cyberfabric", "cyberfabric-system"]
+categories = ["database"]
+
+[lib]
+name = "timescaledb_usage_collector_storage_plugin"
+
+[lints]
+workspace = true
+
+[dependencies]
+# Local dependencies
+types-registry-sdk = { workspace = true }
+usage-collector-sdk = { workspace = true }
+
+# ModKit dependencies
+modkit = { workspace = true }
+modkit-macros = { workspace = true }
+
+# Async runtime
+async-trait = { workspace = true }
+
+# Error handling
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+
+# Serialization
+serde = { workspace = true }
+serde_json = { workspace = true }
+
+# Database
+sqlx = { workspace = true, features = ["postgres", "uuid", "chrono"] }
+
+# Data structures
+uuid = { workspace = true, features = ["v4"] }
+chrono = { workspace = true }
+
+# Logging
+tracing = { workspace = true }
+
+# Duration parsing for config deserialization
+humantime = { workspace = true }
