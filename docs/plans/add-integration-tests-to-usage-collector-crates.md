@@ -114,9 +114,9 @@ No validation commands defined.
 - `.plans/implement-usage-collector-integration-tests/phase-03-gateway-tests.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Create an integration test suite in `modules/system/usage-collector/usage-collector/tests/` that exercises all four HTTP handlers (`handle_create_usage_record`, `handle_get_module_config`, `handle_query_aggregated`, `handle_query_raw`) end-to-end through axum routing using `tower::ServiceExt::oneshot` — no real server, no real database. The deliverable is five new files: `tests/common/mod.rs` (shared harness and mocks) plus four test-module files, one per handler group. All required Cargo dev-dependencies must also be confirmed or added.

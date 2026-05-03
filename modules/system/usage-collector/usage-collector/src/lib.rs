@@ -5,7 +5,7 @@
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-mod api;
+pub mod api;
 mod config;
 mod domain;
 mod module;
