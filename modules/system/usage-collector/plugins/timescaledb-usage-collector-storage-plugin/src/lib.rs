@@ -19,6 +19,6 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 mod config;
-mod domain;
-mod infra;
+pub mod domain;
+pub mod infra;
 mod module;

@@ -461,7 +461,7 @@ The system **MUST** enforce TLS for all connections to TimescaleDB by requiring 
 
 ### Testing & Observability
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-testing-and-observability`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-testing-and-observability`
 
 The system **MUST** implement a two-level test suite: Level 1 inline unit tests (no DB) in `src/domain/client_tests.rs` covering all validation branches, error paths, and mock boundaries; Level 2 integration tests in `tests/integration.rs` gated with `#[cfg(feature = "integration")]` and run via `cargo test --features integration`, using a `timescale/timescaledb:latest-pg16` container via `testcontainers::GenericImage`. All DESIGN §3.8 metrics owned by the storage plugin MUST be emitted correctly and verified in both test levels (via mock registry in unit tests; via real registry in integration tests).
 

@@ -613,9 +613,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-10-integration-tests.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Implement Level 2 integration tests for the TimescaleDB storage plugin in `modules/system/usage-collector/plugins/timescaledb-usage-collector-storage-plugin/tests/integration.rs`. All tests are gated with `#[cfg(feature = "integration")]` and `#[tokio::test]`. Add an `integration = []` feature flag and testcontainers dev-dependencies to the crate's `Cargo.toml`. Tests spin up a `timescale/timescaledb:latest-pg16` container via the `testcontainers` crate, create a connection pool using the same `SecureConn` pattern (non-TLS for local container), run migrations, execute the five required test scenarios, and drop the container handle at teardown. Tests run via `cargo test --features integration`. The phase also annotates the tests file with the `@cpt-dod` marker for `dod-testing-and-observability` and marks that DoD checkbox `[x]` in the FEATURE document.
