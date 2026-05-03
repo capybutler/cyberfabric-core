@@ -30,3 +30,6 @@ mod api;
 mod config;
 mod infra;
 mod module;
+
+pub use config::UsageCollectorRestClientConfig;
+pub use infra::UsageCollectorRestClient;

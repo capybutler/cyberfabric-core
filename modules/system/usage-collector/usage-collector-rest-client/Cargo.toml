@@ -66,7 +66,7 @@ sea-orm-migration = { workspace = true }
 modkit-security = { workspace = true }
 
 # Async runtime
-tokio = { workspace = true }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
 
 # HTTP mocking
 httpmock = { workspace = true }
