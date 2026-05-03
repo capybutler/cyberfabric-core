@@ -135,9 +135,9 @@ No validation commands defined.
 - `.plans/implement-feature-e2e-tests-timescaledb/phase-04-raw-query-tests.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Write `testing/e2e/modules/usage_collector/test_query_raw.py` containing exactly five async pytest test functions that exercise the raw query endpoint (`GET /usage-collector/v1/raw`) against the timescaledb-backed gateway instance. The tests cover basic retrieval, time-range exclusion, cursor-based pagination, ascending sort order, and multi-metric retrieval. Validation-boundary cases already covered by unit tests are explicitly out of scope.
