@@ -6,7 +6,7 @@
 #   __COLLECTOR_URL__ - Remote usage-collector base URL (emitter instance only)
 
 server:
-  home_dir: "~/.hyperspot"
+  home_dir: "__HOME_DIR__"
 
 database:
   servers:

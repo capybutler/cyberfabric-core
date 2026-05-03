@@ -41,6 +41,8 @@ def _two_free_ports() -> tuple[int, int]:
 
 
 _GATEWAY_PORT, _EMITTER_PORT = _two_free_ports()
+_GATEWAY_HOME = tempfile.mkdtemp(prefix="hyperspot-e2e-gateway-")
+_EMITTER_HOME = tempfile.mkdtemp(prefix="hyperspot-e2e-emitter-")
 
 
 # ── Sidecar ───────────────────────────────────────────────────────────────────
@@ -60,12 +62,15 @@ def timescaledb_sidecar():
 # ── Config-patch helpers ──────────────────────────────────────────────────────
 
 def _patch_gateway_config(config_text: str, sidecar, port: int) -> str:
+    config_text = config_text.replace("__HOME_DIR__", _GATEWAY_HOME)
     config_text = config_text.replace("__DB_URL__", sidecar.connection_string)
     config_text = config_text.replace("__PORT__", str(port))
+    config_text = config_text.replace("__COLLECTOR_URL__", "disabled")
     return config_text
 
 
 def _patch_emitter_config(config_text: str, gateway_url: str, port: int) -> str:
+    config_text = config_text.replace("__HOME_DIR__", _EMITTER_HOME)
     config_text = config_text.replace("__COLLECTOR_URL__", gateway_url)
     config_text = config_text.replace("__PORT__", str(port))
     config_text = config_text.replace("__DB_URL__", "disabled")
