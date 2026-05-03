@@ -28,6 +28,7 @@ usage-collector-sdk = { workspace = true }
 # ModKit dependencies
 modkit = { workspace = true }
 modkit-macros = { workspace = true }
+modkit-odata = { workspace = true }
 modkit-security = { workspace = true }
 
 # Async runtime

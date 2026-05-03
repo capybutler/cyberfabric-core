@@ -8454,6 +8454,7 @@ dependencies = [
  "async-trait",
  "cf-modkit",
  "cf-modkit-macros",
+ "cf-modkit-odata",
  "cf-modkit-security",
  "cf-types-registry-sdk",
  "cf-usage-collector-sdk",

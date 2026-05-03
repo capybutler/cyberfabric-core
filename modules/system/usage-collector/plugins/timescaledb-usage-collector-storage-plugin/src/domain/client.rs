@@ -6,11 +6,12 @@ use std::time::Instant;
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use sqlx::PgPool;
+use modkit_odata::SortDir;
 use usage_collector_sdk::models::{
-    AggregationFn, AggregationQuery, AggregationResult, BucketSize, Cursor, GroupByDimension,
-    PagedResult, RawQuery, UsageKind, UsageRecord,
+    AggregationFn, AggregationQuery, AggregationResult, BucketSize, GroupByDimension,
+    RawQuery, UsageKind, UsageRecord,
 };
-use usage_collector_sdk::{UsageCollectorError, UsageCollectorPluginClientV1};
+use usage_collector_sdk::{CursorV1, Page, PageInfo, UsageCollectorError, UsageCollectorPluginClientV1};
 use uuid::Uuid;
 
 use crate::domain::insert_port::InsertPort;
@@ -439,7 +440,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
     async fn query_raw(
         &self,
         query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
         use sqlx::postgres::PgArguments;
             use sqlx::Row as _;
 
@@ -451,8 +452,13 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-1
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-2
-        // The Cursor type decodes base64 on Deserialize; extract (timestamp, id) when present.
-        let cursor_pos: Option<(DateTime<Utc>, Uuid)> = query.cursor.as_ref().map(|c| (c.timestamp, c.id));
+        let cursor_pos: Option<(DateTime<Utc>, Uuid)> = query.cursor.as_ref().map(|c| {
+            let ts_str = c.k.first().ok_or_else(|| UsageCollectorError::internal("cursor missing timestamp key"))?;
+            let id_str = c.k.get(1).ok_or_else(|| UsageCollectorError::internal("cursor missing id key"))?;
+            let ts = ts_str.parse::<DateTime<Utc>>().map_err(|e| UsageCollectorError::internal(format!("cursor timestamp parse error: {e}")))?;
+            let id = id_str.parse::<Uuid>().map_err(|e| UsageCollectorError::internal(format!("cursor id parse error: {e}")))?;
+            Ok::<_, UsageCollectorError>((ts, id))
+        }).transpose()?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-2
 
         let mut args = PgArguments::default();
@@ -561,7 +567,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         let has_more = rows.len() > query.page_size;
         let rows_page = if has_more { &rows[..query.page_size] } else { &rows[..] };
 
-        let next_cursor = if has_more {
+        let next_cursor: Option<String> = if has_more {
             if let Some(last_row) = rows_page.last() {
                 let last_ts: DateTime<Utc> = last_row
                     .try_get("timestamp")
@@ -569,7 +575,14 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                 let last_id: Uuid = last_row
                     .try_get("id")
                     .map_err(|e| UsageCollectorError::internal(format!("cursor extraction error: {e}")))?;
-                Some(Cursor { timestamp: last_ts, id: last_id })
+                let cursor = CursorV1 {
+                    k: vec![last_ts.to_rfc3339(), last_id.to_string()],
+                    o: SortDir::Asc,
+                    s: "+timestamp,+id".to_owned(),
+                    f: None,
+                    d: "fwd".to_owned(),
+                };
+                Some(cursor.encode().map_err(|e| UsageCollectorError::internal(format!("cursor encode error: {e}")))?)
             } else {
                 None
             }
@@ -633,10 +646,10 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         self.metrics.record_query_latency_ms("raw", elapsed_ms);
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-8
-        Ok(PagedResult {
-            items: records,
-            next_cursor,
-        })
+        Ok(Page::new(
+            records,
+            PageInfo { next_cursor, prev_cursor: None, limit: query.page_size as u64 },
+        ))
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-8
     }
 }

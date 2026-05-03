@@ -1,9 +1,9 @@
 use async_trait::async_trait;
 
 use usage_collector_sdk::models::{
-    AggregationQuery, AggregationResult, PagedResult, RawQuery, UsageRecord,
+    AggregationQuery, AggregationResult, RawQuery, UsageRecord,
 };
-use usage_collector_sdk::{UsageCollectorError, UsageCollectorPluginClientV1};
+use usage_collector_sdk::{Page, PageInfo, UsageCollectorError, UsageCollectorPluginClientV1};
 
 use super::service::Service;
 
@@ -29,12 +29,12 @@ impl UsageCollectorPluginClientV1 for Service {
     // @cpt-begin:cpt-cf-usage-collector-algo-query-api-noop-stubs:p2:inst-noop-2
     async fn query_raw(
         &self,
-        _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Ok(PagedResult {
-            items: vec![],
-            next_cursor: None,
-        })
+        query: RawQuery,
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::new(
+            vec![],
+            PageInfo { next_cursor: None, prev_cursor: None, limit: query.page_size as u64 },
+        ))
     }
     // @cpt-end:cpt-cf-usage-collector-algo-query-api-noop-stubs:p2:inst-noop-2
     // @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-9

@@ -87,5 +87,5 @@ async fn noop_query_raw_returns_empty_paged_result() {
     assert!(result.is_ok());
     let paged = result.unwrap();
     assert!(paged.items.is_empty());
-    assert!(paged.next_cursor.is_none());
+    assert!(paged.page_info.next_cursor.is_none());
 }

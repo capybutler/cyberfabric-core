@@ -205,9 +205,9 @@ No validation commands defined.
 - `.plans/implement-feature-query-api-modkit-alignment/phase-04-plugin-implementations.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Update both storage plugin client implementations to use `Page<UsageRecord>` as the return type for `query_raw`, replacing the bespoke `PagedResult<T>` and `Cursor` types. In the noop plugin the change is a trivial stub update. In the timescaledb plugin, replace bespoke `Cursor` struct decode/encode with `CursorV1::decode()`/`CursorV1::encode()` from `modkit_odata`, and construct `Page::new(items, PageInfo { next_cursor, prev_cursor: None, limit })` as the return value. No changes to aggregation logic, query construction, row-mapping, or schema are required.
