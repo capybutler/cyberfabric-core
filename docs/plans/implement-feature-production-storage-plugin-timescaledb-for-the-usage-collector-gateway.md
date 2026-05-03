@@ -395,9 +395,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-07-query-raw.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Implement the `query_raw` method on `TimescaleDbPluginClient` in `src/domain/client.rs`, executing the 8-step algorithm `cpt-cf-usage-collector-algo-production-storage-plugin-query-raw` (inst-qraw-1 through inst-qraw-8). The implementation must: translate the `AccessScope` via `scope_to_sql` (fail closed on `ScopeTranslationError`); decode an optional base64 cursor into `(DateTime<Utc>, Uuid)` returning `InvalidCursor` on failure; build a SELECT against `usage_records` with scope fragment, time range, optional user filters, and keyset advancement condition when a cursor is present using the tuple comparison `(timestamp > $cursor_ts) OR (timestamp = $cursor_ts AND id > $cursor_id)`; append `ORDER BY timestamp ASC, id ASC LIMIT $page_size`; execute the query; encode the next cursor as base64 when result count equals `page_size`; return `PagedResult<UsageRecord>`. Each step must carry `@cpt-begin`/`@cpt-end` markers, the method must emit the `usage_query_latency_ms` metric labeled `query_type="raw"`, and the eight FEATURE checkboxes must be marked `[x]`.

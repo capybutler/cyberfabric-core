@@ -302,7 +302,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 ### `query_raw` — Cursor-Based Raw Record Pagination
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-query-raw`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-query-raw`
 
 **Input**: `RawQuery` — fields: `scope: AccessScope` (compiled from PDP constraints), `time_range: (DateTime<Utc>, DateTime<Utc>)`, optional user filters: `metric`, `resource_id`, `resource_type`, `subject_id`, `cursor: Option<Cursor>` (opaque to caller; encodes `(timestamp, id)` composite position), `page_size: usize`
 
@@ -313,14 +313,14 @@ Internal system functions and procedures that do not interact with actors direct
 **Cursor stability**: `id` is the stable tiebreaker within records sharing the same timestamp, ensuring no skipped or duplicated rows under concurrent inserts mid-pagination; the condition `(timestamp > $cursor_ts) OR (timestamp = $cursor_ts AND id > $cursor_id)` is a tuple comparison that never double-counts ties
 
 **Steps**:
-1. [ ] - `p1` - Translate `scope` via `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`; **IF** translation returns `ScopeTranslationError` — **RETURN** `UsageCollectorPluginError::AccessDenied` - `inst-qraw-1`
-2. [ ] - `p1` - **IF** `query.cursor` is `Some(cursor)` — base64-decode the cursor bytes; parse `(timestamp: DateTime<Utc>, id: Uuid)` from the decoded bytes; **IF** decode fails — **RETURN** `UsageCollectorPluginError::InvalidCursor` - `inst-qraw-2`
-3. [ ] - `p1` - Build SELECT query against `usage_records`; always include in WHERE: scope SQL fragment AND `timestamp >= $start AND timestamp <= $end`; append optional user filters when present: `AND metric = $metric`, `AND resource_id = $resource_id`, `AND resource_type = $resource_type`, `AND subject_id = $subject_id` - `inst-qraw-3`
-4. [ ] - `p1` - **IF** cursor is present — append a keyset advancement condition that selects records strictly after the cursor position using tuple comparison on `(timestamp, id)`: records with a later timestamp, or records with the same timestamp and a later `id`; this condition never skips or double-counts rows under concurrent inserts; **IF** cursor is absent — no cursor condition is appended (first page) — `inst-qraw-4`
-5. [ ] - `p1` - Append `ORDER BY timestamp ASC, id ASC LIMIT $page_size`; `page_size` is bounded at the gateway layer (e.g., max 1000); `id` is the tiebreaker ensuring deterministic ordering for records sharing the same timestamp - `inst-qraw-5`
-6. [ ] - `p1` - Execute the query with all bind parameters; **IF** DB returns transient error — **RETURN** `UsageCollectorPluginError::Transient(err)` - `inst-qraw-6`
-7. [ ] - `p1` - Map result rows to `Vec<UsageRecord>`; **IF** result count equals `page_size` — take the last row's `(timestamp, id)`, base64-encode as the next cursor; **IF** result count is less than `page_size` — set next cursor to `None` (page exhausted) - `inst-qraw-7`
-8. [ ] - `p1` - **RETURN** `Ok(PagedResult { records, next_cursor })` — empty `records` with `next_cursor = None` is a valid exhausted-page response - `inst-qraw-8`
+1. [x] - `p1` - Translate `scope` via `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`; **IF** translation returns `ScopeTranslationError` — **RETURN** `UsageCollectorPluginError::AccessDenied` - `inst-qraw-1`
+2. [x] - `p1` - **IF** `query.cursor` is `Some(cursor)` — base64-decode the cursor bytes; parse `(timestamp: DateTime<Utc>, id: Uuid)` from the decoded bytes; **IF** decode fails — **RETURN** `UsageCollectorPluginError::InvalidCursor` - `inst-qraw-2`
+3. [x] - `p1` - Build SELECT query against `usage_records`; always include in WHERE: scope SQL fragment AND `timestamp >= $start AND timestamp <= $end`; append optional user filters when present: `AND metric = $metric`, `AND resource_id = $resource_id`, `AND resource_type = $resource_type`, `AND subject_id = $subject_id` - `inst-qraw-3`
+4. [x] - `p1` - **IF** cursor is present — append a keyset advancement condition that selects records strictly after the cursor position using tuple comparison on `(timestamp, id)`: records with a later timestamp, or records with the same timestamp and a later `id`; this condition never skips or double-counts rows under concurrent inserts; **IF** cursor is absent — no cursor condition is appended (first page) — `inst-qraw-4`
+5. [x] - `p1` - Append `ORDER BY timestamp ASC, id ASC LIMIT $page_size`; `page_size` is bounded at the gateway layer (e.g., max 1000); `id` is the tiebreaker ensuring deterministic ordering for records sharing the same timestamp - `inst-qraw-5`
+6. [x] - `p1` - Execute the query with all bind parameters; **IF** DB returns transient error — **RETURN** `UsageCollectorPluginError::Transient(err)` - `inst-qraw-6`
+7. [x] - `p1` - Map result rows to `Vec<UsageRecord>`; **IF** result count equals `page_size` — take the last row's `(timestamp, id)`, base64-encode as the next cursor; **IF** result count is less than `page_size` — set next cursor to `None` (page exhausted) - `inst-qraw-7`
+8. [x] - `p1` - **RETURN** `Ok(PagedResult { records, next_cursor })` — empty `records` with `next_cursor = None` is a valid exhausted-page response - `inst-qraw-8`
 
 **Implements**: `cpt-cf-usage-collector-fr-pluggable-storage` (implements `UsageCollectorPluginClientV1::query_raw`), `cpt-cf-usage-collector-nfr-query-latency` (keyset cursor with TimescaleDB chunk pruning on time range avoids full-table scans; the `(tenant_id, timestamp)` index drives the seek)
 
