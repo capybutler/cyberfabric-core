@@ -160,14 +160,14 @@ single-tenant aggregation), `cpt-cf-usage-collector-nfr-throughput`
 - Record inserted or confirmed as duplicate; `Ok(())` returned to gateway
 
 **Error Scenarios**:
-- Counter record missing `idempotency_key` or has negative `value`; `UsageCollectorPluginError::InvalidRecord` returned
-- Transient DB failure; `UsageCollectorPluginError::Transient` returned; gateway circuit breaker handles retry
+- Counter record missing `idempotency_key` or has negative `value`; `UsageCollectorError::Internal` returned
+- Transient DB failure; `UsageCollectorError::Unavailable` returned; gateway circuit breaker records the failure
 
 **Steps**:
 1. [x] - `p1` - Gateway calls `create_usage_record(UsageRecord)` on the plugin - `inst-flow-ing-1`
-2. [x] - `p1` - Plugin validates: `value >= 0` for counter records; `idempotency_key` present for counter records; **IF** either fails — **RETURN** `UsageCollectorPluginError::InvalidRecord` - `inst-flow-ing-2`
+2. [x] - `p1` - Plugin validates: `value >= 0` for counter records; `idempotency_key` present for counter records; **IF** either fails — **RETURN** `UsageCollectorError::Internal` - `inst-flow-ing-2`
 3. [x] - `p1` - Plugin executes idempotent INSERT: `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record` — deduplication via a two-step transaction against the `usage_idempotency_keys` table (ON CONFLICT DO NOTHING on the key row, then INSERT into `usage_records` if the key was newly claimed) - `inst-flow-ing-3`
-4. [x] - `p1` - **IF** DB returns a transient error — **RETURN** `UsageCollectorPluginError::Transient`; gateway circuit breaker records the failure; outbox retries delivery - `inst-flow-ing-4`
+4. [x] - `p1` - **IF** DB returns a transient error — **RETURN** `UsageCollectorError::Unavailable`; gateway circuit breaker records the failure; outbox retries delivery - `inst-flow-ing-4`
 5. [x] - `p1` - **RETURN** `Ok(())` — record inserted or confirmed duplicate; no distinction exposed to caller - `inst-flow-ing-5`
 
 ## 3. Processes / Business Logic (CDSL)
@@ -226,18 +226,18 @@ Internal system functions and procedures that do not interact with actors direct
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record`
 
-**Input**: `UsageRecord` — deserialized from gateway ingest payload; fields: `tenant_id`, `module`, `kind` (`'counter'` or `'gauge'`), `metric`, `value`, `timestamp`, `idempotency_key` (non-null for counter records; nullable for gauge records), `resource_id`, `resource_type`, `subject_id` (nullable), `subject_type` (nullable), `metadata` (nullable JSONB), `ingested_at` (gateway sets to `now()`)
+**Input**: `UsageRecord` — deserialized from gateway ingest payload; fields: `tenant_id`, `module`, `kind` (`'counter'` or `'gauge'`), `metric`, `value`, `timestamp`, `idempotency_key` (non-null for counter records; nullable for gauge records), `resource_id`, `resource_type`, `subject_id` (nullable), `subject_type` (nullable), `metadata` (nullable JSONB)
 
-**Output**: `Result<(), UsageCollectorPluginError>` — `Ok(())` on successful insert or confirmed duplicate; error on constraint violation or transient DB failure
+**Output**: `Result<(), UsageCollectorError>` — `Ok(())` on successful insert or confirmed duplicate; error on constraint violation or transient DB failure
 
 **Counter-delta semantics**: for `kind = 'counter'`, each record's `value` is a non-negative delta contribution. The record is stored as-is alongside other deltas. The persistent total for any `(tenant_id, metric)` pair is `SUM(value)` over all active records — no separate accumulation table or running total is maintained. This matches DESIGN §3.7 Counter Accumulation.
 
 **Steps**:
-1. [x] - `p1` - Validate `value >= 0` when `kind = 'counter'`; **IF** negative — **RETURN** `UsageCollectorPluginError::InvalidRecord` (gateway enforces this before calling the plugin, but the plugin re-validates as a defensive check) - `inst-cur-1`
-2. [x] - `p1` - Validate `idempotency_key` is present (non-null, non-empty) when `kind = 'counter'`; **IF** absent — **RETURN** `UsageCollectorPluginError::InvalidRecord` - `inst-cur-2`
+1. [x] - `p1` - Validate `value >= 0` when `kind = 'counter'`; **IF** negative — **RETURN** `UsageCollectorError::Internal` (gateway enforces this before calling the plugin, but the plugin re-validates as a defensive check) - `inst-cur-1`
+2. [x] - `p1` - Validate `idempotency_key` is present (non-null, non-empty) when `kind = 'counter'`; **IF** absent — **RETURN** `UsageCollectorError::Internal` - `inst-cur-2`
 3. [x] - `p1` - Open a transaction; INSERT into `usage_idempotency_keys (tenant_id, idempotency_key)` ON CONFLICT DO NOTHING; if 0 rows were claimed (duplicate key), rollback and return immediately (record already stored); otherwise INSERT the record into `usage_records` with all fields and commit the transaction. This two-step approach is required because TimescaleDB rejects unique indexes on `usage_records` that omit the partition column - `inst-cur-3`
-4. [x] - `p1` - **IF** DB operation returns a unique constraint violation on a column other than the idempotency index (unexpected schema conflict) — **RETURN** `UsageCollectorPluginError::StorageError(err)` - `inst-cur-4`
-5. [x] - `p1` - **IF** DB operation returns a transient error (connection lost, pool timeout, serialization failure) — **RETURN** `UsageCollectorPluginError::Transient(err)`; the gateway circuit breaker records this failure and the outbox library retries delivery - `inst-cur-5`
+4. [x] - `p1` - **IF** DB operation returns a unique constraint violation on a column other than the idempotency index (unexpected schema conflict) — **RETURN** `UsageCollectorError::Internal` - `inst-cur-4`
+5. [x] - `p1` - **IF** DB operation returns a transient error (connection lost, pool timeout, serialization failure) — **RETURN** `UsageCollectorError::Unavailable`; the gateway circuit breaker records this failure and the outbox library retries delivery - `inst-cur-5`
 6. [x] - `p1` - Set `ingested_at = now()` at DB INSERT time (not passed from caller) - `inst-cur-6`
 7. [x] - `p1` - **RETURN** `Ok(())` — record inserted or confirmed as duplicate via idempotency key; no distinction exposed to caller - `inst-cur-7`
 
@@ -283,18 +283,18 @@ Internal system functions and procedures that do not interact with actors direct
 
 **Input**: `AggregationQuery` — fields: `scope: AccessScope` (compiled from PDP constraints), `time_range: (DateTime<Utc>, DateTime<Utc>)`, `function: AggregationFn` (`Sum | Count | Min | Max | Avg`), `group_by: Vec<GroupByDimension>` (`TimeBucket(BucketSize) | UsageType | Subject | Resource | Source`), `bucket_size: Option<BucketSize>` (required when `group_by` includes `TimeBucket`), optional user filters: `metric`, `resource_id`, `resource_type`, `subject_id`, `subject_type`, `source`
 
-**Output**: `Result<Vec<AggregationResult>, UsageCollectorPluginError>` — aggregated result rows; empty vec for time ranges with no matching records; error on scope translation failure or DB failure
+**Output**: `Result<Vec<AggregationResult>, UsageCollectorError>` — aggregated result rows; empty vec for time ranges with no matching records; error on scope translation failure or DB failure
 
 **Routing decision**: queries are routed to the `usage_agg_1h` continuous aggregate when all active user filters are on dimensions present in that view (`metric`, `resource_type`, `subject_type`, `source` / `module`); queries are routed to the raw `usage_records` hypertable when `resource_id` or `subject_id` is present as a user filter or GROUP BY dimension — these high-cardinality dimensions are intentionally excluded from `usage_agg_1h` (see `cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate`, `inst-cagg-1`)
 
 **AVG composability**: `Avg` is not stored in the continuous aggregate; it is computed at query time as `SUM(sum_val) / NULLIF(SUM(cnt_val), 0)` over the pre-aggregated rows; this formula is mathematically correct across bucket merges (unlike averaging per-bucket averages)
 
 **Steps**:
-1. [x] - `p1` - Translate `scope` via `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`; **IF** translation returns `ScopeTranslationError` — **RETURN** `UsageCollectorPluginError::AccessDenied`; the call site must fail closed on empty or untranslatable scope - `inst-qagg-1`
+1. [x] - `p1` - Translate `scope` via `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`; **IF** translation returns `ScopeTranslationError` — **RETURN** `UsageCollectorError::AuthorizationFailed`; the call site must fail closed on empty or untranslatable scope - `inst-qagg-1`
 2. [x] - `p1` - **IF** `resource_id` or `subject_id` is present in user filters OR `group_by` includes `Resource` (meaning `resource_id`) OR `group_by` includes `Subject` (meaning `subject_id`) — **ROUTE TO** raw hypertable path (step 3); **ELSE** — **ROUTE TO** continuous aggregate path (step 4) - `inst-qagg-2`
 3. [x] - `p1` - **[Raw hypertable path]** Build SELECT query against `usage_records`; apply WHERE clause: scope SQL fragment AND `timestamp >= $start AND timestamp <= $end` AND optional filters (`metric`, `resource_id`, `resource_type`, `subject_id`, `subject_type`, `source`); build GROUP BY from `query.group_by` dimensions; build SELECT expressions using `query.function` (`SUM(value)`, `COUNT(*)`, `MIN(value)`, `MAX(value)`, or `AVG(value)` directly on raw records); apply `ORDER BY` on bucket start when `TimeBucket` is in `group_by`; **GO TO** step 5 - `inst-qagg-3`
 4. [x] - `p1` - **[Continuous aggregate path]** Build SELECT query against `usage_agg_1h`; apply WHERE clause: scope SQL fragment AND `bucket >= $start AND bucket <= $end` AND optional filters (`metric`, `resource_type`, `subject_type`, `source`); build GROUP BY from `query.group_by` dimensions (mapped to aggregate columns: `bucket` for `TimeBucket`, `metric` for `UsageType`, `subject_type` for `Subject`, `resource_type` for `Resource`, `module` for `Source`); build SELECT expressions from pre-aggregated columns: `SUM(sum_val)` for `Sum`, `SUM(cnt_val)` for `Count`, `MIN(min_val)` for `Min`, `MAX(max_val)` for `Max`, `SUM(sum_val) / NULLIF(SUM(cnt_val), 0)` for `Avg`; apply `ORDER BY bucket_start` when `TimeBucket` is in `group_by`; **GO TO** step 5 - `inst-qagg-4`
-5. [x] - `p1` - Execute the constructed query with all bind parameters using `sqlx::PgPool`; **IF** DB returns transient error — **RETURN** `UsageCollectorPluginError::Transient(err)` - `inst-qagg-5`
+5. [x] - `p1` - Execute the constructed query with all bind parameters using `sqlx::PgPool`; **IF** DB returns transient error — **RETURN** `UsageCollectorError::Unavailable` - `inst-qagg-5`
 6. [x] - `p1` - Map result rows to `Vec<AggregationResult>`; set `function` field to `query.function`; populate optional dimension fields (`bucket_start`, `usage_type`, `subject_id`, `subject_type`, `resource_id`, `resource_type`, `source`) only when the corresponding `GroupByDimension` was present in `query.group_by`; absent dimensions MUST be `None` - `inst-qagg-6`
 7. [x] - `p1` - **RETURN** `Ok(results)` — empty vec is a valid result for time ranges with no matching data - `inst-qagg-7`
 
@@ -310,19 +310,19 @@ Internal system functions and procedures that do not interact with actors direct
 
 **Input**: `RawQuery` — fields: `scope: AccessScope` (compiled from PDP constraints), `time_range: (DateTime<Utc>, DateTime<Utc>)`, optional user filters: `metric`, `resource_id`, `resource_type`, `subject_id`, `cursor: Option<Cursor>` (opaque to caller; encodes `(timestamp, id)` composite position), `page_size: usize`
 
-**Output**: `Result<PagedResult<UsageRecord>, UsageCollectorPluginError>` — page of active records plus optional next cursor; empty page when all records exhausted; error on scope translation failure, cursor decode failure, or DB failure
+**Output**: `Result<PagedResult<UsageRecord>, UsageCollectorError>` — page of active records plus optional next cursor; empty page when all records exhausted; error on scope translation failure or DB failure
 
 **Cursor encoding**: the cursor is a base64-encoded tuple `(timestamp_iso8601, id_uuid)` — opaque to API callers; the plugin owns encoding and decoding; a `None` cursor means first page
 
 **Cursor stability**: `id` is the stable tiebreaker within records sharing the same timestamp, ensuring no skipped or duplicated rows under concurrent inserts mid-pagination; the condition `(timestamp > $cursor_ts) OR (timestamp = $cursor_ts AND id > $cursor_id)` is a tuple comparison that never double-counts ties
 
 **Steps**:
-1. [x] - `p1` - Translate `scope` via `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`; **IF** translation returns `ScopeTranslationError` — **RETURN** `UsageCollectorPluginError::AccessDenied` - `inst-qraw-1`
-2. [x] - `p1` - **IF** `query.cursor` is `Some(cursor)` — base64-decode the cursor bytes; parse `(timestamp: DateTime<Utc>, id: Uuid)` from the decoded bytes; **IF** decode fails — **RETURN** `UsageCollectorPluginError::InvalidCursor` - `inst-qraw-2`
+1. [x] - `p1` - Translate `scope` via `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`; **IF** translation returns `ScopeTranslationError` — **RETURN** `UsageCollectorError::AuthorizationFailed` - `inst-qraw-1`
+2. [x] - `p1` - **IF** `query.cursor` is `Some(cursor)` — extract `(timestamp: DateTime<Utc>, id: Uuid)` directly from the `Cursor` struct fields (base64 decoding is handled by the REST deserialization layer before the plugin is invoked; no decode error can occur here) - `inst-qraw-2`
 3. [x] - `p1` - Build SELECT query against `usage_records`; always include in WHERE: scope SQL fragment AND `timestamp >= $start AND timestamp <= $end`; append optional user filters when present: `AND metric = $metric`, `AND resource_id = $resource_id`, `AND resource_type = $resource_type`, `AND subject_id = $subject_id` - `inst-qraw-3`
 4. [x] - `p1` - **IF** cursor is present — append a keyset advancement condition that selects records strictly after the cursor position using tuple comparison on `(timestamp, id)`: records with a later timestamp, or records with the same timestamp and a later `id`; this condition never skips or double-counts rows under concurrent inserts; **IF** cursor is absent — no cursor condition is appended (first page) — `inst-qraw-4`
 5. [x] - `p1` - Append `ORDER BY timestamp ASC, id ASC LIMIT $page_size`; `page_size` is bounded at the gateway layer (e.g., max 1000); `id` is the tiebreaker ensuring deterministic ordering for records sharing the same timestamp - `inst-qraw-5`
-6. [x] - `p1` - Execute the query with all bind parameters; **IF** DB returns transient error — **RETURN** `UsageCollectorPluginError::Transient(err)` - `inst-qraw-6`
+6. [x] - `p1` - Execute the query with all bind parameters; **IF** DB returns transient error — **RETURN** `UsageCollectorError::Unavailable` - `inst-qraw-6`
 7. [x] - `p1` - Map result rows to `Vec<UsageRecord>`; **IF** result count equals `page_size` — take the last row's `(timestamp, id)`, base64-encode as the next cursor; **IF** result count is less than `page_size` — set next cursor to `None` (page exhausted) - `inst-qraw-7`
 8. [x] - `p1` - **RETURN** `Ok(PagedResult { records, next_cursor })` — empty `records` with `next_cursor = None` is a valid exhausted-page response - `inst-qraw-8`
 
@@ -502,7 +502,7 @@ The system **MUST** implement a two-level test suite: Level 1 inline unit tests 
 - [ ] `scope_to_sql` with an `AccessScope` containing multiple `ConstraintGroup` entries generates a WHERE fragment where each group is a distinct AND branch and branches are combined with OR; no group flattening occurs
 - [ ] Plugin startup fails with a descriptive error (no credentials in message) when `database_url` is missing, TLS negotiation is rejected, or GTS schema registration fails; the gateway process does not start
 - [ ] Level 2 integration tests pass when run with `cargo test --features integration` against a freshly migrated `timescale/timescaledb:latest-pg16` container
-- [ ] `scope_to_sql` returns `ScopeTranslationError::UnsupportedPredicate` when the `AccessScope` contains any `InGroup` or `InGroupSubtree` predicate; the calling operation (`query_aggregated`, `query_raw`) translates this to `UsageCollectorPluginError::AccessDenied` and returns the error without executing any query.
+- [ ] `scope_to_sql` returns `ScopeTranslationError::UnsupportedPredicate` when the `AccessScope` contains any `InGroup` or `InGroupSubtree` predicate; the calling operation (`query_aggregated`, `query_raw`) translates this to `UsageCollectorError::AuthorizationFailed` and returns the error without executing any query.
 
 **Test data requirements**:
 (1) At least one tenant with counter records spanning three or more 1-hour time buckets across a > 30-day window and one tenant with gauge records.

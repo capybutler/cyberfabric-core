@@ -278,8 +278,10 @@ impl UsageCollectorClientV1 for UsageCollectorLocalClient {
                 // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-gateway-ingest-handler:inst-gw-6b
             }
             Ok(Err(e)) => {
-                warn!(error = %e, "storage plugin call failed transiently; recording circuit breaker failure");
-                self.circuit_breaker.lock().await.record_failure();
+                if matches!(e, UsageCollectorError::Unavailable { .. }) {
+                    warn!(error = %e, "transient storage plugin failure; recording circuit breaker failure");
+                    self.circuit_breaker.lock().await.record_failure();
+                }
                 Err(e)
             }
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-gateway-ingest-handler:inst-gw-6
@@ -348,6 +350,24 @@ impl UsageCollectorLocalClient {
     }
 }
 
+/// Records a circuit breaker success or failure based on the result.
+///
+/// Only `Unavailable` errors count as failures; permanent errors (e.g. `Internal`,
+/// `AuthorizationFailed`, `QueryResultTooLarge`) do not trip the circuit because they
+/// indicate caller or schema problems rather than a temporarily unreachable backend.
+async fn record_circuit_breaker_outcome<T>(
+    circuit_breaker: &Mutex<CircuitBreaker>,
+    result: &Result<T, UsageCollectorError>,
+) {
+    match result {
+        Ok(_) => circuit_breaker.lock().await.record_success(),
+        Err(e) if matches!(e, UsageCollectorError::Unavailable { .. }) => {
+            circuit_breaker.lock().await.record_failure();
+        }
+        Err(_) => {}
+    }
+}
+
 /// Thin proxy that implements [`UsageCollectorPluginClientV1`] by delegating to the
 /// resolved plugin instance via [`UsageCollectorLocalClient::get_plugin()`].
 struct LocalPluginProxy {
@@ -365,10 +385,7 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
         let result = timeout(self.inner.config.plugin_timeout, plugin.create_usage_record(record))
             .await
             .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
-        match &result {
-            Ok(_) => self.inner.circuit_breaker.lock().await.record_success(),
-            Err(_) => self.inner.circuit_breaker.lock().await.record_failure(),
-        }
+        record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
         result
     }
 
@@ -384,10 +401,7 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
         let result = timeout(self.inner.config.plugin_timeout, plugin.query_aggregated(query))
             .await
             .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
-        match &result {
-            Ok(_) => self.inner.circuit_breaker.lock().await.record_success(),
-            Err(_) => self.inner.circuit_breaker.lock().await.record_failure(),
-        }
+        record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
         result
     }
 
@@ -403,10 +417,7 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
         let result = timeout(self.inner.config.plugin_timeout, plugin.query_raw(query))
             .await
             .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
-        match &result {
-            Ok(_) => self.inner.circuit_breaker.lock().await.record_success(),
-            Err(_) => self.inner.circuit_breaker.lock().await.record_failure(),
-        }
+        record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
         result
     }
 }

@@ -435,27 +435,27 @@ async fn get_module_config_returns_only_matching_metrics_from_mixed_config() {
 
 // ── circuit breaker ──────────────────────────────────────────────────────────
 
-/// A storage plugin that always returns an error.
+/// A storage plugin that always returns a transient error.
 struct FailPlugin;
 
 #[async_trait::async_trait]
 impl UsageCollectorPluginClientV1 for FailPlugin {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
-        Err(UsageCollectorError::internal("simulated plugin failure"))
+        Err(UsageCollectorError::unavailable("simulated transient failure"))
     }
 
     async fn query_aggregated(
         &self,
         _query: AggregationQuery,
     ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
-        Err(UsageCollectorError::internal("simulated plugin failure"))
+        Err(UsageCollectorError::unavailable("simulated transient failure"))
     }
 
     async fn query_raw(
         &self,
         _query: RawQuery,
     ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Err(UsageCollectorError::internal("simulated plugin failure"))
+        Err(UsageCollectorError::unavailable("simulated transient failure"))
     }
 }
 
@@ -510,7 +510,7 @@ impl UsageCollectorPluginClientV1 for CountingPlugin {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         self.counter.fetch_add(1, Ordering::SeqCst);
         if self.should_fail {
-            Err(UsageCollectorError::internal("simulated plugin failure"))
+            Err(UsageCollectorError::unavailable("simulated transient failure"))
         } else {
             Ok(())
         }
@@ -644,7 +644,7 @@ async fn half_open_admits_exactly_one_concurrent_probe_others_rejected() {
         ) -> Result<(), UsageCollectorError> {
             self.counter.fetch_add(1, Ordering::SeqCst);
             if self.fail.load(Ordering::SeqCst) {
-                return Err(UsageCollectorError::internal("toggle fail"));
+                return Err(UsageCollectorError::unavailable("toggle transient fail"));
             }
             // Yield so that other spawned tasks can run and see the HalfOpen state before
             // this probe completes and closes the circuit.
@@ -754,7 +754,7 @@ async fn successful_probe_closes_circuit() {
             _record: UsageRecord,
         ) -> Result<(), UsageCollectorError> {
             if self.fail.load(Ordering::SeqCst) {
-                Err(UsageCollectorError::internal("toggle fail"))
+                Err(UsageCollectorError::unavailable("toggle transient fail"))
             } else {
                 Ok(())
             }
@@ -1001,7 +1001,7 @@ async fn failed_probe_reopens_circuit() {
         .unwrap_err();
     // The probe itself returns the plugin error, not CircuitOpen.
     assert!(
-        matches!(probe_err, UsageCollectorError::Internal { .. }),
+        matches!(probe_err, UsageCollectorError::Unavailable { .. }),
         "probe should propagate plugin error, got {probe_err:?}"
     );
 
