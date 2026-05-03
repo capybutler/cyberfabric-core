@@ -89,8 +89,11 @@ impl TimescaleDbConfig {
         if self.database_url.is_empty() {
             anyhow::bail!("database_url is required");
         }
-        if !self.database_url.contains("sslmode=require") {
-            anyhow::bail!("database_url must include 'sslmode=require' for TLS enforcement");
+        let tls_modes = ["sslmode=require", "sslmode=verify-ca", "sslmode=verify-full"];
+        if !tls_modes.iter().any(|m| self.database_url.contains(m)) {
+            anyhow::bail!(
+                "database_url must include sslmode=require, sslmode=verify-ca, or sslmode=verify-full for TLS enforcement"
+            );
         }
         if self.pool_size_min < 1 {
             anyhow::bail!("pool_size_min must be >= 1, got {}", self.pool_size_min);

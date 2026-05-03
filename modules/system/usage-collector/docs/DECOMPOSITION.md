@@ -285,22 +285,22 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Requirements Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-fr-pluggable-storage`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-query-latency`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-throughput`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-rpo` (applies-to: all — F4 must independently satisfy the RPO constraint via durable storage backend)
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-recovery` (applies-to: all — F4 must independently satisfy recovery via storage backend durability guarantees)
+  - [x] `p1` - `cpt-cf-usage-collector-fr-pluggable-storage`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-query-latency`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-throughput`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-rpo` (applies-to: all — F4 must independently satisfy the RPO constraint via durable storage backend)
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-recovery` (applies-to: all — F4 must independently satisfy recovery via storage backend durability guarantees)
 
 - **Design Principles Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
+  - [x] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
 
 - **Design Constraints Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-single-plugin`
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-types-registry` (GTS schema for plugin registration)
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-encryption`
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-or-of-ands-preservation` (scope-to-sql translator preserves OR-of-ANDs PDP constraint structure)
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-single-plugin`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-types-registry` (GTS schema for plugin registration)
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-encryption`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-or-of-ands-preservation` (scope-to-sql translator preserves OR-of-ANDs PDP constraint structure)
 
 - **Domain Model Entities**:
   - `UsageRecord` — USES: UsageRecord (defined in F1) — reads and persists records for storage
@@ -308,7 +308,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Design Components**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-component-storage-plugin` (production implementation)
+  - [x] `p1` - `cpt-cf-usage-collector-component-storage-plugin` (production implementation)
 
 - **API**:
   - None (internal plugin interface only)
@@ -321,7 +321,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Data**:
   - `usage-records` table (primary storage: idempotent upsert on ingest, read for aggregation and raw queries)
-  - [ ] `cpt-cf-usage-collector-dbtable-records`
+  - [x] `cpt-cf-usage-collector-dbtable-records`
 
 - **Phases/Milestones**:
   - Phase 1: TimescaleDB schema design — hypertable for `usage_records`, SUM-over-records counter accumulation (no separate accumulation table), migration scaffolding, and GTS schema registration

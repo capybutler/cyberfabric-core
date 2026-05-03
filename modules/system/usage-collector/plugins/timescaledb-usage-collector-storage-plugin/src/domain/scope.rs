@@ -98,6 +98,9 @@ pub fn scope_to_sql(
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql:p1:inst-s2s-3b
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql:p1:inst-s2s-3c
+        if predicate_fragments.is_empty() {
+            return Err(ScopeTranslationError::EmptyScope);
+        }
         group_fragments.push(format!("({})", predicate_fragments.join(" AND ")));
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql:p1:inst-s2s-3c
     }

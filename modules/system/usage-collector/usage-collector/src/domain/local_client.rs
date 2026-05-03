@@ -369,9 +369,14 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
             return Err(UsageCollectorError::circuit_open());
         }
         let plugin = self.inner.get_plugin().await?;
-        timeout(self.inner.config.plugin_timeout, plugin.query_aggregated(query))
+        let result = timeout(self.inner.config.plugin_timeout, plugin.query_aggregated(query))
             .await
-            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?
+            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
+        match &result {
+            Ok(_) => self.inner.circuit_breaker.lock().await.record_success(),
+            Err(_) => self.inner.circuit_breaker.lock().await.record_failure(),
+        }
+        result
     }
 
     async fn query_raw(
@@ -383,9 +388,14 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
             return Err(UsageCollectorError::circuit_open());
         }
         let plugin = self.inner.get_plugin().await?;
-        timeout(self.inner.config.plugin_timeout, plugin.query_raw(query))
+        let result = timeout(self.inner.config.plugin_timeout, plugin.query_raw(query))
             .await
-            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?
+            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
+        match &result {
+            Ok(_) => self.inner.circuit_breaker.lock().await.record_success(),
+            Err(_) => self.inner.circuit_breaker.lock().await.record_failure(),
+        }
+        result
     }
 }
 

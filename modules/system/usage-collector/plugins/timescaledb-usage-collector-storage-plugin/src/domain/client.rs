@@ -229,7 +229,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             let mut where_clauses: Vec<String> = Vec::new();
             where_clauses.push(scope_sql.clone());
             where_clauses.push(format!("{} >= ${}", time_col, time_start_idx));
-            where_clauses.push(format!("{} < ${}", time_col, time_end_idx));
+            where_clauses.push(format!("{} <= ${}", time_col, time_end_idx));
 
             if let Some(ref metric) = query.usage_type {
                 param_idx += 1;
@@ -318,7 +318,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             let mut where_clauses: Vec<String> = Vec::new();
             where_clauses.push(scope_sql.clone());
             where_clauses.push(format!("{} >= ${}", time_col, time_start_idx));
-            where_clauses.push(format!("{} < ${}", time_col, time_end_idx));
+            where_clauses.push(format!("{} <= ${}", time_col, time_end_idx));
 
             if let Some(ref metric) = query.usage_type {
                 param_idx += 1;
@@ -543,15 +543,29 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
 
         let records: Vec<UsageRecord> = rows
             .iter()
-            .map(|row| {
-                let kind_str: String = row.try_get("kind").unwrap_or_default();
-                let kind = if kind_str == "counter" { UsageKind::Counter } else { UsageKind::Gauge };
-                UsageRecord {
-                    module: row.try_get("module").unwrap_or_default(),
-                    tenant_id: row.try_get("tenant_id").unwrap_or_default(),
-                    metric: row.try_get("metric").unwrap_or_default(),
+            .map(|row| -> Result<UsageRecord, UsageCollectorError> {
+                let kind_str: String = row
+                    .try_get("kind")
+                    .map_err(|e| UsageCollectorError::internal(format!("row decode error (kind): {e}")))?;
+                let kind = match kind_str.as_str() {
+                    "counter" => UsageKind::Counter,
+                    "gauge" => UsageKind::Gauge,
+                    other => return Err(UsageCollectorError::internal(format!("unknown kind value in storage: {other}"))),
+                };
+                Ok(UsageRecord {
+                    module: row
+                        .try_get("module")
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (module): {e}")))?,
+                    tenant_id: row
+                        .try_get("tenant_id")
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (tenant_id): {e}")))?,
+                    metric: row
+                        .try_get("metric")
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (metric): {e}")))?,
                     kind,
-                    value: row.try_get::<f64, _>("value").unwrap_or(0.0),
+                    value: row
+                        .try_get::<f64, _>("value")
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (value): {e}")))?,
                     resource_id: row.try_get("resource_id").unwrap_or_default(),
                     resource_type: row.try_get("resource_type").unwrap_or_default(),
                     subject_id: row.try_get::<Option<Uuid>, _>("subject_id").unwrap_or(None),
@@ -562,13 +576,13 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                         .unwrap_or_default(),
                     timestamp: row
                         .try_get("timestamp")
-                        .unwrap_or_else(|_| Utc::now()),
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (timestamp): {e}")))?,
                     metadata: row
                         .try_get::<Option<serde_json::Value>, _>("metadata")
                         .unwrap_or(None),
-                }
+                })
             })
-            .collect();
+            .collect::<Result<Vec<_>, _>>()?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-7
 
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
