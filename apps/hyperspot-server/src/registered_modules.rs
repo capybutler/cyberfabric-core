@@ -45,6 +45,12 @@ use mini_chat::infra::plugins::static_audit as _;
 #[cfg(feature = "mini-chat")]
 use mini_chat::infra::plugins::static_model_policy as _;
 
+#[cfg(feature = "usage-collector")]
+use usage_collector as _;
+
+#[cfg(feature = "timescaledb-usage-collector-storage-plugin")]
+use timescaledb_usage_collector_storage_plugin as _;
+
 // === Example Features ===
 
 #[cfg(feature = "users-info-example")]

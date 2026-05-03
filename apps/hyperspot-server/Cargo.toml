@@ -23,6 +23,8 @@ static-credstore = ["dep:static-credstore-plugin"]
 mini-chat = ["dep:mini-chat"]
 k8s = ["mini-chat/k8s"]
 otel = ["modkit/otel"]
+usage-collector = ["dep:usage-collector"]
+timescaledb-usage-collector-storage-plugin = ["dep:timescaledb-usage-collector-storage-plugin"]
 
 [dependencies]
 mimalloc = { version = "0.1" }
@@ -67,6 +69,10 @@ clap = { workspace = true }
 
 # Optional mini-chat module
 mini-chat = { package = "cf-mini-chat", path = "../../modules/mini-chat/mini-chat", optional = true }
+
+# Optional usage-collector module and timescaledb storage plugin
+usage-collector = { package = "cf-usage-collector", path = "../../modules/system/usage-collector/usage-collector", optional = true }
+timescaledb-usage-collector-storage-plugin = { path = "../../modules/system/usage-collector/plugins/timescaledb-usage-collector-storage-plugin", optional = true }
 
 # Optional example module
 users-info = { path = "../../examples/modkit/users-info/users-info", optional = true }
