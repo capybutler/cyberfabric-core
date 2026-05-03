@@ -75,9 +75,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-02-schema-migrations.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Implement `src/infra/migrations.rs` in the `timescaledb-usage-collector-storage-plugin` crate. The file must contain a `run_migrations(pool: &PgPool) -> Result<(), MigrationError>` function that executes the 9-step idempotent schema migration sequence (`inst-mig-1` through `inst-mig-9`): enable the TimescaleDB extension, create the `usage_records` table, convert it to a hypertable, and create 5 composite indexes including the partial unique idempotency index. Each CDSL instruction must be wrapped in `@cpt-begin`/`@cpt-end` block markers. After implementing, update `infra/mod.rs` to expose `pub mod migrations`, and mark all 9 `inst-mig-*` checkboxes as `[x]` in the FEATURE file.

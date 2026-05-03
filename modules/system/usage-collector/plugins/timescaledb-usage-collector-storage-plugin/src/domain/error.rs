@@ -33,3 +33,6 @@ pub enum StoragePluginError {
     #[error("connection pool error: {0}")]
     ConnectionPool(String),
 }
+
+/// Type alias for migration-related errors.
+pub type MigrationError = StoragePluginError;
