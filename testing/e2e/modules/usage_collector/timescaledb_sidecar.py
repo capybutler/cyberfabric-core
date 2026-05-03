@@ -14,7 +14,6 @@ import time
 
 def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as s:
-        s.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         s.bind(("", 0))
         return s.getsockname()[1]
 
@@ -111,8 +110,22 @@ class TimescaleDbSidecar:
             capture_output=True,
             check=True,
         )
-        # Give PostgreSQL a moment to reload the configuration.
-        time.sleep(1.5)
+        # Poll until SSL is active rather than sleeping a fixed interval,
+        # because pg_ctl reload issues SIGHUP which is processed asynchronously.
+        deadline = time.monotonic() + 10.0
+        while time.monotonic() < deadline:
+            result = subprocess.run(
+                [
+                    "docker", "exec", self._container_id,
+                    "psql", "-U", "postgres", "-c", "SHOW ssl;",
+                ],
+                capture_output=True,
+                text=True,
+            )
+            if result.returncode == 0 and "on" in result.stdout:
+                return
+            time.sleep(0.3)
+        raise TimeoutError("PostgreSQL SSL did not become active within 10s")
 
     def stop(self) -> None:
         if self._container_id:

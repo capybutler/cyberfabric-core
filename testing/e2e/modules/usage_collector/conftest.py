@@ -50,9 +50,11 @@ def timescaledb_sidecar():
     """Start and stop the TimescaleDB Docker sidecar for the full test session."""
     from .timescaledb_sidecar import TimescaleDbSidecar
     sidecar = TimescaleDbSidecar()
-    sidecar.start()
-    yield sidecar
-    sidecar.stop()
+    try:
+        sidecar.start()
+        yield sidecar
+    finally:
+        sidecar.stop()
 
 
 # ── Config-patch helpers ──────────────────────────────────────────────────────
@@ -158,8 +160,6 @@ def emitter_env(emitter_test_env):
     tmp.close()
     config_path = Path(tmp.name)
 
-    binary = _resolve_binary_path(env)
-
     logs_dir = PROJECT_ROOT / "testing" / "e2e" / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     log = logs_dir / f"hyperspot-e2e-{env.port}-uc-emitter.log"
@@ -167,6 +167,7 @@ def emitter_env(emitter_test_env):
     proc = None
     log_fh = None
     try:
+        binary = _resolve_binary_path(env)
         log_fh = open(log, "w")
         proc = subprocess.Popen(
             [str(binary), "--config", str(config_path), "run"],
