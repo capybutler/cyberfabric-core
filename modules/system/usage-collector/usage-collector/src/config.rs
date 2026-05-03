@@ -22,9 +22,6 @@ pub const MAX_FILTER_STRING_LEN: usize = 256;
 /// Maximum allowed query time range (from, to) per request (~1 year).
 pub const MAX_QUERY_TIME_RANGE: Duration = Duration::from_hours(8784);
 
-/// Maximum lifetime of a cursor token from the time of its creation.
-pub const CURSOR_TTL: Duration = Duration::from_hours(24);
-
 /// Per-metric allowed configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]

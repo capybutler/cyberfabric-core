@@ -13,7 +13,7 @@ use usage_collector_sdk::UsageCollectorClientV1;
 use usage_collector_sdk::UsageKind;
 use usage_collector_sdk::UsageRecord;
 use usage_collector_sdk::{
-    AggregationFn, AggregationQuery, AggregationResult, PagedResult, RawQuery,
+    AggregationFn, AggregationQuery, AggregationResult, Page, RawQuery,
     UsageCollectorError, UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1,
 };
 use uuid::Uuid;
@@ -78,11 +78,8 @@ impl UsageCollectorPluginClientV1 for OkPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Ok(PagedResult {
-            items: vec![],
-            next_cursor: None,
-        })
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(100))
     }
 }
 
@@ -234,11 +231,8 @@ impl UsageCollectorPluginClientV1 for SlowPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Ok(PagedResult {
-            items: vec![],
-            next_cursor: None,
-        })
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(100))
     }
 }
 
@@ -454,7 +448,7 @@ impl UsageCollectorPluginClientV1 for FailPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
         Err(UsageCollectorError::unavailable("simulated transient failure"))
     }
 }
@@ -481,11 +475,8 @@ impl UsageCollectorPluginClientV1 for CapturingPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Ok(PagedResult {
-            items: vec![],
-            next_cursor: None,
-        })
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(100))
     }
 }
 
@@ -526,11 +517,8 @@ impl UsageCollectorPluginClientV1 for CountingPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Ok(PagedResult {
-            items: vec![],
-            next_cursor: None,
-        })
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(100))
     }
 }
 
@@ -662,11 +650,8 @@ async fn half_open_admits_exactly_one_concurrent_probe_others_rejected() {
         async fn query_raw(
             &self,
             _query: RawQuery,
-        ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-            Ok(PagedResult {
-                items: vec![],
-                next_cursor: None,
-            })
+        ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+            Ok(Page::empty(100))
         }
     }
 
@@ -770,11 +755,8 @@ async fn successful_probe_closes_circuit() {
         async fn query_raw(
             &self,
             _query: RawQuery,
-        ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-            Ok(PagedResult {
-                items: vec![],
-                next_cursor: None,
-            })
+        ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+            Ok(Page::empty(100))
         }
     }
 
@@ -877,7 +859,7 @@ async fn test_query_raw_delegates_to_plugin() {
     assert!(result.is_ok());
     let paged = result.unwrap();
     assert!(paged.items.is_empty());
-    assert!(paged.next_cursor.is_none());
+    assert!(paged.page_info.next_cursor.is_none());
 }
 
 #[tokio::test]
@@ -994,9 +976,9 @@ async fn proxy_timeout_trips_circuit_breaker() {
         async fn query_raw(
             &self,
             _query: RawQuery,
-        ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        ) -> Result<Page<UsageRecord>, UsageCollectorError> {
             tokio::time::sleep(Duration::from_mins(1)).await;
-            Ok(PagedResult { items: vec![], next_cursor: None })
+            Ok(Page::empty(100))
         }
     }
 

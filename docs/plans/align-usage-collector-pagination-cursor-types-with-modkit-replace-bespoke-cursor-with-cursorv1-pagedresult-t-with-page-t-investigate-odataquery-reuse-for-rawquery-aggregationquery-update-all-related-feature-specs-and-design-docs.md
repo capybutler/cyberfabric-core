@@ -136,9 +136,9 @@ No validation commands defined.
 - `.plans/implement-feature-query-api-modkit-alignment/phase-03-gateway-update.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Update the gateway crate's DTO layer and HTTP handler code to use the modkit types `Page<T>`, `PageInfo`, and `CursorV1` instead of the bespoke `PagedResult<T>` and `Cursor` types. This includes replacing response DTO structs in `dto.rs`, updating cursor decode/encode logic in the raw query handler in `handlers.rs`, and removing any remaining bespoke cursor/paged-result references in `local_client.rs`. No behavior changes are introduced: the wire format evolves to match what the SDK now publishes, but query logic, filtering, and error handling remain unchanged.

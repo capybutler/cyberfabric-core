@@ -18,9 +18,10 @@ use modkit_db::outbox::outbox_migrations;
 use modkit_db::{ConnectOpts, connect_db};
 use modkit_security::SecurityContext;
 use modkit_security::access_scope::pep_properties;
+use modkit_odata::SortDir;
 use usage_collector_sdk::{
-    AggregationFn, AggregationQuery, AggregationResult, AllowedMetric, Cursor, GroupByDimension,
-    ModuleConfig, PagedResult, RawQuery, UsageCollectorClientV1, UsageCollectorError,
+    AggregationFn, AggregationQuery, AggregationResult, AllowedMetric, CursorV1, GroupByDimension,
+    ModuleConfig, Page, PageInfo, RawQuery, UsageCollectorClientV1, UsageCollectorError,
     UsageCollectorPluginClientV1, UsageKind, UsageRecord,
 };
 use usage_emitter::{UsageEmitter, UsageEmitterError, UsageEmitterV1};
@@ -31,9 +32,7 @@ use super::handle_create_usage_record;
 use super::handle_get_module_config;
 use super::handle_query_aggregated;
 use super::handle_query_raw;
-use crate::api::rest::dto::{
-    AggregatedQueryParams, CreateUsageRecordRequest, RawQueryParams, cursor_encode,
-};
+use crate::api::rest::dto::{AggregatedQueryParams, CreateUsageRecordRequest, RawQueryParams};
 use crate::config::{DEFAULT_PAGE_SIZE, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE};
 
 // ── emitter_error_to_problem ──────────────────────────────────────
@@ -589,8 +588,8 @@ impl UsageCollectorPluginClientV1 for OkAggPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Ok(PagedResult { items: vec![], next_cursor: None })
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(DEFAULT_PAGE_SIZE as u64))
     }
 }
 
@@ -613,8 +612,8 @@ impl UsageCollectorPluginClientV1 for TooLargePlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Ok(PagedResult { items: vec![], next_cursor: None })
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(DEFAULT_PAGE_SIZE as u64))
     }
 }
 
@@ -637,8 +636,8 @@ impl UsageCollectorPluginClientV1 for InternalErrorPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
-        Ok(PagedResult { items: vec![], next_cursor: None })
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        Ok(Page::empty(DEFAULT_PAGE_SIZE as u64))
     }
 }
 
@@ -968,7 +967,7 @@ async fn test_aggregated_400_query_result_too_large() {
 
 // ── handle_query_raw ──────────────────────────────────────────────────────────
 
-/// Mock plugin that returns a non-empty PagedResult with a next_cursor.
+/// Mock plugin that returns a non-empty Page with a next_cursor.
 struct OkRawWithCursorPlugin;
 
 #[async_trait]
@@ -987,7 +986,7 @@ impl UsageCollectorPluginClientV1 for OkRawWithCursorPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
         let record = UsageRecord {
             module: "test-module".to_owned(),
             tenant_id: Uuid::new_v4(),
@@ -1002,8 +1001,18 @@ impl UsageCollectorPluginClientV1 for OkRawWithCursorPlugin {
             timestamp: Utc::now(),
             metadata: None,
         };
-        let cursor = Cursor { timestamp: Utc::now(), id: Uuid::new_v4() };
-        Ok(PagedResult { items: vec![record], next_cursor: Some(cursor) })
+        let cursor = CursorV1 {
+            k: vec![Utc::now().to_rfc3339(), Uuid::new_v4().to_string()],
+            o: SortDir::Asc,
+            s: "+timestamp,+id".to_owned(),
+            f: None,
+            d: "fwd".to_owned(),
+        };
+        let next_cursor = cursor.encode().expect("CursorV1 encode is infallible for valid data");
+        Ok(Page::new(
+            vec![record],
+            PageInfo { next_cursor: Some(next_cursor), prev_cursor: None, limit: DEFAULT_PAGE_SIZE as u64 },
+        ))
     }
 }
 
@@ -1026,7 +1035,7 @@ impl UsageCollectorPluginClientV1 for RawErrorPlugin {
     async fn query_raw(
         &self,
         _query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
         Err(UsageCollectorError::internal("storage backend unavailable"))
     }
 }
@@ -1052,9 +1061,9 @@ impl UsageCollectorPluginClientV1 for CapturingRawPlugin {
     async fn query_raw(
         &self,
         query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
         *self.captured_page_size.lock().unwrap() = Some(query.page_size);
-        Ok(PagedResult { items: vec![], next_cursor: None })
+        Ok(Page::empty(DEFAULT_PAGE_SIZE as u64))
     }
 }
 
@@ -1088,7 +1097,7 @@ async fn test_raw_200_empty_final_page() {
 
     let axum::Json(body) = result.expect("handler should succeed");
     assert!(body.items.is_empty(), "empty plugin result must yield empty items");
-    assert!(body.next_cursor.is_none(), "absent next_cursor signals final page");
+    assert!(body.page_info.next_cursor.is_none(), "absent next_cursor signals final page");
 }
 
 /// TEST-FDESIGN-001 (inst-raw-9): plugin returns items and cursor → 200 with next_cursor present.
@@ -1105,7 +1114,7 @@ async fn test_raw_200_with_items_and_next_cursor() {
 
     let axum::Json(body) = result.expect("handler should succeed");
     assert!(!body.items.is_empty(), "response must contain items");
-    let cursor_str = body.next_cursor.expect("next_cursor must be present");
+    let cursor_str = body.page_info.next_cursor.expect("next_cursor must be present");
     assert!(!cursor_str.is_empty(), "next_cursor must be a non-empty base64 string");
 }
 
@@ -1150,7 +1159,14 @@ async fn test_raw_400_cursor_timestamp_out_of_range() {
     let to = Utc::now() - chrono::Duration::hours(1);
     // cursor timestamp is after 'to' — outside [from, to]
     let cursor_ts = Utc::now();
-    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4(), Utc::now());
+    let cursor = CursorV1 {
+        k: vec![cursor_ts.to_rfc3339(), Uuid::new_v4().to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor.encode().expect("CursorV1 encode is infallible for valid data");
 
     let params = RawQueryParams {
         from,
@@ -1388,8 +1404,8 @@ async fn test_raw_503_plugin_error() {
     assert!(!err.detail.contains("storage backend"), "error details must not leak plugin errors");
 }
 
-/// TEST-FDESIGN-001 (inst-sdk-6a): issued_at age exceeds CURSOR_TTL (24h) → 410 Gone.
-/// cursor_ts (data position) is within [from, to]; only issued_at is expired.
+/// CursorV1 migration: cursor TTL check removed — cursor within [from, to] always succeeds.
+/// The bespoke cursor included an issued_at field for TTL validation; CursorV1 has no such field.
 #[tokio::test]
 async fn test_raw_410_cursor_expired() {
     let ctx = test_ctx();
@@ -1398,12 +1414,17 @@ async fn test_raw_410_cursor_expired() {
     let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
 
     let now = Utc::now();
-    // cursor_ts is valid data within [from, to]; issued_at is 25 hours ago (exceeds CURSOR_TTL)
     let cursor_ts = now - chrono::Duration::hours(1);
     let from = cursor_ts - chrono::Duration::hours(1);
     let to = now;
-    let issued_at = now - chrono::Duration::hours(25);
-    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4(), issued_at);
+    let cursor = CursorV1 {
+        k: vec![cursor_ts.to_rfc3339(), Uuid::new_v4().to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor.encode().expect("CursorV1 encode is infallible for valid data");
 
     let params = RawQueryParams {
         from,
@@ -1417,19 +1438,13 @@ async fn test_raw_410_cursor_expired() {
         resource_type: None,
     };
 
-    let err = handle_query_raw(Extension(ctx), Extension(authz), Extension(plugin), Query(params))
-        .await
-        .expect_err("expired cursor must return 410 Gone");
-
-    assert_eq!(err.status, StatusCode::GONE);
-    let detail: serde_json::Value =
-        serde_json::from_str(&err.detail).expect("detail must be valid JSON");
-    assert_eq!(detail["error"], "cursor expired");
-    assert_eq!(detail["code"], "CURSOR_EXPIRED");
+    let result =
+        handle_query_raw(Extension(ctx), Extension(authz), Extension(plugin), Query(params)).await;
+    assert!(result.is_ok(), "cursor within [from, to] must succeed with CursorV1: {result:?}");
 }
 
-/// TEST-FDESIGN-001 (inst-sdk-6a): old data timestamp + fresh issued_at → not 410.
-/// Verifies cursor TTL is based on issuance time, not data record age.
+/// CursorV1 migration: cursor with an old data timestamp (48h ago) but within [from, to] succeeds.
+/// With CursorV1 there is no TTL — only the data-position timestamp range check applies.
 #[tokio::test]
 async fn test_raw_200_cursor_not_expired_old_data() {
     let ctx = test_ctx();
@@ -1438,12 +1453,18 @@ async fn test_raw_200_cursor_not_expired_old_data() {
     let plugin: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(OkAggPlugin);
 
     let now = Utc::now();
-    // cursor_ts is 48 hours ago (old data record position) but issued_at is 1 second ago (fresh)
+    // cursor_ts is 48 hours ago (old data record position); from extends to cover it
     let cursor_ts = now - chrono::Duration::hours(48);
     let from = cursor_ts - chrono::Duration::hours(1);
     let to = now;
-    let issued_at = now - chrono::Duration::seconds(1);
-    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4(), issued_at);
+    let cursor = CursorV1 {
+        k: vec![cursor_ts.to_rfc3339(), Uuid::new_v4().to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor.encode().expect("CursorV1 encode is infallible for valid data");
 
     let params = RawQueryParams {
         from,
@@ -1460,39 +1481,31 @@ async fn test_raw_200_cursor_not_expired_old_data() {
     let result =
         handle_query_raw(Extension(ctx), Extension(authz), Extension(plugin), Query(params)).await;
 
-    // Key assertion: old data timestamp with fresh issued_at must NOT return 410
     assert!(
         result.is_ok(),
-        "cursor with old data timestamp but fresh issued_at must not return 410: {result:?}"
+        "cursor with old data timestamp within [from, to] must succeed: {result:?}"
     );
 }
 
-/// TEST-FDESIGN-001 (inst-sdk-6): cursor encode/decode round-trip test.
+/// CursorV1 encode/decode round-trip test.
 #[test]
 fn test_cursor_encode_decode_round_trip() {
     let timestamp = Utc::now();
     let id = Uuid::new_v4();
-    let issued_at = Utc::now();
+    let cursor = CursorV1 {
+        k: vec![timestamp.to_rfc3339(), id.to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
 
-    let encoded = cursor_encode(timestamp, id, issued_at);
-    let (decoded_ts, decoded_id, decoded_issued_at) =
-        crate::api::rest::dto::cursor_decode(&encoded).expect("should decode successfully");
+    let encoded = cursor.encode().expect("CursorV1 encode is infallible for valid data");
+    let decoded = CursorV1::decode(&encoded).expect("CursorV1 decode must succeed for freshly encoded cursor");
 
-    assert_eq!(decoded_id, id, "UUID must survive encode/decode round-trip");
-    // RFC 3339 round-trip preserves seconds and sub-seconds
-    assert_eq!(
-        decoded_ts.timestamp(),
-        timestamp.timestamp(),
-        "timestamp seconds must survive encode/decode round-trip"
-    );
-    assert_eq!(
-        decoded_ts.timestamp_subsec_nanos(),
-        timestamp.timestamp_subsec_nanos(),
-        "timestamp nanoseconds must survive encode/decode round-trip"
-    );
-    assert_eq!(
-        decoded_issued_at.timestamp(),
-        issued_at.timestamp(),
-        "issued_at seconds must survive encode/decode round-trip"
-    );
+    assert_eq!(decoded.k[1], id.to_string(), "UUID must survive encode/decode round-trip");
+    assert_eq!(decoded.k[0], timestamp.to_rfc3339(), "timestamp must survive encode/decode round-trip");
+    assert!(matches!(decoded.o, SortDir::Asc), "sort direction must survive round-trip");
+    assert_eq!(decoded.s, "+timestamp,+id", "sort spec must survive round-trip");
+    assert_eq!(decoded.d, "fwd", "pagination direction must survive round-trip");
 }

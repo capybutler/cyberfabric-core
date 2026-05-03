@@ -17,8 +17,9 @@ use modkit_security::access_scope::pep_properties;
 use usage_collector::api::rest::handlers::{
     handle_create_usage_record, handle_get_module_config, handle_query_aggregated, handle_query_raw,
 };
+use modkit_odata::SortDir;
 use usage_collector_sdk::{
-    AggregationQuery, AggregationResult, AllowedMetric, Cursor, ModuleConfig, PagedResult,
+    AggregationQuery, AggregationResult, AllowedMetric, CursorV1, ModuleConfig, Page, PageInfo,
     RawQuery, UsageCollectorClientV1, UsageCollectorError, UsageCollectorPluginClientV1,
     UsageKind, UsageRecord,
 };
@@ -143,9 +144,8 @@ impl UsageCollectorPluginClientV1 for MockUsageCollectorPluginClientV1 {
         Ok(vec![])
     }
 
-    async fn query_raw(&self, _: RawQuery) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+    async fn query_raw(&self, _: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
         if self.with_cursor {
-            let cursor = Cursor { timestamp: Utc::now(), id: Uuid::new_v4() };
             let record = UsageRecord {
                 module: "test-module".to_owned(),
                 tenant_id: Uuid::new_v4(),
@@ -160,9 +160,20 @@ impl UsageCollectorPluginClientV1 for MockUsageCollectorPluginClientV1 {
                 timestamp: Utc::now(),
                 metadata: None,
             };
-            return Ok(PagedResult { items: vec![record], next_cursor: Some(cursor) });
+            let cursor = CursorV1 {
+                k: vec![Utc::now().to_rfc3339(), Uuid::new_v4().to_string()],
+                o: SortDir::Asc,
+                s: "+timestamp,+id".to_owned(),
+                f: None,
+                d: "fwd".to_owned(),
+            };
+            let next_cursor = cursor.encode().expect("CursorV1 encode is infallible for valid data");
+            return Ok(Page::new(
+                vec![record],
+                PageInfo { next_cursor: Some(next_cursor), prev_cursor: None, limit: 100 },
+            ));
         }
-        Ok(PagedResult { items: vec![], next_cursor: None })
+        Ok(Page::empty(100))
     }
 }
 

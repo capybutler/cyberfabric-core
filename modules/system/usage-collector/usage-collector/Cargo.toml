@@ -62,6 +62,7 @@ sea-orm-migration = { workspace = true }
 [dev-dependencies]
 # ModKit dependencies
 modkit-db = { workspace = true, features = ["sqlite"] }
+modkit-odata = { workspace = true }
 
 # HTTP testing
 tower = { workspace = true }

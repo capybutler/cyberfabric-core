@@ -15,7 +15,7 @@ use types_registry_sdk::{ListQuery, TypesRegistryClient};
 use usage_collector_sdk::AllowedMetric;
 use usage_collector_sdk::ModuleConfig;
 use usage_collector_sdk::{
-    AggregationQuery, AggregationResult, PagedResult, RawQuery, UsageCollectorClientV1,
+    AggregationQuery, AggregationResult, Page, RawQuery, UsageCollectorClientV1,
     UsageCollectorError, UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1,
     UsageRecord,
 };
@@ -416,7 +416,7 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
     async fn query_raw(
         &self,
         query: RawQuery,
-    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
         let is_open = self.inner.circuit_breaker.lock().await.is_open();
         if is_open {
             return Err(UsageCollectorError::circuit_open());

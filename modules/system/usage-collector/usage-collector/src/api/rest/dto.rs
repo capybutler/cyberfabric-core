@@ -1,16 +1,10 @@
 //! REST DTOs for the usage-collector gateway.
 
-use std::time::Duration;
-
-use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD as BASE64URL};
 use chrono::{DateTime, Utc};
 use usage_collector_sdk::models::{
-    AggregationFn, AggregationResult, BucketSize, GroupByDimension, UsageKind, UsageRecord,
+    AggregationFn, AggregationResult, BucketSize, GroupByDimension, UsageKind,
 };
 use uuid::Uuid;
-
-/// Decoded cursor components: `(timestamp, record_id, issued_at)`.
-type DecodedCursor = (DateTime<Utc>, Uuid, DateTime<Utc>);
 
 /// Request body to create one usage record (ingest).
 #[derive(Debug, Clone)]
@@ -148,56 +142,6 @@ impl From<AggregationResult> for AggregationResultDto {
     }
 }
 
-/// Error returned when decoding a gateway pagination cursor fails.
-#[derive(Debug)]
-pub enum CursorError {
-    Malformed,
-}
-
-/// Encode `(timestamp, id, issued_at)` as a base64url gateway cursor string.
-///
-/// Format: `base64url("<timestamp_rfc3339>,<uuid>,<issued_at_rfc3339>")`.
-/// The caller supplies `issued_at`; pass `Utc::now()` in production code.
-// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6
-pub fn cursor_encode(timestamp: DateTime<Utc>, id: Uuid, issued_at: DateTime<Utc>) -> String {
-    let payload = format!("{},{},{}", timestamp.to_rfc3339(), id, issued_at.to_rfc3339());
-    BASE64URL.encode(payload.as_bytes())
-}
-
-/// Decode a gateway cursor string into `(timestamp, id, issued_at)`.
-///
-/// Returns `Err(CursorError::Malformed)` on any parse failure.
-pub fn cursor_decode(raw: &str) -> Result<DecodedCursor, CursorError> {
-    let bytes = BASE64URL.decode(raw).map_err(|_| CursorError::Malformed)?;
-    let payload = String::from_utf8(bytes).map_err(|_| CursorError::Malformed)?;
-    let mut parts = payload.splitn(3, ',');
-    let ts_str = parts.next().ok_or(CursorError::Malformed)?;
-    let id_str = parts.next().ok_or(CursorError::Malformed)?;
-    let issued_at_str = parts.next().ok_or(CursorError::Malformed)?;
-    let timestamp = DateTime::parse_from_rfc3339(ts_str)
-        .map_err(|_| CursorError::Malformed)?
-        .with_timezone(&Utc);
-    let id = Uuid::parse_str(id_str).map_err(|_| CursorError::Malformed)?;
-    let issued_at = DateTime::parse_from_rfc3339(issued_at_str)
-        .map_err(|_| CursorError::Malformed)?
-        .with_timezone(&Utc);
-    Ok((timestamp, id, issued_at))
-}
-// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6
-
-/// Returns `true` when the cursor has exceeded its TTL.
-///
-/// Compares `issued_at` (the wall-clock time the cursor was created) against `ttl`,
-/// not the data record timestamp. These are fundamentally different: one is when the
-/// token was issued, the other is where pagination is positioned in the data.
-// @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6a
-pub fn cursor_check_ttl(issued_at: DateTime<Utc>, now: DateTime<Utc>, ttl: Duration) -> bool {
-    (now - issued_at)
-        .to_std()
-        .is_ok_and(|age| age > ttl)
-}
-// @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6a
-
 /// Query parameters for `GET /usage-collector/v1/raw`.
 ///
 /// `tenant_id` is NEVER accepted here — it is derived from `SecurityContext` only.
@@ -231,13 +175,3 @@ pub struct RawQueryParams {
     pub resource_type: Option<String>,
 }
 
-/// Response body for `GET /usage-collector/v1/raw`.
-///
-/// Absent `next_cursor` signals the final page. Empty `items` with absent `next_cursor` is a
-/// valid success.
-#[derive(Debug, Clone, serde::Serialize)]
-pub struct PagedResultResponse {
-    pub items: Vec<UsageRecord>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub next_cursor: Option<String>,
-}

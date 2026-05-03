@@ -5,26 +5,29 @@ use std::sync::Arc;
 use authz_resolver_sdk::AuthZResolverClient;
 use axum::extract::{Path, Query};
 use axum::{Extension, Json};
-use chrono::Utc;
+use chrono::{DateTime, Utc};
 use http::StatusCode;
 use modkit::api::problem::{Problem, internal_error};
 use modkit_security::SecurityContext;
-use usage_collector_sdk::models::{AggregationQuery, Cursor, GroupByDimension, RawQuery};
+use usage_collector_sdk::models::{AggregationQuery, GroupByDimension, RawQuery};
 use usage_collector_sdk::{
-    UsageCollectorClientV1, UsageCollectorError, UsageCollectorPluginClientV1,
+    CursorV1, Page, UsageCollectorClientV1, UsageCollectorError, UsageCollectorPluginClientV1,
+    UsageRecord,
 };
 use usage_emitter::{UsageEmitterError, UsageEmitterV1};
 
-use crate::config::{CURSOR_TTL, DEFAULT_PAGE_SIZE, MAX_AGG_ROWS, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE};
+use crate::config::{DEFAULT_PAGE_SIZE, MAX_AGG_ROWS, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE};
 use crate::domain::authz::{USAGE_RECORD_READ, actions, authorize_and_compile_scope};
 
 use super::dto::{
     AggregatedQueryParams, AggregationResultDto, AllowedMetricResponse, CreateUsageRecordRequest,
-    CursorError, ModuleConfigResponse, PagedResultResponse, RawQueryParams, cursor_check_ttl,
-    cursor_decode, cursor_encode,
+    ModuleConfigResponse, RawQueryParams,
 };
 
 /// Handler for `POST /usage-collector/v1/records`.
+///
+/// # Errors
+/// Returns a [`Problem`] on authorization failure, validation errors, or internal emitter failure.
 pub async fn handle_create_usage_record(
     Extension(ctx): Extension<SecurityContext>,
     Extension(emitter): Extension<Arc<dyn UsageEmitterV1>>,
@@ -131,6 +134,9 @@ async fn authorize_request(
 }
 
 /// Handler for `GET /usage-collector/v1/modules/{module_name}/config`.
+///
+/// # Errors
+/// Returns a [`Problem`] if the module is not found or the collector call fails.
 // @cpt-flow:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2
 pub async fn handle_get_module_config(
     Path(module_name): Path<String>,
@@ -179,6 +185,9 @@ pub async fn handle_get_module_config(
 }
 
 /// Handler for `GET /usage-collector/v1/aggregated`.
+///
+/// # Errors
+/// Returns a [`Problem`] on authorization failure, validation errors, or plugin call failure.
 // @cpt-flow:cpt-cf-usage-collector-flow-query-api-aggregated:p1
 pub async fn handle_query_aggregated(
     Extension(ctx): Extension<SecurityContext>,
@@ -342,13 +351,16 @@ pub async fn handle_query_aggregated(
 }
 
 /// Handler for `GET /usage-collector/v1/raw`.
+///
+/// # Errors
+/// Returns a [`Problem`] on authorization failure, validation errors, or plugin call failure.
 // @cpt-flow:cpt-cf-usage-collector-flow-query-api-raw:p2
 pub async fn handle_query_raw(
     Extension(ctx): Extension<SecurityContext>,
     Extension(authz): Extension<Arc<dyn AuthZResolverClient>>,
     Extension(plugin): Extension<Arc<dyn UsageCollectorPluginClientV1>>,
     Query(params): Query<RawQueryParams>,
-) -> Result<Json<PagedResultResponse>, Problem> {
+) -> Result<Json<Page<UsageRecord>>, Problem> {
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-1
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-2
     // tenant_id is derived from ctx; params must not contain tenant_id
@@ -412,21 +424,25 @@ pub async fn handle_query_raw(
     }
 
     let decoded_cursor = if let Some(ref cursor_str) = params.cursor {
-        match cursor_decode(cursor_str) {
-            Ok((ts, id, issued_at)) => {
-                if ts < params.from || ts > params.to {
+        if let Ok(cursor) = CursorV1::decode(cursor_str) {
+            let ts_str = cursor.k.first().map_or("", String::as_str);
+            if let Ok(ts) = DateTime::parse_from_rfc3339(ts_str) {
+                let ts_utc = ts.with_timezone(&Utc);
+                if ts_utc < params.from || ts_utc > params.to {
                     errors.push(
                         "cursor: timestamp is outside the requested [from, to] range".to_owned(),
                     );
                     None
                 } else {
-                    Some((ts, id, issued_at))
+                    Some(cursor)
                 }
-            }
-            Err(CursorError::Malformed) => {
+            } else {
                 errors.push("cursor: malformed cursor".to_owned());
                 None
             }
+        } else {
+            errors.push("cursor: malformed cursor".to_owned());
+            None
         }
     } else {
         None
@@ -471,24 +487,11 @@ pub async fn handle_query_raw(
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-5
 
-    // @cpt-begin:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6a
-    if let Some((_, _, issued_at)) = &decoded_cursor
-        && cursor_check_ttl(*issued_at, Utc::now(), CURSOR_TTL)
-    {
-        return Err(Problem::new(
-            StatusCode::GONE,
-            "Cursor expired",
-            r#"{"error":"cursor expired","code":"CURSOR_EXPIRED"}"#.to_owned(),
-        ));
-    }
-    // @cpt-end:cpt-cf-usage-collector-algo-query-api-sdk-types:p2:inst-sdk-6a
-
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-7
-    let cursor = decoded_cursor.map(|(timestamp, id, _)| Cursor { timestamp, id });
     let query = RawQuery {
         scope,
         time_range: (params.from, params.to),
-        cursor,
+        cursor: decoded_cursor,
         page_size,
         usage_type: params.usage_type,
         resource_id: params.resource_id,
@@ -524,11 +527,7 @@ pub async fn handle_query_raw(
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8
 
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-9
-    let next_cursor = paged.next_cursor.map(|c| cursor_encode(c.timestamp, c.id, Utc::now()));
-    Ok(Json(PagedResultResponse {
-        items: paged.items,
-        next_cursor,
-    }))
+    Ok(Json(paged))
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-9
 }
 

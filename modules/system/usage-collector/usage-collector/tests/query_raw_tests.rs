@@ -7,9 +7,9 @@ use std::sync::Arc;
 use axum::body::{Body, to_bytes};
 use chrono::Utc;
 use http::{Method, Request, StatusCode};
+use modkit_odata::SortDir;
 use tower::ServiceExt;
-use usage_collector::api::rest::dto::cursor_encode;
-use usage_collector_sdk::UsageCollectorPluginClientV1;
+use usage_collector_sdk::{CursorV1, UsageCollectorPluginClientV1};
 use uuid::Uuid;
 
 use common::{AppHarness, MockUsageCollectorPluginClientV1, encode_dt};
@@ -95,6 +95,7 @@ async fn query_raw_page_size_exceeds_max() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
 }
 
+/// CursorV1 migration: TTL check removed — cursor within [from, to] now always succeeds.
 #[tokio::test]
 async fn query_raw_cursor_expired() {
     let harness = AppHarness::new().await;
@@ -103,8 +104,14 @@ async fn query_raw_cursor_expired() {
     let cursor_ts = now - chrono::Duration::hours(1);
     let from = cursor_ts - chrono::Duration::hours(1);
     let to = now;
-    let issued_at = now - chrono::Duration::hours(25); // exceeds CURSOR_TTL of 24h
-    let cursor_str = cursor_encode(cursor_ts, Uuid::new_v4(), issued_at);
+    let cursor = CursorV1 {
+        k: vec![cursor_ts.to_rfc3339(), Uuid::new_v4().to_string()],
+        o: SortDir::Asc,
+        s: "+timestamp,+id".to_owned(),
+        f: None,
+        d: "fwd".to_owned(),
+    };
+    let cursor_str = cursor.encode().expect("CursorV1 encode is infallible for valid data");
 
     let from_str = encode_dt(from);
     let to_str = encode_dt(to);
@@ -117,7 +124,7 @@ async fn query_raw_cursor_expired() {
         .unwrap();
 
     let response = harness.router.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::GONE);
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -172,6 +179,6 @@ async fn query_raw_pagination_next_cursor() {
 
     let bytes = to_bytes(response.into_body(), usize::MAX).await.unwrap();
     let json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
-    let cursor = json["next_cursor"].as_str().expect("next_cursor must be present");
-    assert!(!cursor.is_empty(), "next_cursor must be a non-empty base64 string");
+    let cursor = json["page_info"]["next_cursor"].as_str().expect("page_info.next_cursor must be present");
+    assert!(!cursor.is_empty(), "next_cursor must be a non-empty string");
 }
