@@ -9,6 +9,9 @@ use usage_collector_sdk::models::{
 };
 use uuid::Uuid;
 
+/// Decoded cursor components: `(timestamp, record_id, issued_at)`.
+type DecodedCursor = (DateTime<Utc>, Uuid, DateTime<Utc>);
+
 /// Request body to create one usage record (ingest).
 #[derive(Debug, Clone)]
 #[modkit_macros::api_dto(request)]
@@ -164,7 +167,7 @@ pub fn cursor_encode(timestamp: DateTime<Utc>, id: Uuid, issued_at: DateTime<Utc
 /// Decode a gateway cursor string into `(timestamp, id, issued_at)`.
 ///
 /// Returns `Err(CursorError::Malformed)` on any parse failure.
-pub fn cursor_decode(raw: &str) -> Result<(DateTime<Utc>, Uuid, DateTime<Utc>), CursorError> {
+pub fn cursor_decode(raw: &str) -> Result<DecodedCursor, CursorError> {
     let bytes = BASE64URL.decode(raw).map_err(|_| CursorError::Malformed)?;
     let payload = String::from_utf8(bytes).map_err(|_| CursorError::Malformed)?;
     let mut parts = payload.splitn(3, ',');

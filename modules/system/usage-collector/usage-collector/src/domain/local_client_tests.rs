@@ -969,6 +969,81 @@ async fn test_query_aggregated_scope_propagated_to_plugin() {
     );
 }
 
+/// `LocalPluginProxy` timeouts must trip the circuit breaker so repeated timeouts eventually open it.
+#[tokio::test]
+async fn proxy_timeout_trips_circuit_breaker() {
+    struct SlowQueryPlugin;
+
+    #[async_trait::async_trait]
+    impl UsageCollectorPluginClientV1 for SlowQueryPlugin {
+        async fn create_usage_record(
+            &self,
+            _record: UsageRecord,
+        ) -> Result<(), UsageCollectorError> {
+            Ok(())
+        }
+
+        async fn query_aggregated(
+            &self,
+            _query: AggregationQuery,
+        ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+            tokio::time::sleep(Duration::from_mins(1)).await;
+            Ok(vec![])
+        }
+
+        async fn query_raw(
+            &self,
+            _query: RawQuery,
+        ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+            tokio::time::sleep(Duration::from_mins(1)).await;
+            Ok(PagedResult { items: vec![], next_cursor: None })
+        }
+    }
+
+    let threshold = 2u32;
+    let client = Arc::new(make_cb_client(
+        Arc::new(SlowQueryPlugin),
+        threshold,
+        Duration::from_secs(10),
+        Duration::from_millis(1),
+    ));
+
+    // Override plugin_timeout to be very short so the slow plugin triggers it.
+    let instance_id = format!(
+        "{}test._.proxy_timeout_cb.v1",
+        UsageCollectorStoragePluginSpecV1::gts_schema_id()
+    );
+    let hub = hub_with_plugin(&instance_id, "hyperspot", Arc::new(SlowQueryPlugin));
+    let client = Arc::new(UsageCollectorLocalClient::new(
+        UsageCollectorConfig {
+            vendor: "hyperspot".to_owned(),
+            circuit_breaker_failure_threshold: threshold,
+            circuit_breaker_window: Duration::from_secs(10),
+            circuit_breaker_recovery_timeout: Duration::from_millis(1),
+            plugin_timeout: Duration::from_millis(1),
+            ..UsageCollectorConfig::default()
+        },
+        hub,
+    ));
+    let proxy = UsageCollectorLocalClient::as_plugin_client(Arc::clone(&client));
+
+    // Two timeouts must trip the circuit breaker.
+    for _ in 0..threshold {
+        let err = proxy.query_aggregated(minimal_agg_query()).await.unwrap_err();
+        assert!(
+            matches!(err, UsageCollectorError::PluginTimeout),
+            "expected PluginTimeout, got {err:?}"
+        );
+    }
+
+    // Next call must be rejected by the open circuit breaker.
+    let err = proxy.query_aggregated(minimal_agg_query()).await.unwrap_err();
+    assert!(
+        matches!(err, UsageCollectorError::CircuitOpen),
+        "circuit should be open after {threshold} proxy timeouts, got {err:?}"
+    );
+}
+
 /// After a failed probe from `HalfOpen`, the circuit re-opens and the next call returns `CircuitOpen`.
 #[tokio::test]
 async fn failed_probe_reopens_circuit() {

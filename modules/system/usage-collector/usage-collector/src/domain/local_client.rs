@@ -115,8 +115,8 @@ impl CircuitBreaker {
                     self.failure_timestamps.clear();
                 }
                 CircuitState::Open { .. } => {
-                    // Already open; update timestamp.
-                    self.state = CircuitState::Open { opened_at: now };
+                    // Already open; do not reset opened_at — resetting the recovery clock under
+                    // concurrent failures would prevent the circuit from ever transitioning to HalfOpen.
                 }
             }
         }
@@ -361,7 +361,7 @@ async fn record_circuit_breaker_outcome<T>(
 ) {
     match result {
         Ok(_) => circuit_breaker.lock().await.record_success(),
-        Err(e) if matches!(e, UsageCollectorError::Unavailable { .. }) => {
+        Err(UsageCollectorError::Unavailable { .. }) => {
             circuit_breaker.lock().await.record_failure();
         }
         Err(_) => {}
@@ -382,9 +382,13 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
             return Err(UsageCollectorError::circuit_open());
         }
         let plugin = self.inner.get_plugin().await?;
-        let result = timeout(self.inner.config.plugin_timeout, plugin.create_usage_record(record))
-            .await
-            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
+        let result = match timeout(self.inner.config.plugin_timeout, plugin.create_usage_record(record)).await {
+            Err(_elapsed) => {
+                self.inner.circuit_breaker.lock().await.record_failure();
+                return Err(UsageCollectorError::plugin_timeout());
+            }
+            Ok(r) => r,
+        };
         record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
         result
     }
@@ -398,9 +402,13 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
             return Err(UsageCollectorError::circuit_open());
         }
         let plugin = self.inner.get_plugin().await?;
-        let result = timeout(self.inner.config.plugin_timeout, plugin.query_aggregated(query))
-            .await
-            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
+        let result = match timeout(self.inner.config.plugin_timeout, plugin.query_aggregated(query)).await {
+            Err(_elapsed) => {
+                self.inner.circuit_breaker.lock().await.record_failure();
+                return Err(UsageCollectorError::plugin_timeout());
+            }
+            Ok(r) => r,
+        };
         record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
         result
     }
@@ -414,9 +422,13 @@ impl UsageCollectorPluginClientV1 for LocalPluginProxy {
             return Err(UsageCollectorError::circuit_open());
         }
         let plugin = self.inner.get_plugin().await?;
-        let result = timeout(self.inner.config.plugin_timeout, plugin.query_raw(query))
-            .await
-            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?;
+        let result = match timeout(self.inner.config.plugin_timeout, plugin.query_raw(query)).await {
+            Err(_elapsed) => {
+                self.inner.circuit_breaker.lock().await.record_failure();
+                return Err(UsageCollectorError::plugin_timeout());
+            }
+            Ok(r) => r,
+        };
         record_circuit_breaker_outcome(&self.inner.circuit_breaker, &result).await;
         result
     }
