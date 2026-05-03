@@ -148,7 +148,7 @@ single-tenant aggregation), `cpt-cf-usage-collector-nfr-throughput`
 
 ### Storage Backend: Ingest Record
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest`
 
 **Actor**: `cpt-cf-usage-collector-actor-storage-backend`
 
@@ -160,11 +160,11 @@ single-tenant aggregation), `cpt-cf-usage-collector-nfr-throughput`
 - Transient DB failure; `UsageCollectorPluginError::Transient` returned; gateway circuit breaker handles retry
 
 **Steps**:
-1. [ ] - `p1` - Gateway calls `create_usage_record(UsageRecord)` on the plugin - `inst-flow-ing-1`
-2. [ ] - `p1` - Plugin validates: `value >= 0` for counter records; `idempotency_key` present for counter records; **IF** either fails — **RETURN** `UsageCollectorPluginError::InvalidRecord` - `inst-flow-ing-2`
-3. [ ] - `p1` - Plugin executes idempotent INSERT: `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record` — ON CONFLICT `(tenant_id, idempotency_key)` DO NOTHING - `inst-flow-ing-3`
-4. [ ] - `p1` - **IF** DB returns a transient error — **RETURN** `UsageCollectorPluginError::Transient`; gateway circuit breaker records the failure; outbox retries delivery - `inst-flow-ing-4`
-5. [ ] - `p1` - **RETURN** `Ok(())` — record inserted or confirmed duplicate; no distinction exposed to caller - `inst-flow-ing-5`
+1. [x] - `p1` - Gateway calls `create_usage_record(UsageRecord)` on the plugin - `inst-flow-ing-1`
+2. [x] - `p1` - Plugin validates: `value >= 0` for counter records; `idempotency_key` present for counter records; **IF** either fails — **RETURN** `UsageCollectorPluginError::InvalidRecord` - `inst-flow-ing-2`
+3. [x] - `p1` - Plugin executes idempotent INSERT: `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record` — ON CONFLICT `(tenant_id, idempotency_key)` DO NOTHING - `inst-flow-ing-3`
+4. [x] - `p1` - **IF** DB returns a transient error — **RETURN** `UsageCollectorPluginError::Transient`; gateway circuit breaker records the failure; outbox retries delivery - `inst-flow-ing-4`
+5. [x] - `p1` - **RETURN** `Ok(())` — record inserted or confirmed duplicate; no distinction exposed to caller - `inst-flow-ing-5`
 
 ## 3. Processes / Business Logic (CDSL)
 
@@ -220,7 +220,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 ### `create_usage_record` — Idempotent Ingest
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record`
 
 **Input**: `UsageRecord` — deserialized from gateway ingest payload; fields: `tenant_id`, `module`, `kind` (`'counter'` or `'gauge'`), `metric`, `value`, `timestamp`, `idempotency_key` (non-null for counter records; nullable for gauge records), `resource_id`, `resource_type`, `subject_id` (nullable), `subject_type` (nullable), `metadata` (nullable JSONB), `ingested_at` (gateway sets to `now()`)
 
@@ -229,13 +229,13 @@ Internal system functions and procedures that do not interact with actors direct
 **Counter-delta semantics**: for `kind = 'counter'`, each record's `value` is a non-negative delta contribution. The record is stored as-is alongside other deltas. The persistent total for any `(tenant_id, metric)` pair is `SUM(value)` over all active records — no separate accumulation table or running total is maintained. This matches DESIGN §3.7 Counter Accumulation.
 
 **Steps**:
-1. [ ] - `p1` - Validate `value >= 0` when `kind = 'counter'`; **IF** negative — **RETURN** `UsageCollectorPluginError::InvalidRecord` (gateway enforces this before calling the plugin, but the plugin re-validates as a defensive check) - `inst-cur-1`
-2. [ ] - `p1` - Validate `idempotency_key` is present (non-null, non-empty) when `kind = 'counter'`; **IF** absent — **RETURN** `UsageCollectorPluginError::InvalidRecord` - `inst-cur-2`
-3. [ ] - `p1` - Execute INSERT INTO `usage_records` with all record fields; ON CONFLICT on `(tenant_id, idempotency_key)` WHERE `idempotency_key IS NOT NULL` DO NOTHING — idempotent upsert: duplicate records (same `tenant_id` + `idempotency_key`) are silently ignored, not double-counted - `inst-cur-3`
-4. [ ] - `p1` - **IF** DB operation returns a unique constraint violation on a column other than the idempotency index (unexpected schema conflict) — **RETURN** `UsageCollectorPluginError::StorageError(err)` - `inst-cur-4`
-5. [ ] - `p1` - **IF** DB operation returns a transient error (connection lost, pool timeout, serialization failure) — **RETURN** `UsageCollectorPluginError::Transient(err)`; the gateway circuit breaker records this failure and the outbox library retries delivery - `inst-cur-5`
-6. [ ] - `p1` - Set `ingested_at = now()` at DB INSERT time (not passed from caller) - `inst-cur-6`
-7. [ ] - `p1` - **RETURN** `Ok(())` — record inserted or confirmed as duplicate via idempotency key; no distinction exposed to caller - `inst-cur-7`
+1. [x] - `p1` - Validate `value >= 0` when `kind = 'counter'`; **IF** negative — **RETURN** `UsageCollectorPluginError::InvalidRecord` (gateway enforces this before calling the plugin, but the plugin re-validates as a defensive check) - `inst-cur-1`
+2. [x] - `p1` - Validate `idempotency_key` is present (non-null, non-empty) when `kind = 'counter'`; **IF** absent — **RETURN** `UsageCollectorPluginError::InvalidRecord` - `inst-cur-2`
+3. [x] - `p1` - Execute INSERT INTO `usage_records` with all record fields; ON CONFLICT on `(tenant_id, idempotency_key)` WHERE `idempotency_key IS NOT NULL` DO NOTHING — idempotent upsert: duplicate records (same `tenant_id` + `idempotency_key`) are silently ignored, not double-counted - `inst-cur-3`
+4. [x] - `p1` - **IF** DB operation returns a unique constraint violation on a column other than the idempotency index (unexpected schema conflict) — **RETURN** `UsageCollectorPluginError::StorageError(err)` - `inst-cur-4`
+5. [x] - `p1` - **IF** DB operation returns a transient error (connection lost, pool timeout, serialization failure) — **RETURN** `UsageCollectorPluginError::Transient(err)`; the gateway circuit breaker records this failure and the outbox library retries delivery - `inst-cur-5`
+6. [x] - `p1` - Set `ingested_at = now()` at DB INSERT time (not passed from caller) - `inst-cur-6`
+7. [x] - `p1` - **RETURN** `Ok(())` — record inserted or confirmed as duplicate via idempotency key; no distinction exposed to caller - `inst-cur-7`
 
 **Implements**: `cpt-cf-usage-collector-fr-pluggable-storage` (implements `UsageCollectorPluginClientV1::create_usage_record`), `cpt-cf-usage-collector-fr-counter-semantics` (stores each delta record as-is; persistent total computed as SUM of active deltas; upsert target `(tenant_id, idempotency_key)` enforces at-most-once delivery per key)
 

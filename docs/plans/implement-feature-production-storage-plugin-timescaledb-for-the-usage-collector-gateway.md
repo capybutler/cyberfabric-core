@@ -257,9 +257,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-05-ingest-write-path.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Implement `create_usage_record` in `src/domain/client.rs`, replacing the existing stub with the full 7-step idempotent ingest algorithm (`inst-cur-1` through `inst-cur-7`) from the FEATURE spec: validate `value >= 0` for counters, validate `idempotency_key` present for counters, execute an idempotent `INSERT ... ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL DO NOTHING`, map unexpected constraint violations to `StorageError`, map transient DB errors to `Transient`, set `ingested_at` via `NOW()` in the SQL (not from the caller), and return `Ok(())`. Wire the actor flow `flow-storage-backend-ingest` (`inst-flow-ing-1` through `inst-flow-ing-5`). Add `@cpt-begin`/`@cpt-end` markers for every CDSL instruction, increment four Prometheus metrics, and mark all covered FEATURE checkboxes.
