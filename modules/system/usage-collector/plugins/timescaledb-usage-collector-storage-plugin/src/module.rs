@@ -21,6 +21,7 @@ use crate::config::TimescaleDbConfig;
 use crate::domain::client::TimescaleDbPluginClient;
 use crate::infra::continuous_aggregate::setup_continuous_aggregate;
 use crate::infra::migrations::run_migrations;
+use crate::infra::retention::setup_retention_policy;
 use crate::infra::otel_metrics::OtelPluginMetrics;
 use crate::infra::pg_insert_port::PgInsertPort;
 
@@ -100,6 +101,11 @@ impl Module for TimescaleDbStoragePlugin {
         // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3b
         info!("TimescaleDB continuous aggregate setup complete; returning success to operator");
         // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3b
+
+        setup_retention_policy(&pool, cfg.retention_default).await.map_err(|e| {
+            error!(error = %e, "TimescaleDB retention policy setup failed");
+            anyhow::anyhow!("retention policy setup failed")
+        })?;
 
         let instance_id = UsageCollectorStoragePluginSpecV1::gts_make_instance_id(
             "cf.core._.timescaledb_usage_collector_storage_plugin.v1",

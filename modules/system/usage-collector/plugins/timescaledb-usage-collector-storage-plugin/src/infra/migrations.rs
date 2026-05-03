@@ -106,6 +106,15 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), MigrationError> {
     .map_err(|e| MigrationError::Migration(format!("failed to create usage_idempotency_keys table: {e}")))?;
     // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-8
 
+    // Add created_at to idempotency_keys for bounded cleanup; safe to run on existing tables.
+    sqlx::query(
+        "ALTER TABLE usage_idempotency_keys \
+         ADD COLUMN IF NOT EXISTS created_at TIMESTAMPTZ NOT NULL DEFAULT NOW()",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| MigrationError::Migration(format!("failed to add created_at to usage_idempotency_keys: {e}")))?;
+
     // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-9
     Ok(())
     // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-9

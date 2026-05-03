@@ -453,6 +453,9 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-2
         let cursor_pos: Option<(DateTime<Utc>, Uuid)> = query.cursor.as_ref().map(|c| {
+            if c.d != "fwd" {
+                return Err(UsageCollectorError::internal("backward pagination not supported"));
+            }
             let ts_str = c.k.first().ok_or_else(|| UsageCollectorError::internal("cursor missing timestamp key"))?;
             let id_str = c.k.get(1).ok_or_else(|| UsageCollectorError::internal("cursor missing id key"))?;
             let ts = ts_str.parse::<DateTime<Utc>>().map_err(|e| UsageCollectorError::internal(format!("cursor timestamp parse error: {e}")))?;

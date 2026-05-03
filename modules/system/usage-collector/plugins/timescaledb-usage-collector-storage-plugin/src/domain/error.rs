@@ -25,6 +25,10 @@ pub enum StoragePluginError {
     #[error("continuous aggregate setup failed: {0}")]
     ContinuousAggregateSetupFailed(String),
 
+    /// The retention policy setup step failed.
+    #[error("retention policy setup failed: {0}")]
+    RetentionPolicySetupFailed(String),
+
     /// A query against the database failed.
     #[error("query failed: {0}")]
     QueryFailed(String),

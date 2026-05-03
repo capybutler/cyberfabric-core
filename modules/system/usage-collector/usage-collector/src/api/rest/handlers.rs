@@ -423,36 +423,9 @@ pub async fn handle_query_raw(
         ));
     }
 
-    let decoded_cursor = if let Some(ref cursor_str) = params.cursor {
-        if let Ok(cursor) = CursorV1::decode(cursor_str) {
-            if cursor.k.len() < 2 {
-                errors.push("cursor: malformed cursor".to_owned());
-                None
-            } else {
-                let ts_str = cursor.k.first().map_or("", String::as_str);
-                if let Ok(ts) = DateTime::parse_from_rfc3339(ts_str) {
-                    let ts_utc = ts.with_timezone(&Utc);
-                    if ts_utc < params.from || ts_utc > params.to {
-                        errors.push(
-                            "cursor: timestamp is outside the requested [from, to] range"
-                                .to_owned(),
-                        );
-                        None
-                    } else {
-                        Some(cursor)
-                    }
-                } else {
-                    errors.push("cursor: malformed cursor".to_owned());
-                    None
-                }
-            }
-        } else {
-            errors.push("cursor: malformed cursor".to_owned());
-            None
-        }
-    } else {
-        None
-    };
+    let decoded_cursor = params.cursor.as_deref().and_then(|cursor_str| {
+        decode_and_validate_cursor(cursor_str, params.from, params.to, &mut errors)
+    });
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-3
 
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-4
@@ -535,6 +508,33 @@ pub async fn handle_query_raw(
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-9
     Ok(Json(paged))
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-9
+}
+
+fn decode_and_validate_cursor(
+    cursor_str: &str,
+    from: DateTime<Utc>,
+    to: DateTime<Utc>,
+    errors: &mut Vec<String>,
+) -> Option<CursorV1> {
+    let Ok(cursor) = CursorV1::decode(cursor_str) else {
+        errors.push("cursor: malformed cursor".to_owned());
+        return None;
+    };
+    if cursor.k.len() < 2 {
+        errors.push("cursor: malformed cursor".to_owned());
+        return None;
+    }
+    let ts_str = cursor.k.first().map_or("", String::as_str);
+    let Ok(ts) = DateTime::parse_from_rfc3339(ts_str) else {
+        errors.push("cursor: malformed cursor".to_owned());
+        return None;
+    };
+    let ts_utc = ts.with_timezone(&Utc);
+    if ts_utc < from || ts_utc > to {
+        errors.push("cursor: timestamp is outside the requested [from, to] range".to_owned());
+        return None;
+    }
+    Some(cursor)
 }
 
 fn emitter_error_to_problem(e: UsageEmitterError) -> Problem {
