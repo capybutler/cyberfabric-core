@@ -142,18 +142,25 @@ async def test_remote_ingest_idempotency(gateway_client, emitter_client):
     assert resp2.status_code == 204, f"second POST expected 204, got {resp2.status_code}: {resp2.text}"
 
     await wait_for_record(gateway_client, from_dt, to_dt, resource_id=resource_id)
-    # Both deliveries are async — wait for the pipeline to flush both before counting.
-    await asyncio.sleep(1.5)
+    # Poll for several seconds to confirm no duplicate arrives — both deliveries are async
+    # so the second outbox flush may not have reached the gateway yet when wait_for_record returns.
+    loop = asyncio.get_running_loop()
+    stable_deadline = loop.time() + 5.0
+    matching = []
+    while loop.time() < stable_deadline:
+        await asyncio.sleep(0.5)
+        raw_resp = await gateway_client.get(
+            "/usage-collector/v1/raw",
+            params={"from": encode_dt(from_dt), "to": encode_dt(to_dt)},
+        )
+        raw_resp.raise_for_status()
+        matching = [
+            item for item in raw_resp.json().get("items", [])
+            if str(item.get("resource_id")) == resource_id
+        ]
+        if len(matching) > 1:
+            break
 
-    raw_resp = await gateway_client.get(
-        "/usage-collector/v1/raw",
-        params={"from": encode_dt(from_dt), "to": encode_dt(to_dt)},
-    )
-    raw_resp.raise_for_status()
-    matching = [
-        item for item in raw_resp.json().get("items", [])
-        if str(item.get("resource_id")) == resource_id
-    ]
     assert len(matching) == 1, (
         f"expected exactly 1 deduplicated record for resource_id {resource_id}, got {len(matching)}"
     )

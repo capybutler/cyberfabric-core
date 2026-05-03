@@ -94,7 +94,7 @@ def emitter_test_env(test_env):
 
     Depends on test_env so the gateway is already running and its URL is known.
     """
-    gateway_url = test_env.base_url
+    gateway_url = f"{test_env.base_url}/cf"
 
     def patch(config_text: str, env: ModuleTestEnv) -> str:
         return _patch_emitter_config(config_text, gateway_url, _EMITTER_PORT)

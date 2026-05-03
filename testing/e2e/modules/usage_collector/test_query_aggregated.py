@@ -146,6 +146,8 @@ async def test_aggregated_group_by_resource(gateway_client):
     """group_by=resource groups results by resource_id; both ingested resources must appear."""
     res_a = str(uuid.uuid4())
     res_b = str(uuid.uuid4())
+    # Shared subject_id routes query through the raw hypertable path (no cagg dependency).
+    shared_subject_id = str(uuid.uuid4())
     from_dt = datetime.now(timezone.utc)
     to_dt = from_dt + timedelta(minutes=5)
 
@@ -157,6 +159,7 @@ async def test_aggregated_group_by_resource(gateway_client):
                 "tenant_id": TENANT_ID,
                 "resource_type": RESOURCE_TYPE,
                 "resource_id": resource_id,
+                "subject_id": shared_subject_id,
                 "metric": "e2e.gauge",
                 "value": 5.0,
                 "timestamp": datetime.now(timezone.utc).isoformat(),
@@ -174,6 +177,7 @@ async def test_aggregated_group_by_resource(gateway_client):
             "to": encode_dt(to_dt),
             "fn": "sum",
             "group_by": "resource",
+            "subject_id": shared_subject_id,
         },
     )
     resp.raise_for_status()

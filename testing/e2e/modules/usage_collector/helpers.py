@@ -113,6 +113,8 @@ async def wait_for_n_records(
         resp.raise_for_status()
         data = resp.json()
         items = data.get("items", [])
+        if resource_id is not None:
+            items = [i for i in items if str(i.get("resource_id")) == str(resource_id)]
         if len(items) >= n:
             return items
         await asyncio.sleep(interval)

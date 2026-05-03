@@ -93,8 +93,11 @@ async def test_raw_query_pagination_cursor(gateway_client):
     resource_id_b = str(uuid.uuid4())
     from_dt = datetime.now(timezone.utc)
     to_dt = from_dt + timedelta(minutes=5)
+    # Use distinct timestamps so pagination sort order is deterministic.
+    ts_a = from_dt + timedelta(seconds=1)
+    ts_b = from_dt + timedelta(seconds=2)
 
-    for resource_id in (resource_id_a, resource_id_b):
+    for resource_id, ts in ((resource_id_a, ts_a), (resource_id_b, ts_b)):
         resp = await gateway_client.post(
             "/usage-collector/v1/records",
             json={
@@ -104,7 +107,7 @@ async def test_raw_query_pagination_cursor(gateway_client):
                 "resource_id": resource_id,
                 "metric": "e2e.gauge",
                 "value": 1.0,
-                "timestamp": datetime.now(timezone.utc).isoformat(),
+                "timestamp": ts.isoformat(),
             },
         )
         assert resp.status_code == 204, f"expected 204, got {resp.status_code}: {resp.text}"
