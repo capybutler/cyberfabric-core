@@ -1,7 +1,12 @@
 ---
 cpt:
-  version: "3.0"
+  version: "3.1"
   changelog:
+    - version: "3.1"
+      date: "2026-05-03"
+      changes:
+        - "Drop unimplementable cursor TTL spec: removed inst-sdk-6a (410 on expired cursor), removed CURSOR_TTL from OPS-FDESIGN-002, removed TTL references from inst-sdk-6 and REL-FDESIGN-003, added Known Limitation MAINT-FDESIGN-003-3; CursorV1 carries no issued_at timestamp so TTL enforcement is impossible"
+        - "Fix raw query wire format example (MAINT-FDESIGN-002): corrected UsageRecord field names (id→module+tenant_id, usage_type→metric, quantity→value, dropped non-existent source field)"
     - version: "3.0"
       date: "2026-05-03"
       changes:
@@ -227,8 +232,7 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
    >
    > **Filter composition**: All present optional filters AND the AccessScope scope are applied conjunctively (AND semantics).
 5. [x] - `p1` - Add `AggregationResult` struct: fields function: AggregationFn, value: f64, bucket_start: Option<DateTime<Utc>>, usage_type: Option<String>, subject_id: Option<Uuid>, subject_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, source: Option<String>; each Option field is populated only when the corresponding GroupByDimension was requested. Option fields in AggregationResult are absent (not null) in JSON serialization when the corresponding GroupByDimension was not requested. - `inst-sdk-5`
-6. [x] - `p2` - Use `CursorV1` from `modkit-odata` as the cursor type and `Page<T>` from `modkit-odata` as the paginated result type (`Page<T>` fields: `items: Vec<T>`, `page_info: PageInfo`; `PageInfo` fields: `next_cursor: Option<String>`, `prev_cursor: Option<String>`, `limit: u64`). `CursorV1` encodes an exclusive lower-bound keyset cursor (timestamp + id). Plugin MUST return records ordered ascending by (timestamp, id) WHERE (timestamp, id) > cursor position within the requested time range. A `CursorV1` from a different [from, to] range SHOULD be rejected with 400 Bad Request. Cursor stability: a `CursorV1` is valid for the lifetime of the request that produced it. Concurrent data writes SHOULD NOT invalidate an in-progress pagination sequence; implementations MAY use snapshot isolation or equivalent to guarantee stability within a single paginated traversal. A `CursorV1` obtained from a previous request SHOULD remain valid for at least the configured cursor TTL (gateway configuration constant, see §7 OPS-FDESIGN-002). Retry idempotency: repeating a raw query with the same `CursorV1` (within cursor TTL) returns the same page. Delete consistency: records deleted between page fetches MAY cause a page to contain fewer items than `page_size`; the cursor still advances to the next position after the last returned record; callers MUST tolerate short pages. - `inst-sdk-6`
-   1. [x] - `p2` - **IF** cursor TTL expired **RETURN** 410 Gone with body `{"error": "cursor expired", "code": "CURSOR_EXPIRED"}` - `inst-sdk-6a`
+6. [x] - `p2` - Use `CursorV1` from `modkit-odata` as the cursor type and `Page<T>` from `modkit-odata` as the paginated result type (`Page<T>` fields: `items: Vec<T>`, `page_info: PageInfo`; `PageInfo` fields: `next_cursor: Option<String>`, `prev_cursor: Option<String>`, `limit: u64`). `CursorV1` encodes an exclusive lower-bound keyset cursor (timestamp + id). Plugin MUST return records ordered ascending by (timestamp, id) WHERE (timestamp, id) > cursor position within the requested time range. A `CursorV1` from a different [from, to] range SHOULD be rejected with 400 Bad Request. Cursor stability: a `CursorV1` is valid for the lifetime of the request that produced it. Concurrent data writes SHOULD NOT invalidate an in-progress pagination sequence; implementations MAY use snapshot isolation or equivalent to guarantee stability within a single paginated traversal. Retry idempotency: repeating a raw query with the same `CursorV1` returns the same page when the underlying data is unchanged. Delete consistency: records deleted between page fetches MAY cause a page to contain fewer items than `page_size`; the cursor still advances to the next position after the last returned record; callers MUST tolerate short pages. - `inst-sdk-6`
    > **Cursor encoding**: `CursorV1` payload is base64url-encoded JSON opaque state from `modkit-odata`. No HMAC signing is applied in this feature (tamper-resistance deferred to a future feature — see Known Limitations). Format is versioned (`"v":1`); format changes require incrementing the version field.
 7. [x] - `p2` - Add `RawQuery` struct: fields scope: AccessScope, time_range: (DateTime<Utc>, DateTime<Utc>), usage_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, subject_type: Option<String>, subject_id: Option<Uuid>, cursor: Option<CursorV1>, page_size: usize - `inst-sdk-7`
    > **Bounds**: page_size MUST be validated in [1, MAX_PAGE_SIZE]; absent page_size defaults to DEFAULT_PAGE_SIZE. MAX_PAGE_SIZE and DEFAULT_PAGE_SIZE are gateway configuration constants (see §7 OPS-FDESIGN-002).
@@ -388,7 +392,7 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
 
 - **REL-FDESIGN-002 (Fault Tolerance — gateway timeout and circuit breaker)**: The gateway's configurable 5 s per-call timeout and circuit breaker (opens after 5 consecutive failures within a 10 s window; half-open probe after 30 s) defined in DESIGN §3.2 (`cpt-cf-usage-collector-component-gateway`) apply equally to `query_aggregated` and `query_raw` plugin calls. These behaviours are owned by the gateway component specification and are not redefined here. PDP call fault tolerance: subject to gateway 5 s per-call timeout; on PDP timeout or network error, authorize-and-compile-scope returns Err(PermissionDenied) — fail-closed. No circuit breaker on PDP calls; no retry.
 
-- **REL-FDESIGN-003 (Data Integrity / Transactions)**: Read-side cursor stability: `inst-sdk-6` defines `CursorV1` (from `modkit-odata`) as an exclusive lower-bound keyset cursor (timestamp, id) with a configured TTL. Concurrent writes after cursor issuance SHOULD NOT invalidate an in-progress traversal; implementations MAY use snapshot isolation. Retrying a raw query with the same `CursorV1` within TTL returns the same page. No write-path transaction boundaries, rollback scenarios, or cross-request idempotency requirements are introduced by this feature.
+- **REL-FDESIGN-003 (Data Integrity / Transactions)**: Read-side cursor stability: `inst-sdk-6` defines `CursorV1` (from `modkit-odata`) as an exclusive lower-bound keyset cursor (timestamp, id). Concurrent writes after cursor issuance SHOULD NOT invalidate an in-progress traversal; implementations MAY use snapshot isolation. Retrying a raw query with the same `CursorV1` returns the same page when the underlying data is unchanged. No write-path transaction boundaries, rollback scenarios, or cross-request idempotency requirements are introduced by this feature.
 
 - **COMPL (Compliance & Regulatory)**:
   - *Applicable frameworks*: GDPR, SOC 2 Type II (platform compliance posture — see DATA-FDESIGN-005 and SEC-FDESIGN-004).
@@ -449,7 +453,6 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
   | `MAX_PAGE_SIZE` | integer | Maximum allowed value for `page_size`. Recommended: 1 000. |
   | `MAX_AGG_ROWS` | integer | Maximum number of rows that `query_aggregated` may return; exceeding this causes `QueryResultTooLarge`. Recommended: 10 000. |
   | `MAX_FILTER_STRING_LEN` | integer | Maximum byte length for string filter fields (`usage_type`, `resource_type`, `subject_type`, `source`). Recommended: 256. |
-  | `CURSOR_TTL` | duration | Maximum lifetime of a cursor token from the time of its creation. After this duration the cursor is expired and MUST NOT be used to fetch further pages. |
 
 - **OPS-FDESIGN-003 (Health and Diagnostics)**: No new health check endpoints. The existing gateway health endpoint reflects circuit breaker state for all plugin calls including the new query operations (DESIGN §3.2). Troubleshooting: persistent 403 responses → PDP unavailability or missing grant; persistent 5xx responses → plugin circuit breaker in open state.
 
@@ -513,13 +516,16 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
   {
     "items": [
       {
-        "id": "550e8400-e29b-41d4-a716-446655440000",
-        "usage_type": "compute.cpu",
-        "subject_type": "vm",
+        "module": "compute",
+        "tenant_id": "550e8400-e29b-41d4-a716-446655440000",
+        "metric": "compute.cpu",
+        "kind": "gauge",
+        "value": 1.0,
+        "resource_id": "a3f5d890-12c4-4b8a-9a6e-1234567890ab",
         "resource_type": "vcpu",
-        "quantity": 1.0,
-        "timestamp": "2026-01-01T06:00:00Z",
-        "source": "metrics-pipeline"
+        "subject_type": "vm",
+        "idempotency_key": "vm-cpu-2026-01-01T06:00:00Z-001",
+        "timestamp": "2026-01-01T06:00:00Z"
       }
     ],
     "page_info": {
@@ -535,4 +541,5 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
 - **MAINT-FDESIGN-003 (Known Limitations)**:
   1. *Cursor tamper-resistance*: No HMAC signing is applied to cursor tokens in this feature. A malicious caller could craft an arbitrary cursor payload. Tamper-resistance via HMAC signing is deferred to a future feature.
   2. *API stability*: The query API (`GET /usage-collector/v1/aggregated`, `GET /usage-collector/v1/raw`) carries SHOULD-level stability at this stage. Stable guarantees are not provided until v1.0 of the usage-collector module. Breaking changes to query parameters or response shapes require a version increment in the API path.
+  3. *Cursor TTL not enforced*: `CursorV1` carries no `issued_at` timestamp, so server-side cursor expiry (410 Gone) cannot be implemented with the current type. Callers SHOULD treat cursors as short-lived and not store them beyond a single pagination session. Cursor TTL enforcement is deferred to a future feature that either extends `CursorV1` or wraps it with an issued-at field.
 

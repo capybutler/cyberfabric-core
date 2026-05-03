@@ -44,11 +44,11 @@ pub struct UsageCollectorConfig {
     #[serde(with = "modkit_utils::humantime_serde")]
     pub plugin_timeout: Duration,
 
-    /// Number of consecutive failures within `circuit_breaker_window` that will open the circuit.
+    /// Number of failures within `circuit_breaker_window` that will open the circuit.
     /// Valid range: 1–100. Default: 5.
     pub circuit_breaker_failure_threshold: u32,
 
-    /// Rolling window for counting consecutive failures.
+    /// Rolling window for counting failures.
     /// Default: 10s.
     #[serde(with = "modkit_utils::humantime_serde")]
     pub circuit_breaker_window: Duration,

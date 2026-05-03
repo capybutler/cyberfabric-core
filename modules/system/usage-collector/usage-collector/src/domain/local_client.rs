@@ -41,7 +41,7 @@ enum CircuitState {
 
 /// Minimal sliding-window circuit breaker.
 ///
-/// Opens after `failure_threshold` consecutive failures within `window`.
+/// Opens after `failure_threshold` failures within the rolling `window`.
 /// Transitions to half-open after `recovery_timeout`.
 #[domain_model]
 #[derive(Debug)]
@@ -98,25 +98,25 @@ impl CircuitBreaker {
 
         self.failure_timestamps.push(now);
 
-        // Failure threshold is at most u32::MAX; the window prunes old entries so this
+        // Failure count is at most u32::MAX; the window prunes old entries so this
         // count is bounded by `failure_threshold` which is u32.
         #[allow(clippy::cast_possible_truncation)]
-        let consecutive = self.failure_timestamps.len() as u32;
+        let failures_in_window = self.failure_timestamps.len() as u32;
 
-        if consecutive >= self.failure_threshold {
+        if failures_in_window >= self.failure_threshold {
             match self.state {
                 CircuitState::Closed | CircuitState::HalfOpen => {
                     warn!(
-                        consecutive_failures = consecutive,
+                        failures_in_window,
                         threshold = self.failure_threshold,
-                        "Circuit breaker opening after consecutive failures"
+                        "Circuit breaker opening after too many failures within the rolling window"
                     );
                     self.state = CircuitState::Open { opened_at: now };
                     self.failure_timestamps.clear();
                 }
                 CircuitState::Open { .. } => {
                     // Already open; do not reset opened_at — resetting the recovery clock under
-                    // concurrent failures would prevent the circuit from ever transitioning to HalfOpen.
+                    // continued failures would prevent the circuit from ever transitioning to HalfOpen.
                 }
             }
         }
