@@ -189,9 +189,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-04-scope-translator.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Implement `src/domain/scope.rs` in the `timescaledb-usage-collector-storage-plugin` crate. The deliverable is a `scope_to_sql(scope: &AccessScope) -> Result<(String, Vec<SqlValue>), ScopeTranslationError>` function that executes the five-step translation algorithm (`inst-s2s-1` through `inst-s2s-5`): reject empty scope, iterate groups and predicates, build an OR-of-AND SQL WHERE fragment with positional bind parameters, and hard-error on `InGroup`/`InGroupSubtree` predicates. Update `domain/mod.rs` to expose `pub mod scope`. Mark the five FEATURE spec checkboxes for `inst-s2s-1` through `inst-s2s-5` as done and write `out/phase-04-scope-done.md` with the function signature and `SqlValue` type.

@@ -36,3 +36,15 @@ pub enum StoragePluginError {
 
 /// Type alias for migration-related errors.
 pub type MigrationError = StoragePluginError;
+
+/// Errors produced by the scope-to-SQL translator.
+#[derive(Debug, Error)]
+pub enum ScopeTranslationError {
+    /// The scope has no constraints — callers must fail closed on empty scope.
+    #[error("empty scope: access denied")]
+    EmptyScope,
+
+    /// A predicate type that cannot be translated to SQL (e.g. InGroup/InGroupSubtree).
+    #[error("unsupported predicate: {kind}")]
+    UnsupportedPredicate { kind: String },
+}

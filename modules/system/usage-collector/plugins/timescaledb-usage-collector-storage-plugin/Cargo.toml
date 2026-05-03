@@ -25,6 +25,7 @@ usage-collector-sdk = { workspace = true }
 # ModKit dependencies
 modkit = { workspace = true }
 modkit-macros = { workspace = true }
+modkit-security = { workspace = true }
 
 # Async runtime
 async-trait = { workspace = true }

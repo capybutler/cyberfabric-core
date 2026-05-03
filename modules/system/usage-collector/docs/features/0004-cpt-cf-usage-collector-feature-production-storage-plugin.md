@@ -254,18 +254,18 @@ Internal system functions and procedures that do not interact with actors direct
 **OR-of-ANDs preservation**: the translator MUST compile each `ConstraintGroup` into a separate AND branch and combine branches with OR. Flattening multiple groups into a single AND set is a security violation (`cpt-cf-usage-collector-constraint-or-of-ands-preservation`) — it widens access beyond the PDP-authorized scope.
 
 **Steps**:
-1. [ ] - `p1` - **IF** `scope.groups` is empty — **RETURN** `ScopeTranslationError::EmptyScope`; callers must fail closed on empty scope (no constraints = deny all) - `inst-s2s-1`
-2. [ ] - `p1` - Initialize `group_fragments: Vec<String>` and `bind_params: Vec<SqlValue>` - `inst-s2s-2`
-3. [ ] - `p1` - **FOR EACH** `group` in `scope.groups` - `inst-s2s-3`
-   1. [ ] - `p1` - Initialize `predicate_fragments: Vec<String>` for this group - `inst-s2s-3a`
-   2. [ ] - `p1` - **FOR EACH** `predicate` in `group.predicates` - `inst-s2s-3b`
-      1. [ ] - `p1` - **IF** predicate is `InGroup` or `InGroupSubtree` — **RETURN** `ScopeTranslationError::UnsupportedPredicate { kind: "InGroup/InGroupSubtree" }`; these predicates require gateway pre-flattening before plugin invocation and are not supported at the plugin SQL translation layer - `inst-s2s-3b-i`
-      2. [ ] - `p1` - **IF** predicate is `TenantId(ids)` — append `tenant_id = ANY($N)` (or `tenant_id = $N` for single value) and bind `ids` - `inst-s2s-3b-ii`
-      3. [ ] - `p1` - **IF** predicate is `ResourceId(ids)` — append `resource_id = ANY($N)` and bind `ids` - `inst-s2s-3b-iii`
-      4. [ ] - `p1` - **IF** predicate is `ResourceType(types)` — append `resource_type = ANY($N)` and bind `types` - `inst-s2s-3b-iv`
-   3. [ ] - `p1` - Join `predicate_fragments` with ` AND `; wrap in parentheses: `(pred1 AND pred2 ...)`; append to `group_fragments` - `inst-s2s-3c`
-4. [ ] - `p1` - Join `group_fragments` with ` OR `; wrap entire expression in outer parentheses: `(group1 OR group2 ...)`; this is the final SQL WHERE fragment - `inst-s2s-4`
-5. [ ] - `p1` - **RETURN** `Ok((sql_fragment, bind_params))` - `inst-s2s-5`
+1. [x] - `p1` - **IF** `scope.groups` is empty — **RETURN** `ScopeTranslationError::EmptyScope`; callers must fail closed on empty scope (no constraints = deny all) - `inst-s2s-1`
+2. [x] - `p1` - Initialize `group_fragments: Vec<String>` and `bind_params: Vec<SqlValue>` - `inst-s2s-2`
+3. [x] - `p1` - **FOR EACH** `group` in `scope.groups` - `inst-s2s-3`
+   1. [x] - `p1` - Initialize `predicate_fragments: Vec<String>` for this group - `inst-s2s-3a`
+   2. [x] - `p1` - **FOR EACH** `predicate` in `group.predicates` - `inst-s2s-3b`
+      1. [x] - `p1` - **IF** predicate is `InGroup` or `InGroupSubtree` — **RETURN** `ScopeTranslationError::UnsupportedPredicate { kind: "InGroup/InGroupSubtree" }`; these predicates require gateway pre-flattening before plugin invocation and are not supported at the plugin SQL translation layer - `inst-s2s-3b-i`
+      2. [x] - `p1` - **IF** predicate is `TenantId(ids)` — append `tenant_id = ANY($N)` (or `tenant_id = $N` for single value) and bind `ids` - `inst-s2s-3b-ii`
+      3. [x] - `p1` - **IF** predicate is `ResourceId(ids)` — append `resource_id = ANY($N)` and bind `ids` - `inst-s2s-3b-iii`
+      4. [x] - `p1` - **IF** predicate is `ResourceType(types)` — append `resource_type = ANY($N)` and bind `types` - `inst-s2s-3b-iv`
+   3. [x] - `p1` - Join `predicate_fragments` with ` AND `; wrap in parentheses: `(pred1 AND pred2 ...)`; append to `group_fragments` - `inst-s2s-3c`
+4. [x] - `p1` - Join `group_fragments` with ` OR `; wrap entire expression in outer parentheses: `(group1 OR group2 ...)`; this is the final SQL WHERE fragment - `inst-s2s-4`
+5. [x] - `p1` - **RETURN** `Ok((sql_fragment, bind_params))` - `inst-s2s-5`
 
 **Implements**: `cpt-cf-usage-collector-constraint-or-of-ands-preservation` (each PDP constraint group compiles to a separate AND branch; branches combined with OR; flattening is explicitly prohibited)
 
