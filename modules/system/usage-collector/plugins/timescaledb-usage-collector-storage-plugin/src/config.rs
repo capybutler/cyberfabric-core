@@ -1,4 +1,4 @@
-//! Configuration for the TimescaleDB usage-collector storage plugin.
+//! Configuration for the `TimescaleDB` usage-collector storage plugin.
 
 use std::fmt;
 use std::time::Duration;
@@ -17,7 +17,7 @@ fn default_pool_size_max() -> u32 {
 }
 
 fn default_retention_default() -> Duration {
-    Duration::from_secs(365 * 24 * 3_600)
+    Duration::from_hours(8760)
 }
 
 fn default_connection_timeout() -> Duration {
@@ -39,7 +39,7 @@ where
 #[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimescaleDbConfig {
-    /// PostgreSQL connection URL. Must include `sslmode=require`.
+    /// `PostgreSQL` connection URL. Must include `sslmode=require`.
     #[serde(default)]
     pub database_url: String,
 
@@ -94,9 +94,7 @@ impl TimescaleDbConfig {
         let sslmode = self.database_url
             .split_once('?')
             .and_then(|(_, qs)| {
-                qs.split('&')
-                    .filter(|p| p.split_once('=').map(|(k, _)| k == "sslmode").unwrap_or(false))
-                    .last()
+                qs.split('&').rfind(|p| p.split_once('=').is_some_and(|(k, _)| k == "sslmode"))
                     .and_then(|p| p.split_once('=').map(|(_, v)| v))
             });
         match sslmode {
@@ -126,7 +124,7 @@ impl TimescaleDbConfig {
         if self.retention_default < min_retention || self.retention_default > max_retention {
             anyhow::bail!("retention_default must be between 7 days and 7 years");
         }
-        if self.connection_timeout < Duration::from_secs(1) || self.connection_timeout > Duration::from_secs(60) {
+        if self.connection_timeout < Duration::from_secs(1) || self.connection_timeout > Duration::from_mins(1) {
             anyhow::bail!("connection_timeout must be between 1s and 60s");
         }
         Ok(())

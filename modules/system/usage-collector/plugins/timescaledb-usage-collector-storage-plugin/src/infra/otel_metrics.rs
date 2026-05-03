@@ -15,6 +15,12 @@ pub struct OtelPluginMetrics {
     query_latency_ms: Histogram<f64>,
 }
 
+impl Default for OtelPluginMetrics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl OtelPluginMetrics {
     #[must_use]
     pub fn new() -> Self {

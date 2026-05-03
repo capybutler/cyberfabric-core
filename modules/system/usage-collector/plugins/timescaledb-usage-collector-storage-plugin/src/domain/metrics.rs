@@ -1,6 +1,6 @@
 //! Plugin metrics output port.
 
-/// Observable metrics port for the TimescaleDB storage plugin.
+/// Observable metrics port for the `TimescaleDB` storage plugin.
 ///
 /// Implementations live in `src/infra/` (e.g. OpenTelemetry counters).
 /// The domain client depends only on this trait for testability.

@@ -1,8 +1,8 @@
-//! Error types for the TimescaleDB storage plugin.
+//! Error types for the `TimescaleDB` storage plugin.
 
 use thiserror::Error;
 
-/// Errors produced by the TimescaleDB storage plugin.
+/// Errors produced by the `TimescaleDB` storage plugin.
 #[derive(Debug, Error)]
 pub enum StoragePluginError {
     /// A record field failed validation (e.g. negative counter value, missing idempotency key).

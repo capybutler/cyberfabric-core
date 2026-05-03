@@ -1,4 +1,4 @@
-//! TimescaleDB storage plugin client.
+//! `TimescaleDB` storage plugin client.
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -17,7 +17,7 @@ use crate::domain::insert_port::InsertPort;
 use crate::domain::metrics::PluginMetrics;
 use crate::domain::scope::{scope_to_sql, SqlValue};
 
-/// Storage plugin client backed by a TimescaleDB connection pool.
+/// Storage plugin client backed by a `TimescaleDB` connection pool.
 pub struct TimescaleDbPluginClient {
     insert_port: Arc<dyn InsertPort>,
     pool: PgPool,
@@ -41,15 +41,25 @@ impl TimescaleDbPluginClient {
 
 fn is_transient_error(e: &sqlx::Error) -> bool {
     match e {
-        sqlx::Error::PoolTimedOut => true,
-        sqlx::Error::PoolClosed => true,
-        sqlx::Error::Io(_) => true,
+        sqlx::Error::PoolTimedOut | sqlx::Error::PoolClosed | sqlx::Error::Io(_) => true,
         sqlx::Error::Database(db_err) => matches!(
             db_err.code().as_deref(),
             Some("40001" | "40P01" | "57P03" | "53300" | "08006" | "08001")
         ),
         _ => false,
     }
+}
+
+fn add_arg<T>(
+    args: &mut sqlx::postgres::PgArguments,
+    value: T,
+) -> Result<(), UsageCollectorError>
+where
+    T: for<'q> sqlx::Encode<'q, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
+{
+    use sqlx::Arguments as _;
+    args.add(value)
+        .map_err(|e| UsageCollectorError::internal(format!("SQL argument binding failed: {e}")))
 }
 
 #[async_trait]
@@ -91,14 +101,13 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             Ok(n) => n,
             Err(e) => {
                 // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-4
-                if let sqlx::Error::Database(ref db_err) = e {
-                    if db_err.code().as_deref() == Some("23505") {
+                if let sqlx::Error::Database(ref db_err) = e
+                    && db_err.code().as_deref() == Some("23505") {
                         self.metrics.record_ingestion_error();
                         return Err(UsageCollectorError::internal(format!(
                             "unexpected unique constraint violation: {db_err}"
                         )));
                     }
-                }
                 // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-4
 
                 // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest:p1:inst-flow-ing-4
@@ -132,19 +141,19 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
     }
 
     // @cpt-algo:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1
+    #[allow(clippy::too_many_lines)]
     async fn query_aggregated(
         &self,
         query: AggregationQuery,
     ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
         use sqlx::postgres::PgArguments;
-        use sqlx::Arguments as _;
-        use sqlx::Row as _;
+            use sqlx::Row as _;
 
         let start = Instant::now();
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-1
         let (scope_sql, scope_params) = scope_to_sql(&query.scope)
-            .map_err(|_| UsageCollectorError::authorization_failed("scope translation failed — access denied"))?;
+            .map_err(|_| UsageCollectorError::authorization_failed("scope translation failed \u{2014} access denied"))?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-1
 
         let group_by = &query.group_by;
@@ -164,20 +173,20 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         for sv in &scope_params {
             param_idx += 1;
             match sv {
-                SqlValue::Uuid(u) => { let _ = args.add(*u); }
-                SqlValue::UuidArray(v) => { let _ = args.add(v.clone()); }
-                SqlValue::Text(s) => { let _ = args.add(s.clone()); }
-                SqlValue::TextArray(v) => { let _ = args.add(v.clone()); }
+                SqlValue::Uuid(u) => add_arg(&mut args, *u)?,
+                SqlValue::UuidArray(v) => add_arg(&mut args, v.clone())?,
+                SqlValue::Text(s) => add_arg(&mut args, s.clone())?,
+                SqlValue::TextArray(v) => add_arg(&mut args, v.clone())?,
             }
         }
 
         // Time range params
         let time_start_idx = param_idx + 1;
         param_idx += 1;
-        let _ = args.add(query.time_range.0);
+        add_arg(&mut args, query.time_range.0)?;
         let time_end_idx = param_idx + 1;
         param_idx += 1;
-        let _ = args.add(query.time_range.1);
+        add_arg(&mut args, query.time_range.1)?;
 
         let has_time_bucket = group_by.iter().any(|d| matches!(d, GroupByDimension::TimeBucket(_)));
         let has_usage_type = group_by.contains(&GroupByDimension::UsageType);
@@ -185,100 +194,99 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         let has_resource = group_by.contains(&GroupByDimension::Resource);
         let has_source = group_by.contains(&GroupByDimension::Source);
 
-        let sql;
-
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-3
-        if use_raw_path {
+        let sql = if use_raw_path {
             let time_col = "timestamp";
             let agg_expr = raw_agg_expr(query.function);
 
             let mut select_cols: Vec<String> = Vec::new();
             let mut group_by_exprs: Vec<String> = Vec::new();
 
-            if has_time_bucket {
-                if let Some(GroupByDimension::TimeBucket(bs)) = group_by.iter().find(|d| matches!(d, GroupByDimension::TimeBucket(_))) {
+            if has_time_bucket
+                && let Some(GroupByDimension::TimeBucket(bs)) = group_by.iter().find(|d| matches!(d, GroupByDimension::TimeBucket(_))) {
                     let interval = bucket_size_to_pg_interval(*bs);
-                    select_cols.push(format!("time_bucket('{}', {}) AS bucket_start", interval, time_col));
-                    group_by_exprs.push(format!("time_bucket('{}', {})", interval, time_col));
+                    select_cols.push(format!("time_bucket('{interval}', {time_col}) AS bucket_start"));
+                    group_by_exprs.push(format!("time_bucket('{interval}', {time_col})"));
                 }
-            }
             if has_usage_type {
-                select_cols.push("metric AS usage_type".to_string());
-                group_by_exprs.push("metric".to_string());
+                select_cols.push("metric AS usage_type".to_owned());
+                group_by_exprs.push("metric".to_owned());
             }
             if has_subject {
-                select_cols.push("subject_id".to_string());
-                select_cols.push("subject_type".to_string());
-                group_by_exprs.push("subject_id".to_string());
-                group_by_exprs.push("subject_type".to_string());
+                select_cols.push("subject_id".to_owned());
+                select_cols.push("subject_type".to_owned());
+                group_by_exprs.push("subject_id".to_owned());
+                group_by_exprs.push("subject_type".to_owned());
             }
             if has_resource {
-                select_cols.push("resource_id".to_string());
-                select_cols.push("resource_type".to_string());
-                group_by_exprs.push("resource_id".to_string());
-                group_by_exprs.push("resource_type".to_string());
+                select_cols.push("resource_id".to_owned());
+                select_cols.push("resource_type".to_owned());
+                group_by_exprs.push("resource_id".to_owned());
+                group_by_exprs.push("resource_type".to_owned());
             }
             if has_source {
-                select_cols.push("module AS source".to_string());
-                group_by_exprs.push("module".to_string());
+                select_cols.push("module AS source".to_owned());
+                group_by_exprs.push("module".to_owned());
             }
-            select_cols.push(agg_expr.to_string());
+            select_cols.push(agg_expr.to_owned());
 
             let select_clause = select_cols.join(", ");
 
             let mut where_clauses: Vec<String> = Vec::new();
             where_clauses.push(scope_sql.clone());
-            where_clauses.push(format!("{} >= ${}", time_col, time_start_idx));
-            where_clauses.push(format!("{} <= ${}", time_col, time_end_idx));
+            where_clauses.push(format!("{time_col} >= ${time_start_idx}"));
+            where_clauses.push(format!("{time_col} <= ${time_end_idx}"));
 
             if let Some(ref metric) = query.usage_type {
                 param_idx += 1;
-                where_clauses.push(format!("metric = ${}", param_idx));
-                let _ = args.add(metric.clone());
+                where_clauses.push(format!("metric = ${param_idx}"));
+                add_arg(&mut args, metric.clone())?;
             }
             if let Some(resource_id) = query.resource_id {
                 param_idx += 1;
-                where_clauses.push(format!("resource_id = ${}", param_idx));
-                let _ = args.add(resource_id);
+                where_clauses.push(format!("resource_id = ${param_idx}"));
+                add_arg(&mut args, resource_id)?;
             }
             if let Some(ref resource_type) = query.resource_type {
                 param_idx += 1;
-                where_clauses.push(format!("resource_type = ${}", param_idx));
-                let _ = args.add(resource_type.clone());
+                where_clauses.push(format!("resource_type = ${param_idx}"));
+                add_arg(&mut args, resource_type.clone())?;
             }
             if let Some(subject_id) = query.subject_id {
                 param_idx += 1;
-                where_clauses.push(format!("subject_id = ${}", param_idx));
-                let _ = args.add(subject_id);
+                where_clauses.push(format!("subject_id = ${param_idx}"));
+                add_arg(&mut args, subject_id)?;
             }
             if let Some(ref subject_type) = query.subject_type {
                 param_idx += 1;
-                where_clauses.push(format!("subject_type = ${}", param_idx));
-                let _ = args.add(subject_type.clone());
+                where_clauses.push(format!("subject_type = ${param_idx}"));
+                add_arg(&mut args, subject_type.clone())?;
             }
             if let Some(ref source) = query.source {
                 param_idx += 1;
-                where_clauses.push(format!("module = ${}", param_idx));
-                let _ = args.add(source.clone());
+                where_clauses.push(format!("module = ${param_idx}"));
+                add_arg(&mut args, source.clone())?;
             }
 
             let where_clause = where_clauses.join(" AND ");
 
             let limit_idx = param_idx + 1;
             // Fetch one extra row to detect truncation without false-positives on exact-limit results.
-            let _ = args.add((query.max_rows + 1) as i64);
+            let max_rows_limit = i64::try_from(query.max_rows)
+                .map_err(|e| UsageCollectorError::internal(format!("row limit overflow: {e}")))?
+                .saturating_add(1);
+            add_arg(&mut args, max_rows_limit)?;
 
             let order_clause = if has_time_bucket { " ORDER BY bucket_start ASC" } else { "" };
-            let group_clause = if !group_by_exprs.is_empty() {
-                format!(" GROUP BY {}", group_by_exprs.join(", "))
-            } else {
+            let group_clause = if group_by_exprs.is_empty() {
                 String::new()
+            } else {
+                format!(" GROUP BY {}", group_by_exprs.join(", "))
             };
 
-            sql = format!(
-                "SELECT {} FROM usage_records WHERE {}{}{} LIMIT ${}",
-                select_clause, where_clause, group_clause, order_clause, limit_idx
-            );
+            format!(
+                "SELECT {select_clause} FROM usage_records WHERE {where_clause}{group_clause}{order_clause} LIMIT ${limit_idx}"
+            )
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-3
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-4
@@ -289,77 +297,78 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             let mut select_cols: Vec<String> = Vec::new();
             let mut group_by_exprs: Vec<String> = Vec::new();
 
-            if has_time_bucket {
-                if let Some(GroupByDimension::TimeBucket(bs)) = group_by.iter().find(|d| matches!(d, GroupByDimension::TimeBucket(_))) {
+            if has_time_bucket
+                && let Some(GroupByDimension::TimeBucket(bs)) = group_by.iter().find(|d| matches!(d, GroupByDimension::TimeBucket(_))) {
                     let interval = bucket_size_to_pg_interval(*bs);
-                    select_cols.push(format!("time_bucket('{}', {}) AS bucket_start", interval, time_col));
-                    group_by_exprs.push(format!("time_bucket('{}', {})", interval, time_col));
+                    select_cols.push(format!("time_bucket('{interval}', {time_col}) AS bucket_start"));
+                    group_by_exprs.push(format!("time_bucket('{interval}', {time_col})"));
                 }
-            }
             if has_usage_type {
-                select_cols.push("metric AS usage_type".to_string());
-                group_by_exprs.push("metric".to_string());
+                select_cols.push("metric AS usage_type".to_owned());
+                group_by_exprs.push("metric".to_owned());
             }
             if has_subject {
-                select_cols.push("subject_type".to_string());
-                group_by_exprs.push("subject_type".to_string());
+                select_cols.push("subject_type".to_owned());
+                group_by_exprs.push("subject_type".to_owned());
             }
             if has_resource {
-                select_cols.push("resource_type".to_string());
-                group_by_exprs.push("resource_type".to_string());
+                select_cols.push("resource_type".to_owned());
+                group_by_exprs.push("resource_type".to_owned());
             }
             if has_source {
-                select_cols.push("module AS source".to_string());
-                group_by_exprs.push("module".to_string());
+                select_cols.push("module AS source".to_owned());
+                group_by_exprs.push("module".to_owned());
             }
-            select_cols.push(agg_expr.to_string());
+            select_cols.push(agg_expr.to_owned());
 
             let select_clause = select_cols.join(", ");
 
             let mut where_clauses: Vec<String> = Vec::new();
             where_clauses.push(scope_sql.clone());
-            where_clauses.push(format!("{} >= ${}", time_col, time_start_idx));
-            where_clauses.push(format!("{} <= ${}", time_col, time_end_idx));
+            where_clauses.push(format!("{time_col} >= ${time_start_idx}"));
+            where_clauses.push(format!("{time_col} <= ${time_end_idx}"));
 
             if let Some(ref metric) = query.usage_type {
                 param_idx += 1;
-                where_clauses.push(format!("metric = ${}", param_idx));
-                let _ = args.add(metric.clone());
+                where_clauses.push(format!("metric = ${param_idx}"));
+                add_arg(&mut args, metric.clone())?;
             }
             if let Some(ref resource_type) = query.resource_type {
                 param_idx += 1;
-                where_clauses.push(format!("resource_type = ${}", param_idx));
-                let _ = args.add(resource_type.clone());
+                where_clauses.push(format!("resource_type = ${param_idx}"));
+                add_arg(&mut args, resource_type.clone())?;
             }
             if let Some(ref subject_type) = query.subject_type {
                 param_idx += 1;
-                where_clauses.push(format!("subject_type = ${}", param_idx));
-                let _ = args.add(subject_type.clone());
+                where_clauses.push(format!("subject_type = ${param_idx}"));
+                add_arg(&mut args, subject_type.clone())?;
             }
             if let Some(ref source) = query.source {
                 param_idx += 1;
-                where_clauses.push(format!("module = ${}", param_idx));
-                let _ = args.add(source.clone());
+                where_clauses.push(format!("module = ${param_idx}"));
+                add_arg(&mut args, source.clone())?;
             }
 
             let where_clause = where_clauses.join(" AND ");
 
             let limit_idx = param_idx + 1;
             // Fetch one extra row to detect truncation without false-positives on exact-limit results.
-            let _ = args.add((query.max_rows + 1) as i64);
+            let max_rows_limit = i64::try_from(query.max_rows)
+                .map_err(|e| UsageCollectorError::internal(format!("row limit overflow: {e}")))?
+                .saturating_add(1);
+            add_arg(&mut args, max_rows_limit)?;
 
             let order_clause = if has_time_bucket { " ORDER BY bucket_start ASC" } else { "" };
-            let group_clause = if !group_by_exprs.is_empty() {
-                format!(" GROUP BY {}", group_by_exprs.join(", "))
-            } else {
+            let group_clause = if group_by_exprs.is_empty() {
                 String::new()
+            } else {
+                format!(" GROUP BY {}", group_by_exprs.join(", "))
             };
 
-            sql = format!(
-                "SELECT {} FROM usage_agg_1h WHERE {}{}{} LIMIT ${}",
-                select_clause, where_clause, group_clause, order_clause, limit_idx
-            );
-        }
+            format!(
+                "SELECT {select_clause} FROM usage_agg_1h WHERE {where_clause}{group_clause}{order_clause} LIMIT ${limit_idx}"
+            )
+        };
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-4
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-5
@@ -425,14 +434,13 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         query: RawQuery,
     ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
         use sqlx::postgres::PgArguments;
-        use sqlx::Arguments as _;
-        use sqlx::Row as _;
+            use sqlx::Row as _;
 
         let start = Instant::now();
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-1
         let (scope_sql, scope_params) = scope_to_sql(&query.scope)
-            .map_err(|_| UsageCollectorError::authorization_failed("scope translation failed — access denied"))?;
+            .map_err(|_| UsageCollectorError::authorization_failed("scope translation failed \u{2014} access denied"))?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-1
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-2
@@ -446,20 +454,20 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         for sv in &scope_params {
             param_idx += 1;
             match sv {
-                SqlValue::Uuid(u) => { let _ = args.add(*u); }
-                SqlValue::UuidArray(v) => { let _ = args.add(v.clone()); }
-                SqlValue::Text(s) => { let _ = args.add(s.clone()); }
-                SqlValue::TextArray(v) => { let _ = args.add(v.clone()); }
+                SqlValue::Uuid(u) => add_arg(&mut args, *u)?,
+                SqlValue::UuidArray(v) => add_arg(&mut args, v.clone())?,
+                SqlValue::Text(s) => add_arg(&mut args, s.clone())?,
+                SqlValue::TextArray(v) => add_arg(&mut args, v.clone())?,
             }
         }
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-3
         let time_start_idx = param_idx + 1;
         param_idx += 1;
-        let _ = args.add(query.time_range.0);
+        add_arg(&mut args, query.time_range.0)?;
         let time_end_idx = param_idx + 1;
         param_idx += 1;
-        let _ = args.add(query.time_range.1);
+        add_arg(&mut args, query.time_range.1)?;
 
         let mut where_clauses: Vec<String> = Vec::new();
         where_clauses.push(scope_sql);
@@ -469,27 +477,27 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         if let Some(ref metric) = query.usage_type {
             param_idx += 1;
             where_clauses.push(format!("metric = ${param_idx}"));
-            let _ = args.add(metric.clone());
+            add_arg(&mut args, metric.clone())?;
         }
         if let Some(resource_id) = query.resource_id {
             param_idx += 1;
             where_clauses.push(format!("resource_id = ${param_idx}"));
-            let _ = args.add(resource_id);
+            add_arg(&mut args, resource_id)?;
         }
         if let Some(ref resource_type) = query.resource_type {
             param_idx += 1;
             where_clauses.push(format!("resource_type = ${param_idx}"));
-            let _ = args.add(resource_type.clone());
+            add_arg(&mut args, resource_type.clone())?;
         }
         if let Some(subject_id) = query.subject_id {
             param_idx += 1;
             where_clauses.push(format!("subject_id = ${param_idx}"));
-            let _ = args.add(subject_id);
+            add_arg(&mut args, subject_id)?;
         }
         if let Some(ref subject_type) = query.subject_type {
             param_idx += 1;
             where_clauses.push(format!("subject_type = ${param_idx}"));
-            let _ = args.add(subject_type.clone());
+            add_arg(&mut args, subject_type.clone())?;
         }
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-3
 
@@ -499,8 +507,8 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             param_idx += 1;
             let id_idx = param_idx + 1;
             param_idx += 1;
-            let _ = args.add(cursor_ts);
-            let _ = args.add(cursor_id);
+            add_arg(&mut args, cursor_ts)?;
+            add_arg(&mut args, cursor_id)?;
             where_clauses.push(format!(
                 "(timestamp > ${ts_idx} OR (timestamp = ${ts_idx} AND id > ${id_idx}))"
             ));
@@ -509,7 +517,9 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-5
         let page_size_idx = param_idx + 1;
-        let _ = args.add(query.page_size as i64);
+        let page_size = i64::try_from(query.page_size)
+            .map_err(|e| UsageCollectorError::internal(format!("page size overflow: {e}")))?;
+        add_arg(&mut args, page_size)?;
 
         let where_clause = where_clauses.join(" AND ");
         let sql = format!(

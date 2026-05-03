@@ -1,10 +1,13 @@
-//! Continuous aggregate setup for the TimescaleDB storage plugin.
+//! Continuous aggregate setup for the `TimescaleDB` storage plugin.
 
 use sqlx::PgPool;
 
 use crate::domain::error::MigrationError;
 
 // @cpt-algo:cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate:p1
+/// # Errors
+///
+/// Returns [`MigrationError`] if any DDL or policy registration statement fails.
 pub async fn setup_continuous_aggregate(pool: &PgPool) -> Result<(), MigrationError> {
     // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate:p1:inst-cagg-1
     let view_existed: bool = sqlx::query_scalar(
@@ -54,7 +57,7 @@ pub async fn setup_continuous_aggregate(pool: &PgPool) -> Result<(), MigrationEr
     sqlx::query(
         "SELECT add_continuous_aggregate_policy( \
              'usage_agg_1h', \
-             start_offset      => INTERVAL '2 hours', \
+             start_offset      => INTERVAL '3 hours', \
              end_offset        => INTERVAL '1 hour', \
              schedule_interval => INTERVAL '30 minutes', \
              if_not_exists     => true \
@@ -116,7 +119,7 @@ pub async fn setup_continuous_aggregate(pool: &PgPool) -> Result<(), MigrationEr
 
     if !view_exists || !policy_exists {
         return Err(MigrationError::ContinuousAggregateSetupFailed(
-            "post-setup verification failed: view or refresh policy not found".to_string(),
+            "post-setup verification failed: view or refresh policy not found".to_owned(),
         ));
     }
     // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate:p1:inst-cagg-4

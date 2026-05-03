@@ -1,10 +1,13 @@
-//! Schema migration runner for the TimescaleDB storage plugin.
+//! Schema migration runner for the `TimescaleDB` storage plugin.
 
 use sqlx::PgPool;
 
 use crate::domain::error::MigrationError;
 
 // @cpt-algo:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1
+/// # Errors
+///
+/// Returns [`MigrationError`] if any DDL statement fails against the database.
 pub async fn run_migrations(pool: &PgPool) -> Result<(), MigrationError> {
     // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-1
     sqlx::query("CREATE EXTENSION IF NOT EXISTS timescaledb CASCADE")

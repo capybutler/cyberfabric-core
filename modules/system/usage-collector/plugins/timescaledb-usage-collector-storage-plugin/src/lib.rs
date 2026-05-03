@@ -1,7 +1,7 @@
-//! TimescaleDB Usage Collector Storage Plugin
+//! `TimescaleDB` Usage Collector Storage Plugin
 //!
 //! A production [`usage_collector_sdk::UsageCollectorPluginClientV1`] implementation
-//! backed by TimescaleDB for durable high-throughput usage record persistence,
+//! backed by `TimescaleDB` for durable high-throughput usage record persistence,
 //! aggregation query pushdown via continuous aggregates, and cursor-based raw pagination.
 //!
 //! ## Configuration

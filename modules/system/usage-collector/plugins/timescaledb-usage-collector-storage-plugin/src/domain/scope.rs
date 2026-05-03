@@ -1,4 +1,4 @@
-//! AccessScope → SQL WHERE fragment translator.
+//! `AccessScope` → SQL WHERE fragment translator.
 
 use modkit_security::{AccessScope, ScopeFilter, pep_properties};
 use uuid::Uuid;
@@ -61,7 +61,7 @@ pub fn scope_to_sql(
             // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql:p1:inst-s2s-3b-i
             if matches!(filter, ScopeFilter::InGroup(_) | ScopeFilter::InGroupSubtree(_)) {
                 return Err(ScopeTranslationError::UnsupportedPredicate {
-                    kind: "InGroup/InGroupSubtree".to_string(),
+                    kind: "InGroup/InGroupSubtree".to_owned(),
                 });
             }
             // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql:p1:inst-s2s-3b-i
@@ -84,7 +84,7 @@ pub fn scope_to_sql(
             // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql:p1:inst-s2s-3b-iii
             // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql:p1:inst-s2s-3b-iv
             else if filter.property() == PROP_RESOURCE_TYPE {
-                let (frag, val) = build_text_filter(filter, param_n, "resource_type")?;
+                let (frag, val) = build_text_filter(filter, param_n, "resource_type");
                 predicate_fragments.push(frag);
                 bind_params.push(val);
             }
@@ -143,19 +143,15 @@ fn build_uuid_filter(
     }
 }
 
-fn build_text_filter(
-    filter: &ScopeFilter,
-    param_n: usize,
-    column: &str,
-) -> Result<(String, SqlValue), ScopeTranslationError> {
+fn build_text_filter(filter: &ScopeFilter, param_n: usize, column: &str) -> (String, SqlValue) {
     match filter {
-        ScopeFilter::Eq(f) => Ok((
+        ScopeFilter::Eq(f) => (
             format!("{column} = ${param_n}"),
             SqlValue::Text(f.value().to_string()),
-        )),
+        ),
         ScopeFilter::In(f) => {
-            let texts: Vec<String> = f.values().iter().map(|v| v.to_string()).collect();
-            Ok((format!("{column} = ANY(${param_n})"), SqlValue::TextArray(texts)))
+            let texts: Vec<String> = f.values().iter().map(std::string::ToString::to_string).collect();
+            (format!("{column} = ANY(${param_n})"), SqlValue::TextArray(texts))
         }
         _ => unreachable!("InGroup/InGroupSubtree handled before calling build_text_filter"),
     }

@@ -1,7 +1,7 @@
-//! TimescaleDB usage-collector storage plugin module.
+//! `TimescaleDB` usage-collector storage plugin module.
 //!
 //! Registers a GTS plugin instance in the types registry and exposes
-//! [`usage_collector_sdk::UsageCollectorPluginClientV1`] backed by a TimescaleDB connection pool.
+//! [`usage_collector_sdk::UsageCollectorPluginClientV1`] backed by a `TimescaleDB` connection pool.
 
 use std::sync::Arc;
 
@@ -24,7 +24,7 @@ use crate::infra::migrations::run_migrations;
 use crate::infra::otel_metrics::OtelPluginMetrics;
 use crate::infra::pg_insert_port::PgInsertPort;
 
-/// TimescaleDB production storage plugin for the usage-collector gateway.
+/// `TimescaleDB` production storage plugin for the usage-collector gateway.
 #[modkit::module(
     name = "timescaledb-usage-collector-storage-plugin",
     deps = ["types-registry", "usage-collector"]
@@ -43,9 +43,8 @@ impl Module for TimescaleDbStoragePlugin {
         // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-1
 
         // @cpt-begin:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1:inst-validate-config
-        let cfg: TimescaleDbConfig = ctx.config().map_err(|e| {
+        let cfg: TimescaleDbConfig = ctx.config().inspect_err(|_e| {
             error!("TimescaleDB plugin configuration load failed");
-            e
         })?;
         cfg.validate().map_err(|e| {
             error!(error = %e, "TimescaleDB plugin configuration validation failed");
@@ -109,7 +108,7 @@ impl Module for TimescaleDbStoragePlugin {
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
         let instance = BaseModkitPluginV1::<UsageCollectorStoragePluginSpecV1> {
             id: instance_id.clone(),
-            vendor: "virtuozzo".to_string(),
+            vendor: "virtuozzo".to_owned(),
             priority: 10,
             properties: UsageCollectorStoragePluginSpecV1,
         };
