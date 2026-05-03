@@ -36,7 +36,12 @@ struct TimescaleDbStoragePlugin;
 impl Module for TimescaleDbStoragePlugin {
     // @cpt-dod:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1
     // @cpt-dod:cpt-cf-usage-collector-dod-production-storage-plugin-encryption-and-gts:p1
+    // @cpt-flow:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1
     async fn init(&self, ctx: &ModuleCtx) -> anyhow::Result<()> {
+        // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-1
+        // Entry point: platform operator has invoked plugin startup (CLI or gateway startup flag).
+        // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-1
+
         // @cpt-begin:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1:inst-validate-config
         let cfg: TimescaleDbConfig = ctx.config().map_err(|e| {
             error!("TimescaleDB plugin configuration load failed");
@@ -67,19 +72,35 @@ impl Module for TimescaleDbStoragePlugin {
             })?;
         // @cpt-end:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1:inst-build-pool
 
+        // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-2
         // @cpt-begin:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1:inst-run-migrations
         run_migrations(&pool).await.map_err(|e| {
+            // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-4
             error!(error = %e, "TimescaleDB schema migration failed");
+            // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-4
             anyhow::anyhow!("schema migration failed")
         })?;
         // @cpt-end:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1:inst-run-migrations
+        // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-2
 
+        // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3
+        info!("TimescaleDB schema migration completed; all schema objects are present");
+        // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3
+
+        // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3a
         // @cpt-begin:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1:inst-setup-continuous-aggregate
         setup_continuous_aggregate(&pool).await.map_err(|e| {
+            // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3c
             error!(error = %e, "TimescaleDB continuous aggregate setup failed");
+            // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3c
             anyhow::anyhow!("continuous aggregate setup failed")
         })?;
         // @cpt-end:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1:inst-setup-continuous-aggregate
+        // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3a
+
+        // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3b
+        info!("TimescaleDB continuous aggregate setup complete; returning success to operator");
+        // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration:p1:inst-flow-smig-3b
 
         let instance_id = UsageCollectorStoragePluginSpecV1::gts_make_instance_id(
             "cf.core._.timescaledb_usage_collector_storage_plugin.v1",

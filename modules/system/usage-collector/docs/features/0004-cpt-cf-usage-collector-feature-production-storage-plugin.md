@@ -68,10 +68,10 @@ cpt:
 
 <!-- /toc -->
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-featstatus-production-storage-plugin`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-featstatus-production-storage-plugin`
 
 <!-- reference to DECOMPOSITION entry -->
-- [ ] `p1` - `cpt-cf-usage-collector-feature-production-storage-plugin`
+- [x] `p1` - `cpt-cf-usage-collector-feature-production-storage-plugin`
 
 ## 1. Feature Context
 
@@ -124,7 +124,7 @@ single-tenant aggregation), `cpt-cf-usage-collector-nfr-throughput`
 
 ### Operator: Schema Migration
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-flow-production-storage-plugin-operator-schema-migration`
 
 **Actor**: `cpt-cf-usage-collector-actor-platform-operator`
 
@@ -136,13 +136,13 @@ single-tenant aggregation), `cpt-cf-usage-collector-nfr-throughput`
 - Continuous aggregate setup fails; operator receives `MigrationError::ContinuousAggregateSetupFailed`
 
 **Steps**:
-1. [ ] - `p1` - Platform operator invokes the plugin migration command (CLI or gateway startup flag) - `inst-flow-smig-1`
-2. [ ] - `p1` - Plugin executes the idempotent migration sequence: `cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations` - `inst-flow-smig-2`
-3. [ ] - `p1` - **IF** migration succeeds — plugin logs `INFO` confirming all schema objects are present - `inst-flow-smig-3`
-   1. [ ] - `p1` - Plugin executes continuous aggregate setup: `cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate` - `inst-flow-smig-3a`
-   2. [ ] - `p1` - **IF** continuous aggregate setup succeeds — **RETURN** success feedback to operator - `inst-flow-smig-3b`
-   3. [ ] - `p1` - **IF** continuous aggregate setup fails — log `ERROR` with `MigrationError::ContinuousAggregateSetupFailed`; **RETURN** failure feedback to operator - `inst-flow-smig-3c`
-4. [ ] - `p1` - **IF** migration fails (e.g., extension unavailable) — log `ERROR` with `MigrationError` details; **RETURN** failure feedback to operator - `inst-flow-smig-4`
+1. [x] - `p1` - Platform operator invokes the plugin migration command (CLI or gateway startup flag) - `inst-flow-smig-1`
+2. [x] - `p1` - Plugin executes the idempotent migration sequence: `cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations` - `inst-flow-smig-2`
+3. [x] - `p1` - **IF** migration succeeds — plugin logs `INFO` confirming all schema objects are present - `inst-flow-smig-3`
+   1. [x] - `p1` - Plugin executes continuous aggregate setup: `cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate` - `inst-flow-smig-3a`
+   2. [x] - `p1` - **IF** continuous aggregate setup succeeds — **RETURN** success feedback to operator - `inst-flow-smig-3b`
+   3. [x] - `p1` - **IF** continuous aggregate setup fails — log `ERROR` with `MigrationError::ContinuousAggregateSetupFailed`; **RETURN** failure feedback to operator - `inst-flow-smig-3c`
+4. [x] - `p1` - **IF** migration fails (e.g., extension unavailable) — log `ERROR` with `MigrationError` details; **RETURN** failure feedback to operator - `inst-flow-smig-4`
 
 ---
 
@@ -172,7 +172,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 ### Schema Migrations
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations`
 
 **Input**: `sqlx::PgPool` — connection pool to the TimescaleDB instance; migration runner invoked by the platform operator at plugin startup or on explicit migration command
 
@@ -245,7 +245,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 ### `AccessScope` → SQL Translator
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`
 
 **Input**: `AccessScope` — compiled from PDP constraints by the gateway before delegating to the plugin; structure: `Vec<ConstraintGroup>` where each `ConstraintGroup` contains `Vec<Predicate>`; predicates include `TenantId(Vec<Uuid>)`, `ResourceId(Vec<Uuid>)`, `ResourceType(Vec<String>)`, `InGroup { group_id }`, `InGroupSubtree { group_id }`
 
@@ -367,7 +367,7 @@ All parameters are static and require a plugin restart to change. No feature fla
 
 ### Schema & Migrations
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-schema-migrations`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-schema-migrations`
 
 The system **MUST** implement idempotent schema migrations that: enable the `timescaledb` extension; create the `usage_records` hypertable with all required columns and five composite indexes including the partial unique idempotency index on `(tenant_id, idempotency_key)`; and create the `usage_agg_1h` continuous aggregate with a 30-minute scheduled refresh policy and a 2-hour start / 1-hour end offset. All migration steps MUST be idempotent and safe to re-run on an already-migrated schema without error.
 
@@ -391,7 +391,7 @@ The system **MUST** implement idempotent schema migrations that: enable the `tim
 
 ### Ingest Operations
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-ingest-ops`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-ingest-ops`
 
 The system **MUST** implement the idempotent ingest write path: `create_usage_record` persisting a single record using idempotency-index conflict resolution (DO NOTHING on duplicate `(tenant_id, idempotency_key)`); and `scope_to_sql` translating the PDP `AccessScope` to a SQL WHERE fragment that preserves the OR-of-ANDs structure of the original PDP constraint groups. Counter records require a non-null `idempotency_key` and a non-negative `value`; these are enforced defensively at the plugin layer even if the gateway pre-validates.
 
@@ -415,7 +415,7 @@ The system **MUST** implement the idempotent ingest write path: `create_usage_re
 
 ### Query Operations
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-query-ops`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-query-ops`
 
 The system **MUST** implement the two read operations: `query_aggregated` routing to the `usage_agg_1h` continuous aggregate when all active filters are on low-cardinality dimensions (`metric`, `resource_type`, `subject_type`, `source`) and falling back to the raw `usage_records` hypertable when `resource_id` or `subject_id` is present in filters or GROUP BY dimensions; and `query_raw` delivering cursor-based pagination with stable keyset ordering on `(timestamp, id)`. Both operations apply the PDP `AccessScope` via `scope_to_sql` before query construction and fail closed on scope translation errors.
 

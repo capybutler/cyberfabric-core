@@ -9,7 +9,7 @@
   - [2.1 Core SDK, Emitter & In-Process Ingest ⏳ HIGH](#21-core-sdk-emitter--in-process-ingest--high)
   - [2.2 REST Client & Remote Ingest Delivery ⏳ HIGH](#22-rest-client--remote-ingest-delivery--high)
   - [2.3 Usage Query API ✅ HIGH](#23-usage-query-api--high)
-  - [2.4 Production Storage Plugin ⏳ HIGH](#24-production-storage-plugin--high)
+  - [2.4 Production Storage Plugin ✅ HIGH](#24-production-storage-plugin--high)
   - [2.5 Usage Type System ⏳ HIGH](#25-usage-type-system--high)
   - [2.6 Emission Rate Limiting ⏳ HIGH](#26-emission-rate-limiting--high)
   - [2.7 Retention Policy Management ⏳ MEDIUM](#27-retention-policy-management--medium)
@@ -262,9 +262,10 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 ---
 
-### 2.4 [Production Storage Plugin](features/production-storage-plugin/) ⏳ HIGH
+### 2.4 [Production Storage Plugin](features/production-storage-plugin/) ✅ HIGH
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-feature-production-storage-plugin`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-feature-production-storage-plugin`
+<!-- STATUS: IMPLEMENTED — all p1 DoD items verified and implemented (plugin crate, schema migrations, continuous aggregate, ingest, query, GTS, unit tests, integration tests). -->
 
 - **Type**: Plugin Interface
 

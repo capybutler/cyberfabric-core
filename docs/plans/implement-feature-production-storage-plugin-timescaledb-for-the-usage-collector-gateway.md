@@ -681,9 +681,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-11-final-integration.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Perform final integration and verification for the production storage plugin feature. This phase reads all ten prior phase outputs to confirm full CDSL coverage, audits the FEATURE file checkboxes and performs the final cascade (marking all flow/algo/dod IDs as `[x]` where all nested steps are complete), validates the FEATURE artifact structure with `cpt --json validate --artifact`, updates `DECOMPOSITION.md` to mark the feature as IMPLEMENTED, runs `cargo check` on the new crate, and closes with a full expert panel review covering correctness of OR-of-ANDs preservation, TLS enforcement, idempotency under concurrency, cursor stability, and AVG composability. All deliverable phases are complete before this phase runs; this phase is the terminal verification and documentation closure pass.
