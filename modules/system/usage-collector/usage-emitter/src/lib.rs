@@ -41,5 +41,6 @@ pub use authorized_emitter::AuthorizedUsageEmitter;
 pub use config::UsageEmitterConfig;
 pub use emitter::UsageEmitter;
 pub use error::UsageEmitterError;
+pub use infra::delivery_handler::DeliveryHandler;
 pub use scoped_emitter::ScopedUsageEmitter;
 pub use usage_builder::UsageRecordBuilder;

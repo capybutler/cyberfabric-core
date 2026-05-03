@@ -63,9 +63,9 @@ No validation commands defined.
 - `.plans/implement-usage-collector-integration-tests/phase-02-emitter-tests.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Create four integration test files for the `cf-usage-emitter` crate under `modules/system/usage-collector/usage-emitter/tests/`. The tests promote existing in-module unit tests (which already use in-memory SQLite) to proper top-level integration tests following project conventions. This phase also adds any missing dev-dependencies to the crate's `Cargo.toml`. No source code other than `Cargo.toml` is modified.
