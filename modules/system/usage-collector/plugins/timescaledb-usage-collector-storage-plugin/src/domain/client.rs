@@ -103,10 +103,11 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                 // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-4
                 if let sqlx::Error::Database(ref db_err) = e
                     && db_err.code().as_deref() == Some("23505") {
+                        tracing::warn!(error = %db_err, "unexpected unique constraint violation in usage_records");
                         self.metrics.record_ingestion_error();
-                        return Err(UsageCollectorError::internal(format!(
-                            "unexpected unique constraint violation: {db_err}"
-                        )));
+                        return Err(UsageCollectorError::internal(
+                            "unexpected unique constraint violation",
+                        ));
                     }
                 // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-4
 
@@ -384,14 +385,6 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             })?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-5
 
-        // Return an error if the result was truncated — we fetched max_rows+1 to distinguish
-        // truncation from a result set that happens to be exactly max_rows in size.
-        if rows.len() > query.max_rows {
-            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
-            self.metrics.record_query_latency_ms("aggregated", elapsed_ms);
-            return Err(UsageCollectorError::query_result_too_large(rows.len(), query.max_rows));
-        }
-
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-6
         let results: Vec<AggregationResult> = rows
             .iter()
@@ -419,6 +412,15 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             })
             .collect();
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-6
+
+        // Return an error if the result was truncated. We fetched max_rows+1 and filter out NULL
+        // agg_value rows, so check after filtering to avoid false positives when NULL rows are
+        // among the extra fetched rows.
+        if results.len() > query.max_rows {
+            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+            self.metrics.record_query_latency_ms("aggregated", elapsed_ms);
+            return Err(UsageCollectorError::query_result_too_large(results.len(), query.max_rows));
+        }
 
         let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
         self.metrics.record_query_latency_ms("aggregated", elapsed_ms);
@@ -519,6 +521,9 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
         let page_size_idx = param_idx + 1;
         let page_size = i64::try_from(query.page_size)
             .map_err(|e| UsageCollectorError::internal(format!("page size overflow: {e}")))?;
+        if page_size < 1 {
+            return Err(UsageCollectorError::internal("page_size must be >= 1"));
+        }
         add_arg(&mut args, page_size)?;
 
         let where_clause = where_clauses.join(" AND ");

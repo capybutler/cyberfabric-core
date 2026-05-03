@@ -193,7 +193,7 @@ Internal system functions and procedures that do not interact with actors direct
 8. [x] - `p1` - Create a plain table `usage_idempotency_keys` with columns `tenant_id` (UUID, required) and `idempotency_key` (text, required), with `PRIMARY KEY (tenant_id, idempotency_key)`; this table is the cross-partition deduplication store for idempotent counter records; a separate plain table is required because TimescaleDB rejects unique indexes that omit the partition column on a hypertable; idempotent (`CREATE TABLE IF NOT EXISTS`) — `inst-mig-8`
 9. [x] - `p1` - **RETURN** `Ok(())` — all schema objects are present and indexes are consistent - `inst-mig-9`
 
-**Implements**: `cpt-cf-usage-collector-fr-pluggable-storage` (plugin owns its schema lifecycle), `cpt-cf-usage-collector-nfr-query-latency` (five required indexes satisfy §3.7 mandate)
+**Implements**: `cpt-cf-usage-collector-fr-pluggable-storage` (plugin owns its schema lifecycle), `cpt-cf-usage-collector-nfr-query-latency` (four composite indexes satisfy §3.7 mandate)
 
 **Constraints**: `cpt-cf-usage-collector-constraint-encryption` (TLS-only `PgPool` connection enforced by plugin configuration; encryption at rest governed by platform infrastructure policy)
 
@@ -382,7 +382,7 @@ The system **MUST** implement idempotent schema migrations that: enable the `tim
 **Constraints**: `cpt-cf-usage-collector-constraint-single-plugin`, `cpt-cf-usage-collector-constraint-types-registry`
 
 **Touches**:
-- DB: `usage_records` (hypertable), `usage_agg_1h` (continuous aggregate)
+- DB: `usage_records` (hypertable), `usage_agg_1h` (continuous aggregate), `usage_idempotency_keys` (plain table)
 - Entities: `UsageRecord`
 
 **Resource management**: The migration runner holds a single pool connection during the migration sequence and releases it immediately on completion or error. Continuous aggregate creation uses `WITH NO DATA` to defer the initial population to the scheduled refresh policy; the migration-time manual refresh is bounded by the volume of existing data. All DDL steps use idempotency guards (`IF NOT EXISTS` / `if_not_exists`) to prevent duplicate-object errors.

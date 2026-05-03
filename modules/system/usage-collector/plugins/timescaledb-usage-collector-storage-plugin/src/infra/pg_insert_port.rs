@@ -30,6 +30,7 @@ const INSERT_RECORD_SQL: &str = "INSERT INTO usage_records (
 impl InsertPort for PgInsertPort {
     // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-6
     // ingested_at is set via NOW() in the INSERT SQL — not populated from the caller
+    // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-6
     // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-3
     async fn insert_usage_record(&self, record: &UsageRecord) -> Result<u64, sqlx::Error> {
         let kind_str = match record.kind {
@@ -100,5 +101,4 @@ impl InsertPort for PgInsertPort {
         Ok(result.rows_affected())
     }
     // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-3
-    // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-6
 }
