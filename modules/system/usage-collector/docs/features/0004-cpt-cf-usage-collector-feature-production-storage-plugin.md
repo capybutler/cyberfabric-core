@@ -1,7 +1,11 @@
 ---
 cpt:
-  version: "1.7"
+  version: "1.8"
   changelog:
+    - version: "1.8"
+      date: "2026-05-03"
+      changes:
+        - "Align FEATURE doc with TimescaleDB integration fixes: replace inst-mig-8 partial-unique-index description with usage_idempotency_keys plain-table description; update inst-mig-2 id column to describe composite PRIMARY KEY (id, timestamp); update inst-cur-3, inst-flow-ing-3, dod-ingest-ops to describe two-step transaction for idempotent ingest; change continuous aggregate start offset from 2 hours to 3 hours in inst-cagg-2, §3 input block, and dod-schema-migrations; add @cpt-begin/@cpt-end markers for inst-mig-8 in migrations.rs."
     - version: "1.7"
       date: "2026-05-03"
       changes:
@@ -56,15 +60,15 @@ cpt:
   - [`AccessScope` → SQL Translator](#accessscope--sql-translator)
   - [`query_aggregated` — Aggregation Query with Routing](#query_aggregated--aggregation-query-with-routing)
   - [`query_raw` — Cursor-Based Raw Record Pagination](#query_raw--cursor-based-raw-record-pagination)
-- [5. Definitions of Done](#5-definitions-of-done)
+- [4. Definitions of Done](#4-definitions-of-done)
   - [Plugin Crate (`timescaledb-usage-collector-storage-plugin`)](#plugin-crate-timescaledb-usage-collector-storage-plugin)
   - [Schema & Migrations](#schema--migrations)
   - [Ingest Operations](#ingest-operations)
   - [Query Operations](#query-operations)
   - [Encryption & GTS Registration](#encryption--gts-registration)
   - [Testing & Observability](#testing--observability)
-- [6. Acceptance Criteria](#6-acceptance-criteria)
-- [7. Non-Applicability Notes](#7-non-applicability-notes)
+- [5. Acceptance Criteria](#5-acceptance-criteria)
+- [6. Non-Applicability Notes](#6-non-applicability-notes)
 
 <!-- /toc -->
 
@@ -162,7 +166,7 @@ single-tenant aggregation), `cpt-cf-usage-collector-nfr-throughput`
 **Steps**:
 1. [x] - `p1` - Gateway calls `create_usage_record(UsageRecord)` on the plugin - `inst-flow-ing-1`
 2. [x] - `p1` - Plugin validates: `value >= 0` for counter records; `idempotency_key` present for counter records; **IF** either fails — **RETURN** `UsageCollectorPluginError::InvalidRecord` - `inst-flow-ing-2`
-3. [x] - `p1` - Plugin executes idempotent INSERT: `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record` — ON CONFLICT `(tenant_id, idempotency_key)` DO NOTHING - `inst-flow-ing-3`
+3. [x] - `p1` - Plugin executes idempotent INSERT: `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record` — deduplication via a two-step transaction against the `usage_idempotency_keys` table (ON CONFLICT DO NOTHING on the key row, then INSERT into `usage_records` if the key was newly claimed) - `inst-flow-ing-3`
 4. [x] - `p1` - **IF** DB returns a transient error — **RETURN** `UsageCollectorPluginError::Transient`; gateway circuit breaker records the failure; outbox retries delivery - `inst-flow-ing-4`
 5. [x] - `p1` - **RETURN** `Ok(())` — record inserted or confirmed duplicate; no distinction exposed to caller - `inst-flow-ing-5`
 
@@ -180,13 +184,13 @@ Internal system functions and procedures that do not interact with actors direct
 
 **Steps**:
 1. [x] - `p1` - Ensure the TimescaleDB extension is installed in the database; the operation is idempotent and safe to re-run on an already-configured instance — `inst-mig-1`
-2. [x] - `p1` - Create the `usage_records` table with the following columns: `id` (UUID primary key, auto-generated), `tenant_id` (UUID, required), `module` (text, required), `kind` (text, `'counter'` or `'gauge'`), `metric` (text, required), `value` (numeric, required), `timestamp` (timestamptz, required), `idempotency_key` (nullable text; non-null enforced at upsert level for counter records), `resource_id` (UUID, required), `resource_type` (text, required), `subject_id` (nullable UUID), `subject_type` (nullable text), `ingested_at` (timestamptz, defaults to current time), `metadata` (nullable JSONB); if the table already exists, skip — `inst-mig-2`
+2. [x] - `p1` - Create the `usage_records` table with the following columns: `id` (UUID, required, auto-generated via `gen_random_uuid()`; part of composite PRIMARY KEY `(id, timestamp)` required by TimescaleDB hypertable partitioning), `tenant_id` (UUID, required), `module` (text, required), `kind` (text, `'counter'` or `'gauge'`), `metric` (text, required), `value` (numeric, required), `timestamp` (timestamptz, required), `idempotency_key` (nullable text; non-null enforced at upsert level for counter records), `resource_id` (UUID, required), `resource_type` (text, required), `subject_id` (nullable UUID), `subject_type` (nullable text), `ingested_at` (timestamptz, defaults to current time), `metadata` (nullable JSONB); if the table already exists, skip — `inst-mig-2`
 3. [x] - `p1` - Convert `usage_records` into a TimescaleDB hypertable partitioned on `timestamp`; use the idempotent form (`if_not_exists`) to allow safe re-runs on an already-converted table — `inst-mig-3`
 4. [x] - `p1` - Create a composite index on `(tenant_id, timestamp DESC)` named `idx_usage_records_tenant_time`; this is the mandatory primary filter index driving all time-range scans; idempotent — `inst-mig-4`
 5. [x] - `p1` - Create a composite index on `(tenant_id, metric, timestamp DESC)` named `idx_usage_records_tenant_metric_time`; supports `usage_type` filter in aggregation and raw queries; idempotent — `inst-mig-5`
 6. [x] - `p1` - Create a composite index on `(tenant_id, subject_id, timestamp DESC)` named `idx_usage_records_tenant_subject_time`; supports `subject` filter in aggregation and raw queries; idempotent — `inst-mig-6`
 7. [x] - `p1` - Create a composite index on `(tenant_id, resource_id, timestamp DESC)` named `idx_usage_records_tenant_resource_time`; supports `resource` filter in aggregation and raw queries; idempotent — `inst-mig-7`
-8. [x] - `p1` - Create a partial unique index on `(tenant_id, idempotency_key)` named `idx_usage_records_tenant_idempotency`, covering only rows where `idempotency_key` is non-null; this is the upsert target for idempotent record creation; idempotent — `inst-mig-8`
+8. [x] - `p1` - Create a plain table `usage_idempotency_keys` with columns `tenant_id` (UUID, required) and `idempotency_key` (text, required), with `PRIMARY KEY (tenant_id, idempotency_key)`; this table is the cross-partition deduplication store for idempotent counter records; a separate plain table is required because TimescaleDB rejects unique indexes that omit the partition column on a hypertable; idempotent (`CREATE TABLE IF NOT EXISTS`) — `inst-mig-8`
 9. [x] - `p1` - **RETURN** `Ok(())` — all schema objects are present and indexes are consistent - `inst-mig-9`
 
 **Implements**: `cpt-cf-usage-collector-fr-pluggable-storage` (plugin owns its schema lifecycle), `cpt-cf-usage-collector-nfr-query-latency` (five required indexes satisfy §3.7 mandate)
@@ -199,7 +203,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-continuous-aggregate`
 
-**Input**: `sqlx::PgPool` — invoked as part of schema migrations after the hypertable exists; `continuous_aggregate_refresh_interval` operational parameter (default: 30-minute schedule, 2-hour start offset, 1-hour end offset)
+**Input**: `sqlx::PgPool` — invoked as part of schema migrations after the hypertable exists; `continuous_aggregate_refresh_interval` operational parameter (default: 30-minute schedule, 3-hour start offset, 1-hour end offset)
 
 **Output**: `Result<(), MigrationError>` — `usage_agg_1h` continuous aggregate view and refresh policy created or already present; idempotent
 
@@ -207,7 +211,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 **Steps**:
 1. [x] - `p1` - Create the `usage_agg_1h` continuous aggregate materialized view over `usage_records`, grouping by 1-hour time buckets (`timestamp`), `tenant_id`, `metric`, `module`, `resource_type`, and `subject_type`; aggregate columns: sum of `value`, count of records, min of `value`, max of `value`; exclude `resource_id` and `subject_id` from GROUP BY to prevent cardinality explosion; `AVG` is not stored — computed at query time as `sum / NULLIF(count, 0)` for correctness across bucket merges; defer initial data population (`WITH NO DATA`); if the view already exists, skip — `inst-cagg-1`
-2. [x] - `p1` - Register an automated refresh policy for `usage_agg_1h`: schedule interval 30 minutes, start offset 2 hours, end offset 1 hour; if a policy already exists, skip — `inst-cagg-2`
+2. [x] - `p1` - Register an automated refresh policy for `usage_agg_1h`: schedule interval 30 minutes, start offset 3 hours, end offset 1 hour; if a policy already exists, skip — `inst-cagg-2`
 3. [x] - `p1` - **IF** the view was newly created (not already present) — trigger an initial manual refresh to populate historical data up to 1 hour before the current time — `inst-cagg-3`
 4. [x] - `p1` - Verify the view exists and the refresh policy is registered; **IF** verification fails — **RETURN** `MigrationError::ContinuousAggregateSetupFailed` - `inst-cagg-4`
 5. [x] - `p1` - **RETURN** `Ok(())` - `inst-cagg-5`
@@ -231,7 +235,7 @@ Internal system functions and procedures that do not interact with actors direct
 **Steps**:
 1. [x] - `p1` - Validate `value >= 0` when `kind = 'counter'`; **IF** negative — **RETURN** `UsageCollectorPluginError::InvalidRecord` (gateway enforces this before calling the plugin, but the plugin re-validates as a defensive check) - `inst-cur-1`
 2. [x] - `p1` - Validate `idempotency_key` is present (non-null, non-empty) when `kind = 'counter'`; **IF** absent — **RETURN** `UsageCollectorPluginError::InvalidRecord` - `inst-cur-2`
-3. [x] - `p1` - Execute INSERT INTO `usage_records` with all record fields; ON CONFLICT on `(tenant_id, idempotency_key)` WHERE `idempotency_key IS NOT NULL` DO NOTHING — idempotent upsert: duplicate records (same `tenant_id` + `idempotency_key`) are silently ignored, not double-counted - `inst-cur-3`
+3. [x] - `p1` - Open a transaction; INSERT into `usage_idempotency_keys (tenant_id, idempotency_key)` ON CONFLICT DO NOTHING; if 0 rows were claimed (duplicate key), rollback and return immediately (record already stored); otherwise INSERT the record into `usage_records` with all fields and commit the transaction. This two-step approach is required because TimescaleDB rejects unique indexes on `usage_records` that omit the partition column - `inst-cur-3`
 4. [x] - `p1` - **IF** DB operation returns a unique constraint violation on a column other than the idempotency index (unexpected schema conflict) — **RETURN** `UsageCollectorPluginError::StorageError(err)` - `inst-cur-4`
 5. [x] - `p1` - **IF** DB operation returns a transient error (connection lost, pool timeout, serialization failure) — **RETURN** `UsageCollectorPluginError::Transient(err)`; the gateway circuit breaker records this failure and the outbox library retries delivery - `inst-cur-5`
 6. [x] - `p1` - Set `ingested_at = now()` at DB INSERT time (not passed from caller) - `inst-cur-6`
@@ -239,7 +243,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 **Implements**: `cpt-cf-usage-collector-fr-pluggable-storage` (implements `UsageCollectorPluginClientV1::create_usage_record`), `cpt-cf-usage-collector-fr-counter-semantics` (stores each delta record as-is; persistent total computed as SUM of active deltas; upsert target `(tenant_id, idempotency_key)` enforces at-most-once delivery per key)
 
-**Constraints**: `cpt-cf-usage-collector-nfr-throughput` (≥ 10,000 records/sec sustained; single-row INSERT with partial unique index upsert is the hot path; connection pool size and hypertable chunk cache govern throughput ceiling), `cpt-cf-usage-collector-nfr-rpo` (INSERT inside a DB transaction; committed record has RPO = 0)
+**Constraints**: `cpt-cf-usage-collector-nfr-throughput` (≥ 10,000 records/sec sustained; single-row INSERT is the hot path for gauge records; counter records use a two-step transaction (idempotency-key INSERT + usage_records INSERT) which adds one extra round-trip per counter record; connection pool size and hypertable chunk cache govern throughput ceiling), `cpt-cf-usage-collector-nfr-rpo` (INSERT inside a DB transaction; committed record has RPO = 0)
 
 ---
 
@@ -328,7 +332,7 @@ Internal system functions and procedures that do not interact with actors direct
 
 ---
 
-## 5. Definitions of Done
+## 4. Definitions of Done
 
 Specific implementation tasks derived from the algorithms above.
 
@@ -369,7 +373,7 @@ All parameters are static and require a plugin restart to change. No feature fla
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-schema-migrations`
 
-The system **MUST** implement idempotent schema migrations that: enable the `timescaledb` extension; create the `usage_records` hypertable with all required columns and five composite indexes including the partial unique idempotency index on `(tenant_id, idempotency_key)`; and create the `usage_agg_1h` continuous aggregate with a 30-minute scheduled refresh policy and a 2-hour start / 1-hour end offset. All migration steps MUST be idempotent and safe to re-run on an already-migrated schema without error.
+The system **MUST** implement idempotent schema migrations that: enable the `timescaledb` extension; create the `usage_records` hypertable with all required columns and four composite indexes and a separate `usage_idempotency_keys` plain table for cross-partition idempotency deduplication; and create the `usage_agg_1h` continuous aggregate with a 30-minute scheduled refresh policy and a 3-hour start / 1-hour end offset. All migration steps MUST be idempotent and safe to re-run on an already-migrated schema without error.
 
 **Implements**:
 - `cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations`
@@ -393,7 +397,7 @@ The system **MUST** implement idempotent schema migrations that: enable the `tim
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-ingest-ops`
 
-The system **MUST** implement the idempotent ingest write path: `create_usage_record` persisting a single record using idempotency-index conflict resolution (DO NOTHING on duplicate `(tenant_id, idempotency_key)`); and `scope_to_sql` translating the PDP `AccessScope` to a SQL WHERE fragment that preserves the OR-of-ANDs structure of the original PDP constraint groups. Counter records require a non-null `idempotency_key` and a non-negative `value`; these are enforced defensively at the plugin layer even if the gateway pre-validates.
+The system **MUST** implement the idempotent ingest write path: `create_usage_record` persisting a single record using a two-step transaction: INSERT into `usage_idempotency_keys` ON CONFLICT DO NOTHING, early return on 0 rows claimed, then INSERT into `usage_records`; and `scope_to_sql` translating the PDP `AccessScope` to a SQL WHERE fragment that preserves the OR-of-ANDs structure of the original PDP constraint groups. Counter records require a non-null `idempotency_key` and a non-negative `value`; these are enforced defensively at the plugin layer even if the gateway pre-validates.
 
 **Implements**:
 - `cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record`
@@ -486,7 +490,7 @@ The system **MUST** implement a two-level test suite: Level 1 inline unit tests 
 
 **Resource management**: Integration tests MUST use the `testcontainers` container drop handle to clean up the TimescaleDB container at test teardown; no persistent containers between test runs. Unit tests require no external resources.
 
-## 6. Acceptance Criteria
+## 5. Acceptance Criteria
 
 - [ ] Given N concurrent `create_usage_record` calls with the same `(tenant_id, idempotency_key)`, exactly one row persists in `usage_records`; all calls return `Ok(())`
 - [ ] Counter total for a `(tenant_id, metric)` pair returned by `query_aggregated` equals the sum of all active record values; no separate running total is maintained
@@ -517,7 +521,7 @@ Performance: measure `create_usage_record` throughput against `cpt-cf-usage-coll
 (3) `query_aggregated` (continuous aggregate path, 30-day window, single tenant) p95 latency ≤ 500ms on representative data volume.
 (4) Zero unexpected constraint violations in production; deduplication rate observable via `usage_dedup_total` metric.
 
-## 7. Non-Applicability Notes
+## 6. Non-Applicability Notes
 
 **Out of Scope (Deferred to F7/F8)**. The following capabilities are explicitly out of scope for this feature and are deferred to their respective feature specifications: operator backfill/amendment/deactivation (`backfill_ingest`, `amend_record`, `deactivate_record`) — deferred to F8; retention enforcement (`enforce_retention`) — deferred to F7; watermark retrieval (`get_watermarks`) — deferred to F8. None of these operations are implemented, referenced, or tested by this feature.
 

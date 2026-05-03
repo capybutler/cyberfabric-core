@@ -58,9 +58,9 @@ No validation commands defined.
 - `.plans/analyze-update-feature-production-storage-plugin-timescaledb-fixes/phase-02-apply-feature-updates.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Apply every change from the Phase 1 misalignment catalog to the FEATURE document `0004-cpt-cf-usage-collector-feature-production-storage-plugin.md`. Add `@cpt` traceability markers to `migrations.rs` for the new `inst-mig-8` step. Bump the FEATURE document version to 1.8 with a changelog entry dated 2026-05-03. Catalog items with verdict "no change needed" are skipped without modification. Validate the updated FEATURE document with the `cpt validate` command and confirm zero errors.

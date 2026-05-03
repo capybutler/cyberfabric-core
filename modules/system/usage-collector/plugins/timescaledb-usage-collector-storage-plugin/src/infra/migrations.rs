@@ -16,7 +16,7 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), MigrationError> {
     // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-2
     sqlx::query(
         "CREATE TABLE IF NOT EXISTS usage_records (
-            id              UUID        NOT NULL DEFAULT gen_random_uuid() PRIMARY KEY,
+            id              UUID        NOT NULL DEFAULT gen_random_uuid(),
             tenant_id       UUID        NOT NULL,
             module          TEXT        NOT NULL,
             kind            TEXT        NOT NULL CHECK (kind IN ('counter', 'gauge')),
@@ -29,13 +29,30 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), MigrationError> {
             subject_id      UUID,
             subject_type    TEXT,
             ingested_at     TIMESTAMPTZ NOT NULL DEFAULT NOW(),
-            metadata        JSONB
+            metadata        JSONB,
+            PRIMARY KEY (id, timestamp)
         )",
     )
     .execute(pool)
     .await
     .map_err(|e| MigrationError::Migration(format!("failed to create usage_records table: {e}")))?;
     // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-2
+
+    // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-8
+    // Separate plain table for idempotency deduplication. TimescaleDB requires all
+    // unique indexes on a hypertable to include the partition column (timestamp), so
+    // cross-partition idempotency cannot be enforced with a partial index on usage_records.
+    sqlx::query(
+        "CREATE TABLE IF NOT EXISTS usage_idempotency_keys (
+            tenant_id       UUID NOT NULL,
+            idempotency_key TEXT NOT NULL,
+            PRIMARY KEY (tenant_id, idempotency_key)
+        )",
+    )
+    .execute(pool)
+    .await
+    .map_err(|e| MigrationError::Migration(format!("failed to create usage_idempotency_keys table: {e}")))?;
+    // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-8
 
     // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-3
     sqlx::query(
@@ -85,17 +102,6 @@ pub async fn run_migrations(pool: &PgPool) -> Result<(), MigrationError> {
     .await
     .map_err(|e| MigrationError::Migration(format!("failed to create idx_usage_records_tenant_resource_time: {e}")))?;
     // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-7
-
-    // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-8
-    sqlx::query(
-        "CREATE UNIQUE INDEX IF NOT EXISTS idx_usage_records_tenant_idempotency \
-         ON usage_records (tenant_id, idempotency_key) \
-         WHERE idempotency_key IS NOT NULL",
-    )
-    .execute(pool)
-    .await
-    .map_err(|e| MigrationError::Migration(format!("failed to create idx_usage_records_tenant_idempotency: {e}")))?;
-    // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-8
 
     // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-schema-migrations:p1:inst-mig-9
     Ok(())

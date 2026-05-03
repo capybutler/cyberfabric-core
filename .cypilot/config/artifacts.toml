@@ -15,14 +15,16 @@ patterns = [
 ]
 
 [[ignore]]
-reason = "Ignore usage-collector codebase and features — code traceability markers added incrementally across PR train. Remove after all PRs merged."
+reason = "Ignore usage-collector codebase and features 0001–0003 — code traceability markers added incrementally across PR train. Remove after all PRs merged."
 patterns = [
   "modules/system/usage-collector/plugins/noop-usage-collector-storage-plugin/src/*",
   "modules/system/usage-collector/usage-collector/src/*",
   "modules/system/usage-collector/usage-collector-rest-client/src/*",
   "modules/system/usage-collector/usage-collector-sdk/src/*",
   "modules/system/usage-collector/usage-emitter/src/*",
-  "modules/system/usage-collector/docs/features/*",
+  "modules/system/usage-collector/docs/features/0001-*",
+  "modules/system/usage-collector/docs/features/0002-*",
+  "modules/system/usage-collector/docs/features/0003-*",
 ]
 
 [[ignore]]
