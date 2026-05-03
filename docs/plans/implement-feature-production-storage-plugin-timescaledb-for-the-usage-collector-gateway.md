@@ -467,9 +467,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-08-gts-registration.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Finalize `src/module.rs` and `src/config.rs` for the `timescaledb-usage-collector-storage-plugin` crate. Implement the full ModKit module registration including: `TimescaleDbPluginConfig` struct with all five configuration parameters and validation; `on_start` that builds a `SecureConn`-managed `PgPool` with TLS enforcement (`sslmode=require`; plaintext connections rejected as hard startup errors), runs migrations, sets up the continuous aggregate, registers `UsageCollectorStoragePluginSpecV1` with the GTS registry, and registers the plugin with `ClientHub`; a health check function emitting the `storage_health_status` gauge (1 = healthy, 0 = unreachable); log INFO on success and ERROR on failure (no credentials in log output); all startup failures propagated as hard errors. Add `@cpt-dod` markers for `dod-plugin-crate` and `dod-encryption-and-gts` and mark those DoD checkboxes `[x]` in the FEATURE spec.
@@ -495,24 +495,24 @@ No validation commands defined.
 - No unresolved `{...}` variables outside code fences
 
 **Guidance:**
-- [ ] **TDD**: Write failing test first, implement minimal code to pass, then refactor
-- [ ] **SOLID**:
+- [x] **TDD**: Write failing test first, implement minimal code to pass, then refactor
+- [x] **SOLID**:
 - Single Responsibility: Each module/function focused on one reason to change
 - Open/Closed: Extend behavior via composition/configuration, not editing unrelated logic
 - Liskov Substitution: Implementations honor interface contract and invariants
 - Interface Segregation: Prefer small, purpose-driven interfaces over broad ones
 - Dependency Inversion: Depend on abstractions; inject dependencies for testability
-- [ ] **DRY**: Remove duplication by extracting shared logic with clear ownership
-- [ ] **KISS**: Prefer simplest correct solution matching design and project conventions
-- [ ] **YAGNI**: No specs/abstractions not required by current design scope
-- [ ] **Refactoring discipline**: Refactor only after tests pass; keep behavior unchanged
-- [ ] **Testability**: Structure code so core logic is testable without heavy integration
-- [ ] **Error handling**: Fail explicitly with clear errors; never silently ignore failures
-- [ ] **Observability**: Log meaningful events at integration boundaries (no secrets)
-- [ ] Code passes quality checklist
-- [ ] Functions/methods are appropriately sized
-- [ ] Error handling is consistent
-- [ ] Tests cover implemented requirements
+- [x] **DRY**: Remove duplication by extracting shared logic with clear ownership
+- [x] **KISS**: Prefer simplest correct solution matching design and project conventions
+- [x] **YAGNI**: No specs/abstractions not required by current design scope
+- [x] **Refactoring discipline**: Refactor only after tests pass; keep behavior unchanged
+- [x] **Testability**: Structure code so core logic is testable without heavy integration
+- [x] **Error handling**: Fail explicitly with clear errors; never silently ignore failures
+- [x] **Observability**: Log meaningful events at integration boundaries (no secrets)
+- [x] Code passes quality checklist
+- [x] Functions/methods are appropriately sized
+- [x] Error handling is consistent
+- [x] Tests cover implemented requirements
 
 **Ignore:**
 - Other phases unless they are required by `depends_on` or explicitly referenced by the original phase file.

@@ -334,7 +334,7 @@ Specific implementation tasks derived from the algorithms above.
 
 ### Plugin Crate (`timescaledb-usage-collector-storage-plugin`)
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate`
 
 The system **MUST** implement the `timescaledb-usage-collector-storage-plugin` crate providing: a full `UsageCollectorPluginClientV1` implementation registered via the `UsageCollectorStoragePluginSpecV1` GTS schema; a `SecureConn`-managed `sqlx::PgPool` connection pool with configurable size and timeout; startup validation that rejects missing `database_url` or failed TLS negotiation as hard errors; and registration with the gateway `ClientHub` via GTS discovery at startup.
 
@@ -440,7 +440,7 @@ The system **MUST** implement the two read operations: `query_aggregated` routin
 
 ### Encryption & GTS Registration
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-encryption-and-gts`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-production-storage-plugin-encryption-and-gts`
 
 The system **MUST** enforce TLS for all connections to TimescaleDB by requiring `sslmode=require` (or equivalent) in the connection parameters; plaintext connections MUST be rejected at pool initialization as a hard startup error. The plugin MUST register its GTS schema (`UsageCollectorStoragePluginSpecV1`) at startup; registration failure is also a hard startup error. Encryption at rest is governed by platform infrastructure policy (encrypted tablespace or OS-level encryption); no per-record key management is required for non-PII usage data.
 

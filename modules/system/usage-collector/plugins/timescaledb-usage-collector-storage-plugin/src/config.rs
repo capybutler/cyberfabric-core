@@ -1,8 +1,12 @@
 //! Configuration for the TimescaleDB usage-collector storage plugin.
 
+use std::fmt;
 use std::time::Duration;
 
 use serde::Deserialize;
+
+const SEVEN_DAYS_SECS: u64 = 7 * 24 * 3_600;
+const SEVEN_YEARS_SECS: u64 = 7 * 365 * 24 * 3_600;
 
 fn default_pool_size_min() -> u32 {
     2
@@ -32,7 +36,7 @@ where
 ///
 /// All parameters are static and require a plugin restart to change.
 /// `database_url` must include `sslmode=require`; plaintext connections are rejected.
-#[derive(Debug, Clone, Deserialize)]
+#[derive(Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct TimescaleDbConfig {
     /// PostgreSQL connection URL. Must include `sslmode=require`.
@@ -62,15 +66,51 @@ pub struct TimescaleDbConfig {
     pub connection_timeout: Duration,
 }
 
+impl fmt::Debug for TimescaleDbConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("TimescaleDbConfig")
+            .field("database_url", &"[redacted]")
+            .field("pool_size_min", &self.pool_size_min)
+            .field("pool_size_max", &self.pool_size_max)
+            .field("retention_default", &self.retention_default)
+            .field("connection_timeout", &self.connection_timeout)
+            .finish()
+    }
+}
+
 impl TimescaleDbConfig {
     /// Validates all configuration parameters.
     ///
     /// # Errors
     ///
-    /// Returns an error if `database_url` is missing, TLS is not required,
+    /// Returns an error if `database_url` is missing or lacks `sslmode=require`,
     /// pool sizes are out of range, or timeouts are out of range.
     pub fn validate(&self) -> anyhow::Result<()> {
-        todo!("Phase 8: validate TimescaleDB configuration")
+        if self.database_url.is_empty() {
+            anyhow::bail!("database_url is required");
+        }
+        if !self.database_url.contains("sslmode=require") {
+            anyhow::bail!("database_url must include 'sslmode=require' for TLS enforcement");
+        }
+        if self.pool_size_min < 1 {
+            anyhow::bail!("pool_size_min must be >= 1, got {}", self.pool_size_min);
+        }
+        if self.pool_size_max < self.pool_size_min {
+            anyhow::bail!(
+                "pool_size_max ({}) must be >= pool_size_min ({})",
+                self.pool_size_max,
+                self.pool_size_min
+            );
+        }
+        let min_retention = Duration::from_secs(SEVEN_DAYS_SECS);
+        let max_retention = Duration::from_secs(SEVEN_YEARS_SECS);
+        if self.retention_default < min_retention || self.retention_default > max_retention {
+            anyhow::bail!("retention_default must be between 7 days and 7 years");
+        }
+        if self.connection_timeout.is_zero() || self.connection_timeout > Duration::from_secs(60) {
+            anyhow::bail!("connection_timeout must be between 1s and 60s");
+        }
+        Ok(())
     }
 }
 
