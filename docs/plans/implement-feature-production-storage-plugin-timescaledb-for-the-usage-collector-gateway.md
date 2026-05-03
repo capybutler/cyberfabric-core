@@ -328,9 +328,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-06-query-aggregated.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Implement the `query_aggregated` method on the `TimescaleDbPluginClient` struct in `src/domain/client.rs`. The implementation executes the 7-step algorithm defined as `inst-qagg-1` through `inst-qagg-7` in the FEATURE spec: (1) translate the `AccessScope` to SQL via `scope_to_sql`, failing closed with `AccessDenied` on any translation error; (2) make a routing decision — route to the `usage_records` raw hypertable when `resource_id` or `subject_id` appears in user filters or `group_by`, otherwise route to the `usage_agg_1h` continuous aggregate; (3/4) build and execute the correct SQL query for the chosen path; (5) handle transient DB errors; (6) map result rows to `Vec<AggregationResult>` with absent GROUP BY dimensions set to `None`; (7) return the result. On the continuous-aggregate path, `Avg` MUST be computed as `SUM(sum_val) / NULLIF(SUM(cnt_val), 0)` — it is not stored in the view. Add `@cpt-begin`/`@cpt-end` markers for each instruction, emit `usage_query_latency_ms` metric, log the routing decision at DEBUG level, and mark `inst-qagg-1` through `inst-qagg-7` as `[x]` in the FEATURE file.
