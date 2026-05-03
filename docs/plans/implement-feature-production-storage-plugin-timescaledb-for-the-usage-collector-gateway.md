@@ -541,9 +541,9 @@ No validation commands defined.
 - `.plans/implement-feature-production-storage-plugin/phase-09-unit-tests.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Implement the Level 1 unit test suite in `modules/system/usage-collector/plugins/timescaledb-usage-collector-storage-plugin/src/domain/client_tests.rs`. The test module uses `#[cfg(test)]` with `#[cfg_attr(coverage_nightly, coverage(off))]` and requires no real database connection — all DB interactions are covered via mock pool trait or test doubles. All 8 `create_usage_record` test cases and all 4 `scope_to_sql` test cases defined in FEATURE §6 test coverage guidance must be present, with metrics mock-verified in every success and failure path. A `@cpt-dod` scope marker for `dod-testing-and-observability` must be added, and the corresponding FEATURE DoD checkbox must be marked in progress.

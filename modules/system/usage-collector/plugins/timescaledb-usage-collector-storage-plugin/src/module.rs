@@ -22,6 +22,7 @@ use crate::domain::client::TimescaleDbPluginClient;
 use crate::domain::metrics::NoopMetrics;
 use crate::infra::continuous_aggregate::setup_continuous_aggregate;
 use crate::infra::migrations::run_migrations;
+use crate::infra::pg_insert_port::PgInsertPort;
 
 /// TimescaleDB production storage plugin for the usage-collector gateway.
 #[modkit::module(
@@ -108,8 +109,10 @@ impl Module for TimescaleDbStoragePlugin {
         info!(%instance_id, "GTS registration successful for TimescaleDB storage plugin");
         // @cpt-end:cpt-cf-usage-collector-dod-production-storage-plugin-encryption-and-gts:p1:inst-register-gts
 
+        let insert_port: Arc<dyn crate::domain::insert_port::InsertPort> =
+            Arc::new(PgInsertPort::new(pool.clone()));
         let metrics: Arc<dyn crate::domain::metrics::PluginMetrics> = Arc::new(NoopMetrics);
-        let client = TimescaleDbPluginClient::new(pool.clone(), metrics);
+        let client = TimescaleDbPluginClient::new(insert_port, pool.clone(), metrics);
         let api: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(client);
 
         // @cpt-begin:cpt-cf-usage-collector-dod-production-storage-plugin-plugin-crate:p1:inst-register-client
