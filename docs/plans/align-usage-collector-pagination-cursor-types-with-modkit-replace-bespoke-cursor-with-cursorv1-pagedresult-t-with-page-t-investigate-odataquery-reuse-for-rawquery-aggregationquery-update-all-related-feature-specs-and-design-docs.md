@@ -414,9 +414,9 @@ No validation commands defined.
 - `.plans/implement-feature-query-api-modkit-alignment/phase-08-f4-design-spec-updates.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Update the F4 production storage plugin FEATURE spec, DESIGN.md, and DECOMPOSITION.md to remove all bespoke Cursor/PagedResult references and replace them with the canonical modkit-odata types: CursorV1 and Page<T>. In the F4 spec, update CDSL steps that reference PagedResult return types and cursor-related instructions. In DESIGN.md, update the domain model section to reflect CursorV1 and Page<T> with modkit-odata attribution. In DECOMPOSITION.md, update domain type entries only if they explicitly list bespoke Cursor/PagedResult as new domain types introduced by F3. Bump versions and add changelog entries for every modified spec file.

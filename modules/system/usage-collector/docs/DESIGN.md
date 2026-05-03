@@ -1,8 +1,12 @@
 ---
 cpt:
   kind: DESIGN
-  version: "0.4.0"
+  version: "0.5.0"
   changelog:
+    - version: "0.5.0"
+      date: "2026-05-03"
+      changes:
+        - "Replace bespoke Cursor domain model entry with CursorV1 from modkit-odata in §3.1 Domain Model table; update §3.7 sequence diagram to use Page<UsageRecord> instead of PagedResult<UsageRecord>"
     - version: "0.4.0"
       date: "2026-04-30"
       changes:
@@ -291,7 +295,7 @@ AccessScope compilation MUST preserve the disjunction of constraint groups produ
 | `AggregationFn` | Enumeration of supported aggregation functions: `Sum`, `Count`, `Min`, `Max`, `Avg`. Used in `AggregationQuery` to specify the reduction applied over matching records within each group. | `AggregationFn` is not yet present in the SDK (target-state) |
 | `BucketSize` | Time granularity for `TimeBucket` grouping in aggregation queries. Specifies the width of each time window when `GroupByDimension::TimeBucket` is active (e.g., minute, hour, day). | `BucketSize` is not yet present in the SDK (target-state) |
 | `GroupByDimension` | Enumeration of dimensions by which aggregation results may be grouped: `TimeBucket(BucketSize)`, `UsageType`, `Subject`, `Resource`, `Source`. Multiple dimensions may be active simultaneously in a single `AggregationQuery`. | `GroupByDimension` is not yet present in the SDK (target-state) |
-| `Cursor` | Opaque pagination position for raw record queries. Base64-encoded composite of a timestamp and a record UUID; encodes the exclusive lower bound for the next page. A `Cursor` issued for a different time range SHOULD be rejected with HTTP 400. | `Cursor` is not yet present in the SDK (target-state) |
+| `CursorV1` | Opaque keyset cursor for raw record queries, sourced from `modkit-odata`. Encodes `k=[timestamp_rfc3339, id_uuid]`, sort direction `Asc`, sort spec `+timestamp,+id`, and pagination direction `fwd`; represents the exclusive lower bound for the next page. Opaque to API callers; the storage plugin owns encoding and decoding via `CursorV1::encode()`/`CursorV1::decode()`. | `modkit_odata::CursorV1` (from `modkit-odata` crate) |
 | `AuthorizedUsageEmitter` | Time-limited authorization handle returned by `authorize_for()` / `authorize()`; carries the PDP permit result, the authorized `tenant_id`/`resource_id`/`resource_type`, the subject identity (`subject_id`/`subject_type`) bound at authorization time (accepted from the caller with PDP authorization or derived from `SecurityContext` when absent), the allowed-metrics list for the source module, and a monotonic issuance timestamp. `enqueue()` verifies the token has not exceeded its maximum age before proceeding. | `AuthorizedUsageEmitter` is not yet present in the SDK (target-state); see `usage-emitter` crate |
 | `RetentionPolicy` | Retention rule: scope (`global` \| `tenant` \| `usage-type`), target identifier, retention duration. The global policy is mandatory and cannot be deleted; it applies when no more-specific policy matches. Precedence: per-usage-type > per-tenant > global. | `RetentionPolicy` is not yet present in the SDK (target-state) |
 | `BackfillOperation` | Backfill request: operator identity, target `tenant_id` (PDP-authorized: gateway verifies the caller is permitted to backfill for the specified tenant before accepting the request), usage type, time range, historical records to insert | `BackfillOperation` is not yet present in the SDK (target-state) |
@@ -853,8 +857,8 @@ sequenceDiagram
     GW->>Plugin: query_raw(ctx, raw_query)
     Plugin->>DB: SELECT * WHERE tenant_id = ? AND timestamp BETWEEN ? [AND filters] ORDER BY timestamp LIMIT ? AFTER cursor
     DB-->>Plugin: record page + next cursor
-    Plugin-->>GW: PagedResult<UsageRecord>
-    GW-->>Consumer: 200 OK, PagedResult<UsageRecord>
+    Plugin-->>GW: Page<UsageRecord>
+    GW-->>Consumer: 200 OK, Page<UsageRecord>
 ```
 
 **Description**: Usage consumer requests a page of raw usage records for auditing or detailed analysis. The gateway derives tenant ID from SecurityContext, then authorizes the query via the platform PDP — the PDP decision determines whether the caller is permitted, and any returned constraints are applied as additional query filters. The gateway delegates to the plugin with the full query including optional filters (usage type, subject, resource). The cursor is opaque to the consumer; omitting the cursor returns the first page. An exhausted cursor returns an empty page.

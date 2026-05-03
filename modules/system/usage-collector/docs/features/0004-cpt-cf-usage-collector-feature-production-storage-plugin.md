@@ -1,7 +1,11 @@
 ---
 cpt:
-  version: "1.8"
+  version: "1.9"
   changelog:
+    - version: "1.9"
+      date: "2026-05-03"
+      changes:
+        - "Replace bespoke Cursor/PagedResult types with modkit-odata equivalents: update query_raw Input (cursor: Option<CursorV1>), Output (Result<Page<UsageRecord>, ...>), Cursor encoding paragraph, inst-qraw-2 (CursorV1 key extraction), inst-qraw-7 (CursorV1::encode), and inst-qraw-8 (Page::new return)."
     - version: "1.8"
       date: "2026-05-03"
       changes:
@@ -308,23 +312,23 @@ Internal system functions and procedures that do not interact with actors direct
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-algo-production-storage-plugin-query-raw`
 
-**Input**: `RawQuery` — fields: `scope: AccessScope` (compiled from PDP constraints), `time_range: (DateTime<Utc>, DateTime<Utc>)`, optional user filters: `metric`, `resource_id`, `resource_type`, `subject_id`, `cursor: Option<Cursor>` (opaque to caller; encodes `(timestamp, id)` composite position), `page_size: usize`
+**Input**: `RawQuery` — fields: `scope: AccessScope` (compiled from PDP constraints), `time_range: (DateTime<Utc>, DateTime<Utc>)`, optional user filters: `metric`, `resource_id`, `resource_type`, `subject_id`, `cursor: Option<CursorV1>` (opaque to caller; keyset cursor from `modkit-odata` encodes `(timestamp, id)` composite position), `page_size: usize`
 
-**Output**: `Result<PagedResult<UsageRecord>, UsageCollectorError>` — page of active records plus optional next cursor; empty page when all records exhausted; error on scope translation failure or DB failure
+**Output**: `Result<Page<UsageRecord>, UsageCollectorError>` — page of active records plus optional next cursor in `page_info`; empty page when all records exhausted; error on scope translation failure or DB failure
 
-**Cursor encoding**: the cursor is a base64-encoded tuple `(timestamp_iso8601, id_uuid)` — opaque to API callers; the plugin owns encoding and decoding; a `None` cursor means first page
+**Cursor encoding**: the cursor is a `CursorV1` from `modkit-odata` — a base64url-encoded keyset cursor with `k=[timestamp_rfc3339, id_uuid]`, `o=Asc`, `s="+timestamp,+id"`, `d="fwd"`; opaque to API callers; the plugin owns encoding via `CursorV1::encode()` and decoding via `CursorV1::decode()`; a `None` cursor means first page
 
 **Cursor stability**: `id` is the stable tiebreaker within records sharing the same timestamp, ensuring no skipped or duplicated rows under concurrent inserts mid-pagination; the condition `(timestamp > $cursor_ts) OR (timestamp = $cursor_ts AND id > $cursor_id)` is a tuple comparison that never double-counts ties
 
 **Steps**:
 1. [x] - `p1` - Translate `scope` via `cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql`; **IF** translation returns `ScopeTranslationError` — **RETURN** `UsageCollectorError::AuthorizationFailed` - `inst-qraw-1`
-2. [x] - `p1` - **IF** `query.cursor` is `Some(cursor)` — extract `(timestamp: DateTime<Utc>, id: Uuid)` directly from the `Cursor` struct fields (base64 decoding is handled by the REST deserialization layer before the plugin is invoked; no decode error can occur here) - `inst-qraw-2`
+2. [x] - `p1` - **IF** `query.cursor` is `Some(cursor)` — extract `timestamp: DateTime<Utc>` from `cursor.k[0]` (parsed as RFC3339) and `id: Uuid` from `cursor.k[1]`; the cursor string is decoded into `CursorV1` at the REST deserialization layer before the plugin is invoked, so no decode error can occur here - `inst-qraw-2`
 3. [x] - `p1` - Build SELECT query against `usage_records`; always include in WHERE: scope SQL fragment AND `timestamp >= $start AND timestamp <= $end`; append optional user filters when present: `AND metric = $metric`, `AND resource_id = $resource_id`, `AND resource_type = $resource_type`, `AND subject_id = $subject_id` - `inst-qraw-3`
 4. [x] - `p1` - **IF** cursor is present — append a keyset advancement condition that selects records strictly after the cursor position using tuple comparison on `(timestamp, id)`: records with a later timestamp, or records with the same timestamp and a later `id`; this condition never skips or double-counts rows under concurrent inserts; **IF** cursor is absent — no cursor condition is appended (first page) — `inst-qraw-4`
 5. [x] - `p1` - Append `ORDER BY timestamp ASC, id ASC LIMIT $page_size`; `page_size` is bounded at the gateway layer (e.g., max 1000); `id` is the tiebreaker ensuring deterministic ordering for records sharing the same timestamp - `inst-qraw-5`
 6. [x] - `p1` - Execute the query with all bind parameters; **IF** DB returns transient error — **RETURN** `UsageCollectorError::Unavailable` - `inst-qraw-6`
-7. [x] - `p1` - Map result rows to `Vec<UsageRecord>`; **IF** result count equals `page_size` — take the last row's `(timestamp, id)`, base64-encode as the next cursor; **IF** result count is less than `page_size` — set next cursor to `None` (page exhausted) - `inst-qraw-7`
-8. [x] - `p1` - **RETURN** `Ok(PagedResult { records, next_cursor })` — empty `records` with `next_cursor = None` is a valid exhausted-page response - `inst-qraw-8`
+7. [x] - `p1` - Map result rows to `Vec<UsageRecord>`; **IF** result count equals `page_size` — take the last row's `(timestamp, id)`, construct `CursorV1 { k: [timestamp.to_rfc3339(), id.to_string()], o: SortDir::Asc, s: "+timestamp,+id".to_string(), f: None, d: "fwd".to_string() }` and encode via `CursorV1::encode()` to produce the opaque cursor string; **IF** result count is less than `page_size` — set next cursor to `None` (page exhausted) - `inst-qraw-7`
+8. [x] - `p1` - **RETURN** `Ok(Page::new(records, PageInfo { next_cursor: cursor_str, prev_cursor: None, limit: query.page_size as u64 }))` — empty `records` with `next_cursor = None` is a valid exhausted-page response - `inst-qraw-8`
 
 **Implements**: `cpt-cf-usage-collector-fr-pluggable-storage` (implements `UsageCollectorPluginClientV1::query_raw`), `cpt-cf-usage-collector-nfr-query-latency` (keyset cursor with TimescaleDB chunk pruning on time range avoids full-table scans; the `(tenant_id, timestamp)` index drives the seek)
 
