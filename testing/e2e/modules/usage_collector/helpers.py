@@ -48,9 +48,10 @@ async def wait_for_record(
         "to": encode_dt(to_dt),
     }
 
-    deadline = asyncio.get_event_loop().time() + timeout
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + timeout
 
-    while asyncio.get_event_loop().time() < deadline:
+    while loop.time() < deadline:
         resp = await client.get("/usage-collector/v1/raw", params=params)
         resp.raise_for_status()
         data = resp.json()

@@ -6,6 +6,7 @@ basic retrieval, time-range exclusion, cursor pagination, ascending sort, multi-
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -122,7 +123,9 @@ async def test_raw_query_pagination_cursor(gateway_client):
     )
     resp1.raise_for_status()
     data1 = resp1.json()
-    assert len(data1.get("items", [])) == 1, "first page must have exactly 1 item"
+    items1 = data1.get("items", [])
+    assert len(items1) == 1, "first page must have exactly 1 item"
+    first_page_resource_id = str(items1[0].get("resource_id", ""))
     next_cursor = data1.get("page_info", {}).get("next_cursor")
     assert next_cursor, "page_info.next_cursor must be present after page 1"
 
@@ -137,7 +140,12 @@ async def test_raw_query_pagination_cursor(gateway_client):
         },
     )
     resp2.raise_for_status()
-    assert len(resp2.json().get("items", [])) > 0, "second page must be non-empty"
+    data2 = resp2.json()
+    items2 = data2.get("items", [])
+    assert len(items2) > 0, "second page must be non-empty"
+    assert str(items2[0].get("resource_id", "")) != first_page_resource_id, (
+        "second page must contain a different record than first page (cursor must advance)"
+    )
 
 
 @pytest.mark.asyncio
@@ -165,19 +173,26 @@ async def test_raw_query_ascending_order(gateway_client):
         )
         assert resp.status_code == 204, f"expected 204, got {resp.status_code}: {resp.text}"
 
-    await wait_for_record(gateway_client, from_dt, to_dt, resource_id=resource_id)
+    # Poll until both records are visible before asserting order
+    loop = asyncio.get_running_loop()
+    deadline = loop.time() + 10.0
+    items = []
+    while loop.time() < deadline:
+        resp = await gateway_client.get(
+            "/usage-collector/v1/raw",
+            params={
+                "from": encode_dt(from_dt),
+                "to": encode_dt(to_dt),
+                "resource_id": resource_id,
+            },
+        )
+        resp.raise_for_status()
+        items = resp.json().get("items", [])
+        if len(items) >= 2:
+            break
+        await asyncio.sleep(0.3)
 
-    resp = await gateway_client.get(
-        "/usage-collector/v1/raw",
-        params={
-            "from": encode_dt(from_dt),
-            "to": encode_dt(to_dt),
-            "resource_id": resource_id,
-        },
-    )
-    resp.raise_for_status()
-    items = resp.json().get("items", [])
-    assert len(items) >= 1, "must have at least one record"
+    assert len(items) == 2, f"expected exactly 2 records, got {len(items)}: {items}"
     timestamps = [item["timestamp"] for item in items]
     assert timestamps == sorted(timestamps), (
         f"expected ascending timestamp order, got: {timestamps}"

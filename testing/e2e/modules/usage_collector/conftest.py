@@ -65,6 +65,7 @@ def _patch_gateway_config(config_text: str, sidecar, port: int) -> str:
 def _patch_emitter_config(config_text: str, gateway_url: str, port: int) -> str:
     config_text = config_text.replace("__COLLECTOR_URL__", gateway_url)
     config_text = config_text.replace("__PORT__", str(port))
+    config_text = config_text.replace("__DB_URL__", "disabled")
     return config_text
 
 
@@ -170,37 +171,40 @@ def emitter_env(emitter_test_env):
         stderr=subprocess.STDOUT,
     )
 
-    # Wait for health
-    health_url = f"http://localhost:{env.port}{env.health_path}"
-    deadline = time.monotonic() + env.health_timeout
-    while time.monotonic() < deadline:
-        try:
-            r = httpx.get(health_url, timeout=3)
-            if r.status_code == 200:
-                break
-        except httpx.ConnectError:
-            pass
-        time.sleep(1)
-    else:
-        log_tail = log.read_text()[-3000:] if log.exists() else ""
-        pytest.fail(
-            f"Emitter server did not become healthy within {env.health_timeout}s.\n"
-            f"Health URL: {health_url}\nLog tail:\n{log_tail}"
+    try:
+        # Wait for health
+        health_url = f"http://localhost:{env.port}{env.health_path}"
+        deadline = time.monotonic() + env.health_timeout
+        while time.monotonic() < deadline:
+            try:
+                r = httpx.get(health_url, timeout=3)
+                if r.status_code == 200:
+                    break
+            except httpx.ConnectError:
+                pass
+            time.sleep(1)
+        else:
+            log_tail = log.read_text()[-3000:] if log.exists() else ""
+            pytest.fail(
+                f"Emitter server did not become healthy within {env.health_timeout}s.\n"
+                f"Health URL: {health_url}\nLog tail:\n{log_tail}"
+            )
+
+        yield RunningTestEnv(
+            base_url=f"http://localhost:{env.port}",
+            env=env,
+            sidecars={},
         )
 
-    yield RunningTestEnv(
-        base_url=f"http://localhost:{env.port}",
-        env=env,
-        sidecars={},
-    )
-
-    # Teardown
-    proc.terminate()
-    try:
-        proc.wait(timeout=5)
-    except subprocess.TimeoutExpired:
-        proc.kill()
-        proc.wait(timeout=3)
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+            proc.wait(timeout=3)
+        log_fh.close()
+        config_path.unlink(missing_ok=True)
 
 
 # ── HTTP client fixtures ──────────────────────────────────────────────────────

@@ -7,6 +7,7 @@ via the timescaledb plugin.
 
 from __future__ import annotations
 
+import asyncio
 import uuid
 from datetime import datetime, timedelta, timezone
 
@@ -141,6 +142,8 @@ async def test_remote_ingest_idempotency(gateway_client, emitter_client):
     assert resp2.status_code == 204, f"second POST expected 204, got {resp2.status_code}: {resp2.text}"
 
     await wait_for_record(gateway_client, from_dt, to_dt, resource_id=resource_id)
+    # Both deliveries are async — wait for the pipeline to flush both before counting.
+    await asyncio.sleep(1.5)
 
     raw_resp = await gateway_client.get(
         "/usage-collector/v1/raw",

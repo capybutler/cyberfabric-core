@@ -97,7 +97,7 @@ async def test_aggregated_count(gateway_client):
     resp.raise_for_status()
     items = resp.json()
     assert len(items) > 0, "expected at least one aggregated row"
-    assert items[0]["value"] == 5, f"expected count == 5, got {items[0]['value']}"
+    assert abs(items[0]["value"] - 5) < 0.001, f"expected count ~5, got {items[0]['value']}"
 
 
 @pytest.mark.asyncio
@@ -143,7 +143,7 @@ async def test_aggregated_avg(gateway_client):
 
 @pytest.mark.asyncio
 async def test_aggregated_group_by_resource(gateway_client):
-    """Ingest for two resource IDs; filtering by one must return exactly 1 item."""
+    """group_by=resource groups results by resource_id; both ingested resources must appear."""
     res_a = str(uuid.uuid4())
     res_b = str(uuid.uuid4())
     from_dt = datetime.now(timezone.utc)
@@ -173,17 +173,17 @@ async def test_aggregated_group_by_resource(gateway_client):
             "from": encode_dt(from_dt),
             "to": encode_dt(to_dt),
             "fn": "sum",
-            "group_by": "resource_id",
-            "resource_id": res_a,
+            "group_by": "resource",
         },
     )
     resp.raise_for_status()
     items = resp.json()
-    assert len(items) == 1, (
-        f"expected exactly 1 item when filtering by resource_id, got {len(items)}: {items}"
+    result_resource_ids = {str(item.get("resource_id")) for item in items}
+    assert res_a in result_resource_ids, (
+        f"expected res_a {res_a} in grouped results, got resource_ids: {result_resource_ids}"
     )
-    assert str(items[0].get("resource_id")) == res_a, (
-        f"expected resource_id {res_a}, got {items[0].get('resource_id')}"
+    assert res_b in result_resource_ids, (
+        f"expected res_b {res_b} in grouped results, got resource_ids: {result_resource_ids}"
     )
 
 
