@@ -323,9 +323,9 @@ No validation commands defined.
 - `.plans/implement-feature-query-api-modkit-alignment/phase-06-integration-test-updates.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Update the TimescaleDB integration test file to replace all uses of the bespoke `PagedResult`/`Cursor` types with the ModKit equivalents (`Page<T>`/`CursorV1`) that were introduced by Phase 4. Test assertions that check `.next_cursor` as `Option<Cursor>` must be updated to check `.page_info.next_cursor` as `Option<String>`. Multi-page traversal tests that construct a `Cursor` for subsequent page requests must instead pass the opaque `String` cursor directly from `page_info.next_cursor`. After this phase, integration.rs must contain zero references to `PagedResult` or the bespoke `Cursor` struct.

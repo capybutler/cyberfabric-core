@@ -16,6 +16,7 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use testcontainers::core::{ContainerPort, WaitFor};
 use testcontainers::{ContainerAsync, ContainerRequest, GenericImage, ImageExt, runners::AsyncRunner};
+use modkit_odata::CursorV1;
 use usage_collector_sdk::{UsageCollectorError, UsageCollectorPluginClientV1};
 use usage_collector_sdk::models::{AggregationFn, AggregationQuery, BucketSize, GroupByDimension, RawQuery, UsageKind, UsageRecord};
 use uuid::Uuid;
@@ -311,9 +312,11 @@ async fn cursor_stability_under_concurrent_inserts() {
         .expect("first page query failed");
 
     assert_eq!(first_page.items.len(), 3, "first page must contain 3 records");
-    let cursor = first_page
+    let cursor_str = first_page
+        .page_info
         .next_cursor
         .expect("cursor must be present when page_size equals result count");
+    let cursor = CursorV1::decode(&cursor_str).expect("cursor string from page 1 must be a valid CursorV1");
 
     // Concurrently insert 3 records OUTSIDE the query range so they cannot affect pagination
     let outside_ts = base_ts + chrono::Duration::hours(2);
@@ -350,7 +353,7 @@ async fn cursor_stability_under_concurrent_inserts() {
         "second page must contain the remaining 2 records; concurrent outside-range inserts must not appear"
     );
     assert!(
-        second_page.next_cursor.is_none(),
+        second_page.page_info.next_cursor.is_none(),
         "no next cursor expected after the last page is exhausted"
     );
 }
