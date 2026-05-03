@@ -367,9 +367,9 @@ No validation commands defined.
 - `.plans/implement-feature-query-api-modkit-alignment/phase-07-f3-spec-update.md`
 
 **Execution Prompt:**
-- [ ] Load the original phase file and use it as the authoritative source for this task.
-- [ ] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
-- [ ] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
+- [x] Load the original phase file and use it as the authoritative source for this task.
+- [x] Prioritize the phase frontmatter plus `What`, `Rules`, `Input`, `Task`, `Acceptance Criteria`, and `Output Format`.
+- [x] Treat `Preamble` as boilerplate and use `Prior Context` only as supporting background, not as new requirements.
 
 **Phase Focus:**
 - Update the F3 feature spec (`0003-cpt-cf-usage-collector-feature-query-api.md`) to replace all references to the bespoke `Cursor` type with `CursorV1` from `modkit-odata`, and `PagedResult<T>` with `Page<T>` from `modkit-odata`. This includes updating CDSL instructions `inst-sdk-6` and `inst-sdk-7` (Cursor/RawQuery definitions), `inst-noop-2` (noop stub return value), `inst-raw-8` and `inst-raw-9` (plugin call signature and return type), the DoD entry for SDK types, and all acceptance criteria that reference bespoke types. The spec version is incremented (minor bump) with a changelog entry recording the type replacements.

@@ -1,7 +1,11 @@
 ---
 cpt:
-  version: "2.9"
+  version: "3.0"
   changelog:
+    - version: "3.0"
+      date: "2026-05-03"
+      changes:
+        - "Type alignment with modkit-odata: replaced bespoke Cursor type with CursorV1 (modkit-odata) and PagedResult<T> with Page<T>/PageInfo (modkit-odata) in inst-sdk-6, inst-sdk-7, inst-sdk-9, inst-noop-2, inst-raw-8, inst-raw-9, DoD SDK types, DoD gateway raw, acceptance criteria, REL-FDESIGN-003, and TEST-FDESIGN-001; updated MAINT-FDESIGN-002 raw query example to reflect Page<T> wire format"
     - version: "2.9"
       date: "2026-04-30"
       changes:
@@ -178,9 +182,9 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 6. [x] - `p2` - **IF** authorization failed - `inst-raw-6`
    1. [x] - `p2` - **RETURN** 403 Forbidden - `inst-raw-6a`
 7. [x] - `p2` - Gateway: build RawQuery (scope from compiled AccessScope, time_range, decoded cursor, page_size; pass user-supplied optional filters from HTTP query parameters: usage_type, resource_id, resource_type, subject_type, subject_id) - `inst-raw-7`
-8. [x] - `p2` - Gateway: Plugin: query_raw(ctx, RawQuery) → PagedResult<UsageRecord> - `inst-raw-8`
+8. [x] - `p2` - Gateway: Plugin: query_raw(ctx, RawQuery) → Page<UsageRecord> - `inst-raw-8`
    1. [x] - `p2` - **IF** plugin returns `Err(e)` [that is not `QueryResultTooLarge`] → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-raw-8b`
-9. [x] - `p2` - **RETURN** 200 OK with PagedResult (items array + next_cursor; absent next_cursor signals the final page; empty items with absent next_cursor is a valid success) - `inst-raw-9`
+9. [x] - `p2` - **RETURN** 200 OK with `Page<UsageRecord>` (`items` array + `page_info.next_cursor`; absent `page_info.next_cursor` signals the final page; empty `items` with absent `page_info.next_cursor` is a valid success) - `inst-raw-9`
 
 > **Retry guidance**: 4xx responses (400, 403) are not retryable. 5xx responses (503) should be retried by the caller with exponential backoff; the gateway does not retry internally.
 
@@ -223,17 +227,17 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
    >
    > **Filter composition**: All present optional filters AND the AccessScope scope are applied conjunctively (AND semantics).
 5. [x] - `p1` - Add `AggregationResult` struct: fields function: AggregationFn, value: f64, bucket_start: Option<DateTime<Utc>>, usage_type: Option<String>, subject_id: Option<Uuid>, subject_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, source: Option<String>; each Option field is populated only when the corresponding GroupByDimension was requested. Option fields in AggregationResult are absent (not null) in JSON serialization when the corresponding GroupByDimension was not requested. - `inst-sdk-5`
-6. [x] - `p2` - Add `Cursor` opaque type (wraps a base64-encoded composite of timestamp + record UUID as stable pagination position) and `PagedResult<T>` struct: fields items: Vec<T>, next_cursor: Option<Cursor>. Cursor encodes exclusive lower bound (timestamp, id). Plugin MUST return records ordered ascending by (timestamp, id) WHERE (timestamp, id) > (cursor.timestamp, cursor.id) within the requested time range. A Cursor from a different [from, to] range SHOULD be rejected with 400 Bad Request. Cursor stability: a Cursor is valid for the lifetime of the request that produced it. Concurrent data writes SHOULD NOT invalidate an in-progress pagination sequence; implementations MAY use snapshot isolation or equivalent to guarantee stability within a single paginated traversal. A Cursor obtained from a previous request SHOULD remain valid for at least the configured cursor TTL (gateway configuration constant, see §7 OPS-FDESIGN-002). Retry idempotency: repeating a raw query with the same Cursor (within cursor TTL) returns the same page. Delete consistency: records deleted between page fetches MAY cause a page to contain fewer items than `page_size`; the cursor still advances to the next position after the last returned record; callers MUST tolerate short pages. - `inst-sdk-6`
+6. [x] - `p2` - Use `CursorV1` from `modkit-odata` as the cursor type and `Page<T>` from `modkit-odata` as the paginated result type (`Page<T>` fields: `items: Vec<T>`, `page_info: PageInfo`; `PageInfo` fields: `next_cursor: Option<String>`, `prev_cursor: Option<String>`, `limit: u64`). `CursorV1` encodes an exclusive lower-bound keyset cursor (timestamp + id). Plugin MUST return records ordered ascending by (timestamp, id) WHERE (timestamp, id) > cursor position within the requested time range. A `CursorV1` from a different [from, to] range SHOULD be rejected with 400 Bad Request. Cursor stability: a `CursorV1` is valid for the lifetime of the request that produced it. Concurrent data writes SHOULD NOT invalidate an in-progress pagination sequence; implementations MAY use snapshot isolation or equivalent to guarantee stability within a single paginated traversal. A `CursorV1` obtained from a previous request SHOULD remain valid for at least the configured cursor TTL (gateway configuration constant, see §7 OPS-FDESIGN-002). Retry idempotency: repeating a raw query with the same `CursorV1` (within cursor TTL) returns the same page. Delete consistency: records deleted between page fetches MAY cause a page to contain fewer items than `page_size`; the cursor still advances to the next position after the last returned record; callers MUST tolerate short pages. - `inst-sdk-6`
    1. [x] - `p2` - **IF** cursor TTL expired **RETURN** 410 Gone with body `{"error": "cursor expired", "code": "CURSOR_EXPIRED"}` - `inst-sdk-6a`
-   > **Cursor encoding**: Cursor payload is base64-encoded opaque state. No HMAC signing is applied in this feature (tamper-resistance deferred to a future feature — see Known Limitations). No version prefix is embedded; format changes require a new cursor type.
-7. [x] - `p2` - Add `RawQuery` struct: fields scope: AccessScope, time_range: (DateTime<Utc>, DateTime<Utc>), usage_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, subject_type: Option<String>, subject_id: Option<Uuid>, cursor: Option<Cursor>, page_size: usize - `inst-sdk-7`
+   > **Cursor encoding**: `CursorV1` payload is base64url-encoded JSON opaque state from `modkit-odata`. No HMAC signing is applied in this feature (tamper-resistance deferred to a future feature — see Known Limitations). Format is versioned (`"v":1`); format changes require incrementing the version field.
+7. [x] - `p2` - Add `RawQuery` struct: fields scope: AccessScope, time_range: (DateTime<Utc>, DateTime<Utc>), usage_type: Option<String>, resource_id: Option<Uuid>, resource_type: Option<String>, subject_type: Option<String>, subject_id: Option<Uuid>, cursor: Option<CursorV1>, page_size: usize - `inst-sdk-7`
    > **Bounds**: page_size MUST be validated in [1, MAX_PAGE_SIZE]; absent page_size defaults to DEFAULT_PAGE_SIZE. MAX_PAGE_SIZE and DEFAULT_PAGE_SIZE are gateway configuration constants (see §7 OPS-FDESIGN-002).
    >
    > **Filter composition**: All present optional filters AND the AccessScope scope are applied conjunctively (AND semantics).
    >
    > **Feature flags**: Not applicable for this feature; see §7.
 8. [x] - `p1` - Add `query_aggregated(&self, ctx: &SecurityContext, query: AggregationQuery) -> Result<Vec<AggregationResult>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-8`
-9. [x] - `p2` - Add `query_raw(&self, ctx: &SecurityContext, query: RawQuery) -> Result<PagedResult<UsageRecord>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-9`
+9. [x] - `p2` - Add `query_raw(&self, ctx: &SecurityContext, query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-9`
 
 ### Noop Plugin Query Stubs
 
@@ -245,7 +249,7 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 
 **Steps**:
 1. [x] - `p1` - Implement `query_aggregated` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return Ok(vec![]) — no storage access, no error - `inst-noop-1`
-2. [x] - `p2` - Implement `query_raw` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return Ok(PagedResult { items: vec![], next_cursor: None }) — no storage access, no error - `inst-noop-2`
+2. [x] - `p2` - Implement `query_raw` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return `Ok(Page::new(vec![], PageInfo { next_cursor: None, prev_cursor: None, limit: query.page_size as u64 }))` — no storage access, no error - `inst-noop-2`
 
 ### Plugin Trait Contract Requirements
 
@@ -272,7 +276,7 @@ Not applicable. Query operations are stateless reads within a single request sco
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-query-api-sdk-types`
 
-The system MUST add `AggregationFn`, `GroupByDimension`, `BucketSize`, `AggregationQuery`, `AggregationResult`, `Cursor`, `PagedResult<T>`, and `RawQuery` to `usage-collector-sdk`, and MUST add `query_aggregated` and `query_raw` operations to `UsageCollectorPluginClientV1`.
+The system MUST add `AggregationFn`, `GroupByDimension`, `BucketSize`, `AggregationQuery`, `AggregationResult`, and `RawQuery` to `usage-collector-sdk`, use `CursorV1` and `Page<T>` from `modkit-odata` as the cursor and paginated result types, and MUST add `query_aggregated` and `query_raw` operations to `UsageCollectorPluginClientV1`.
 
 **Implements**:
 - `cpt-cf-usage-collector-algo-query-api-sdk-types`
@@ -280,7 +284,7 @@ The system MUST add `AggregationFn`, `GroupByDimension`, `BucketSize`, `Aggregat
 **Constraints**: `cpt-cf-usage-collector-constraint-security-context`
 
 **Touches**:
-- Entities: `AggregationQuery`, `AggregationResult`, `RawQuery`, `PagedResult`, `Cursor`
+- Entities: `AggregationQuery`, `AggregationResult`, `RawQuery`, `CursorV1` (modkit-odata), `Page<T>` (modkit-odata), `PageInfo` (modkit-odata)
 - Crate: `usage-collector-sdk`
 
 ### Noop Plugin Query Stubs
@@ -317,7 +321,7 @@ The system MUST expose `GET /usage-collector/v1/aggregated` that derives tenant 
 
 - [x] `p2` - **ID**: `cpt-cf-usage-collector-dod-query-api-gateway-raw`
 
-The system MUST expose `GET /usage-collector/v1/raw` that derives tenant from SecurityContext, validates mandatory parameters and decodes any supplied cursor, authorizes via the platform PDP with `require_constraints(true)` returning 403 when PDP denies or returns empty constraints, builds a `RawQuery` with the compiled `AccessScope` plus cursor and optional filters, delegates to the active storage plugin via `query_raw`, and returns 200 with the `PagedResult`. 403 response body is `{"error": "forbidden"}` — generic message only; MUST NOT include PDP error details, constraint names, policy names, or role names.
+The system MUST expose `GET /usage-collector/v1/raw` that derives tenant from SecurityContext, validates mandatory parameters and decodes any supplied cursor, authorizes via the platform PDP with `require_constraints(true)` returning 403 when PDP denies or returns empty constraints, builds a `RawQuery` with the compiled `AccessScope` plus cursor and optional filters, delegates to the active storage plugin via `query_raw`, and returns 200 with the `Page<UsageRecord>`. 403 response body is `{"error": "forbidden"}` — generic message only; MUST NOT include PDP error details, constraint names, policy names, or role names.
 
 **Implements**:
 - `cpt-cf-usage-collector-flow-query-api-raw`
@@ -348,12 +352,12 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
 - [ ] `GET /usage-collector/v1/aggregated` with `group_by=time_bucket` but no `bucket_size` returns 400
 - [ ] `GET /usage-collector/v1/aggregated` when the PDP denies or returns no constraints returns 403
 - [ ] `GET /usage-collector/v1/aggregated` does not accept `tenant_id` as a query parameter; tenant is always derived from SecurityContext
-- [ ] `GET /usage-collector/v1/raw` with a valid SecurityContext, `from`, and `to` returns 200 with a PagedResult
+- [ ] `GET /usage-collector/v1/raw` with a valid SecurityContext, `from`, and `to` returns 200 with a `Page<UsageRecord>`
 - [ ] `GET /usage-collector/v1/raw` with a malformed cursor returns 400
 - [ ] `GET /usage-collector/v1/raw` when the PDP denies or returns no constraints returns 403
-- [ ] `GET /usage-collector/v1/raw` response with absent `next_cursor` indicates the final page; empty items with absent `next_cursor` is a valid success
+- [ ] `GET /usage-collector/v1/raw` response with absent `page_info.next_cursor` indicates the final page; empty items with absent `page_info.next_cursor` is a valid success
 - [ ] Noop plugin `query_aggregated` returns `Ok(vec![])` without error
-- [ ] Noop plugin `query_raw` returns `Ok(PagedResult { items: vec![], next_cursor: None })` without error
+- [ ] Noop plugin `query_raw` returns `Ok(Page::new(vec![], PageInfo { next_cursor: None, prev_cursor: None, limit: ... }))` without error
 - [ ] `UsageCollectorPluginClientV1` compiles with the new `query_aggregated` and `query_raw` operations
 - [ ] `GET /usage-collector/v1/raw` with `page_size=0` returns 400 Bad Request
 - [ ] `GET /usage-collector/v1/raw` with `page_size > MAX_PAGE_SIZE` returns 400 Bad Request
@@ -384,7 +388,7 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
 
 - **REL-FDESIGN-002 (Fault Tolerance — gateway timeout and circuit breaker)**: The gateway's configurable 5 s per-call timeout and circuit breaker (opens after 5 consecutive failures within a 10 s window; half-open probe after 30 s) defined in DESIGN §3.2 (`cpt-cf-usage-collector-component-gateway`) apply equally to `query_aggregated` and `query_raw` plugin calls. These behaviours are owned by the gateway component specification and are not redefined here. PDP call fault tolerance: subject to gateway 5 s per-call timeout; on PDP timeout or network error, authorize-and-compile-scope returns Err(PermissionDenied) — fail-closed. No circuit breaker on PDP calls; no retry.
 
-- **REL-FDESIGN-003 (Data Integrity / Transactions)**: Read-side cursor stability: `inst-sdk-6` defines Cursor as an exclusive lower-bound composite (timestamp, id) with a configured TTL. Concurrent writes after cursor issuance SHOULD NOT invalidate an in-progress traversal; implementations MAY use snapshot isolation. Retrying a raw query with the same Cursor within TTL returns the same page. No write-path transaction boundaries, rollback scenarios, or cross-request idempotency requirements are introduced by this feature.
+- **REL-FDESIGN-003 (Data Integrity / Transactions)**: Read-side cursor stability: `inst-sdk-6` defines `CursorV1` (from `modkit-odata`) as an exclusive lower-bound keyset cursor (timestamp, id) with a configured TTL. Concurrent writes after cursor issuance SHOULD NOT invalidate an in-progress traversal; implementations MAY use snapshot isolation. Retrying a raw query with the same `CursorV1` within TTL returns the same page. No write-path transaction boundaries, rollback scenarios, or cross-request idempotency requirements are introduced by this feature.
 
 - **COMPL (Compliance & Regulatory)**:
   - *Applicable frameworks*: GDPR, SOC 2 Type II (platform compliance posture — see DATA-FDESIGN-005 and SEC-FDESIGN-004).
@@ -449,7 +453,7 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
 
 - **OPS-FDESIGN-003 (Health and Diagnostics)**: No new health check endpoints. The existing gateway health endpoint reflects circuit breaker state for all plugin calls including the new query operations (DESIGN §3.2). Troubleshooting: persistent 403 responses → PDP unavailability or missing grant; persistent 5xx responses → plugin circuit breaker in open state.
 
-- **TEST-FDESIGN-001 (Unit Test Strategy)**: Unit tests are required for: (1) SDK type construction and JSON round-trip for `AggregationQuery`, `AggregationResult`, `RawQuery`, `PagedResult`, and `Cursor`; (2) cursor encode/decode round-trip — valid composite, malformed input returns error; (3) authorize-and-compile-scope — Err(Denied) path, non-Denied PDP error path, single-constraint AccessScope, multi-constraint AccessScope (OR-of-ANDs preserved); (4) parameter validation boundary conditions — from ≥ to, range > MAX_QUERY_TIME_RANGE, page_size = 0, page_size > MAX_PAGE_SIZE, absent page_size defaults to DEFAULT_PAGE_SIZE, string filter field at MAX_FILTER_STRING_LEN (pass) and MAX_FILTER_STRING_LEN + 1 (fail). Mocking strategy: PDP (PolicyEnforcer) and storage plugin are both mocked at the trait boundary for unit tests.
+- **TEST-FDESIGN-001 (Unit Test Strategy)**: Unit tests are required for: (1) SDK type construction and JSON round-trip for `AggregationQuery`, `AggregationResult`, `RawQuery`, `Page<T>`, and `CursorV1`; (2) `CursorV1` encode/decode round-trip — valid composite, malformed input returns error; (3) authorize-and-compile-scope — Err(Denied) path, non-Denied PDP error path, single-constraint AccessScope, multi-constraint AccessScope (OR-of-ANDs preserved); (4) parameter validation boundary conditions — from ≥ to, range > MAX_QUERY_TIME_RANGE, page_size = 0, page_size > MAX_PAGE_SIZE, absent page_size defaults to DEFAULT_PAGE_SIZE, string filter field at MAX_FILTER_STRING_LEN (pass) and MAX_FILTER_STRING_LEN + 1 (fail). Mocking strategy: PDP (PolicyEnforcer) and storage plugin are both mocked at the trait boundary for unit tests.
 
 - **TEST-FDESIGN-002 (Test Coverage)**: Unit tests: authorize-and-compile-scope — anonymous principal guard, Err(Denied), non-Denied PDP error, single constraint, multiple constraints (OR-of-ANDs preserved). Unit tests: parameter validation — missing mandatory params, malformed cursor, page_size=0, page_size>MAX_PAGE_SIZE. Integration tests: gateway handler ↔ noop plugin (200/400/403/503 paths). E2E tests: deferred to Feature 4 (production storage backend).
 
@@ -518,11 +522,15 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
         "source": "metrics-pipeline"
       }
     ],
-    "next_cursor": "dGltZXN0YW1wPTIwMjYtMDEtMDFUMDY6MDA6MDBaJmlkPTU1MGU4NDAwLWUyOWItNDFkNC1hNzE2LTQ0NjY1NTQ0MDAwMA=="
+    "page_info": {
+      "next_cursor": "eyJ2IjoxLCJrIjpbIjIwMjYtMDEtMDFUMDY6MDA6MDBaIiwiNTUwZTg0MDAtZTI5Yi00MWQ0LWE3MTYtNDQ2NjU1NDQwMDAwIl0sIm8iOiJhc2MiLCJzIjoiK3RpbWVzdGFtcCwraWQiLCJkIjoiZndkIn0",
+      "prev_cursor": null,
+      "limit": 2
+    }
   }
   ```
 
-  Absent `next_cursor` in the response indicates the final page. Empty `items` with absent `next_cursor` is a valid success.
+  Absent `page_info.next_cursor` in the response indicates the final page. Empty `items` with absent `page_info.next_cursor` is a valid success.
 
 - **MAINT-FDESIGN-003 (Known Limitations)**:
   1. *Cursor tamper-resistance*: No HMAC signing is applied to cursor tokens in this feature. A malicious caller could craft an arbitrary cursor payload. Tamper-resistance via HMAC signing is deferred to a future feature.
