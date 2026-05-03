@@ -162,6 +162,9 @@ async fn run_health_check_loop(pool: PgPool) {
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
         interval.tick().await;
+        if pool.is_closed() {
+            break;
+        }
         health_check(&pool, &gauge).await;
     }
 }

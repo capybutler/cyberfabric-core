@@ -265,7 +265,8 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             let where_clause = where_clauses.join(" AND ");
 
             let limit_idx = param_idx + 1;
-            let _ = args.add(query.max_rows as i64);
+            // Fetch one extra row to detect truncation without false-positives on exact-limit results.
+            let _ = args.add((query.max_rows + 1) as i64);
 
             let order_clause = if has_time_bucket { " ORDER BY bucket_start ASC" } else { "" };
             let group_clause = if !group_by_exprs.is_empty() {
@@ -344,7 +345,8 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             let where_clause = where_clauses.join(" AND ");
 
             let limit_idx = param_idx + 1;
-            let _ = args.add(query.max_rows as i64);
+            // Fetch one extra row to detect truncation without false-positives on exact-limit results.
+            let _ = args.add((query.max_rows + 1) as i64);
 
             let order_clause = if has_time_bucket { " ORDER BY bucket_start ASC" } else { "" };
             let group_clause = if !group_by_exprs.is_empty() {
@@ -373,8 +375,11 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             })?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-5
 
-        // Return an error if the result was truncated at max_rows, signaling the query is too broad.
-        if rows.len() == query.max_rows {
+        // Return an error if the result was truncated — we fetched max_rows+1 to distinguish
+        // truncation from a result set that happens to be exactly max_rows in size.
+        if rows.len() > query.max_rows {
+            let elapsed_ms = start.elapsed().as_secs_f64() * 1000.0;
+            self.metrics.record_query_latency_ms("aggregated", elapsed_ms);
             return Err(UsageCollectorError::query_result_too_large(rows.len(), query.max_rows));
         }
 
@@ -572,20 +577,28 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                     value: row
                         .try_get::<f64, _>("value")
                         .map_err(|e| UsageCollectorError::internal(format!("row decode error (value): {e}")))?,
-                    resource_id: row.try_get("resource_id").unwrap_or_default(),
-                    resource_type: row.try_get("resource_type").unwrap_or_default(),
-                    subject_id: row.try_get::<Option<Uuid>, _>("subject_id").unwrap_or(None),
-                    subject_type: row.try_get::<Option<String>, _>("subject_type").unwrap_or(None),
+                    resource_id: row
+                        .try_get("resource_id")
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (resource_id): {e}")))?,
+                    resource_type: row
+                        .try_get("resource_type")
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (resource_type): {e}")))?,
+                    subject_id: row
+                        .try_get::<Option<Uuid>, _>("subject_id")
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (subject_id): {e}")))?,
+                    subject_type: row
+                        .try_get::<Option<String>, _>("subject_type")
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (subject_type): {e}")))?,
                     idempotency_key: row
                         .try_get::<Option<String>, _>("idempotency_key")
-                        .unwrap_or(None)
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (idempotency_key): {e}")))?
                         .unwrap_or_default(),
                     timestamp: row
                         .try_get("timestamp")
                         .map_err(|e| UsageCollectorError::internal(format!("row decode error (timestamp): {e}")))?,
                     metadata: row
                         .try_get::<Option<serde_json::Value>, _>("metadata")
-                        .unwrap_or(None),
+                        .map_err(|e| UsageCollectorError::internal(format!("row decode error (metadata): {e}")))?,
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;

@@ -126,7 +126,7 @@ impl TimescaleDbConfig {
         if self.retention_default < min_retention || self.retention_default > max_retention {
             anyhow::bail!("retention_default must be between 7 days and 7 years");
         }
-        if self.connection_timeout.is_zero() || self.connection_timeout > Duration::from_secs(60) {
+        if self.connection_timeout < Duration::from_secs(1) || self.connection_timeout > Duration::from_secs(60) {
             anyhow::bail!("connection_timeout must be between 1s and 60s");
         }
         Ok(())
