@@ -19,9 +19,9 @@ use usage_collector_sdk::{UsageCollectorPluginClientV1, UsageCollectorStoragePlu
 
 use crate::config::TimescaleDbConfig;
 use crate::domain::client::TimescaleDbPluginClient;
-use crate::domain::metrics::NoopMetrics;
 use crate::infra::continuous_aggregate::setup_continuous_aggregate;
 use crate::infra::migrations::run_migrations;
+use crate::infra::otel_metrics::OtelPluginMetrics;
 use crate::infra::pg_insert_port::PgInsertPort;
 
 /// TimescaleDB production storage plugin for the usage-collector gateway.
@@ -132,7 +132,8 @@ impl Module for TimescaleDbStoragePlugin {
 
         let insert_port: Arc<dyn crate::domain::insert_port::InsertPort> =
             Arc::new(PgInsertPort::new(pool.clone()));
-        let metrics: Arc<dyn crate::domain::metrics::PluginMetrics> = Arc::new(NoopMetrics);
+        let metrics: Arc<dyn crate::domain::metrics::PluginMetrics> =
+            Arc::new(OtelPluginMetrics::new());
         let client = TimescaleDbPluginClient::new(insert_port, pool.clone(), metrics);
         let api: Arc<dyn UsageCollectorPluginClientV1> = Arc::new(client);
 
@@ -156,22 +157,21 @@ impl Module for TimescaleDbStoragePlugin {
 }
 
 async fn run_health_check_loop(pool: PgPool) {
+    let meter = global::meter("timescaledb-usage-collector-storage-plugin");
+    let gauge = meter.f64_gauge("storage_health_status").build();
     let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
     loop {
         interval.tick().await;
-        health_check(&pool).await;
+        health_check(&pool, &gauge).await;
     }
 }
 
 /// Executes a liveness probe against the pool and emits the `storage_health_status` gauge.
 ///
 /// Emits `1.0` when the probe succeeds, `0.0` when it fails.
-async fn health_check(pool: &PgPool) {
+async fn health_check(pool: &PgPool, gauge: &opentelemetry::metrics::Gauge<f64>) {
     let healthy = sqlx::query("SELECT 1").execute(pool).await.is_ok();
     let status = if healthy { 1.0_f64 } else { 0.0_f64 };
-
-    let meter = global::meter("timescaledb-usage-collector-storage-plugin");
-    let gauge = meter.f64_gauge("storage_health_status").build();
     gauge.record(status, &[]);
 
     if healthy {

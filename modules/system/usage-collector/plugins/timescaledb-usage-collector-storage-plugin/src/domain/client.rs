@@ -373,11 +373,17 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
             })?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-5
 
+        // Return an error if the result was truncated at max_rows, signaling the query is too broad.
+        if rows.len() == query.max_rows {
+            return Err(UsageCollectorError::query_result_too_large(rows.len(), query.max_rows));
+        }
+
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-6
         let results: Vec<AggregationResult> = rows
             .iter()
-            .map(|row| {
-                let value = row.try_get::<f64, _>("agg_value").unwrap_or(0.0);
+            .filter_map(|row| {
+                // Skip rows where agg_value is NULL (e.g. AVG over an empty partition).
+                let value = row.try_get::<f64, _>("agg_value").ok()?;
                 let bucket_start = if has_time_bucket { row.try_get("bucket_start").ok() } else { None };
                 let usage_type = if has_usage_type { row.try_get("usage_type").ok() } else { None };
                 let subject_id = if has_subject && use_raw_path { row.try_get("subject_id").ok() } else { None };
@@ -385,7 +391,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                 let resource_id = if has_resource && use_raw_path { row.try_get("resource_id").ok() } else { None };
                 let resource_type = if has_resource { row.try_get("resource_type").ok() } else { None };
                 let source = if has_source { row.try_get("source").ok() } else { None };
-                AggregationResult {
+                Some(AggregationResult {
                     function: query.function,
                     value,
                     bucket_start,
@@ -395,7 +401,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                     resource_id,
                     resource_type,
                     source,
-                }
+                })
             })
             .collect();
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-6

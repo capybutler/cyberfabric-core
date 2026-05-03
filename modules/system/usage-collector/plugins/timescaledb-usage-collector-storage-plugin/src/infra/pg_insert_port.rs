@@ -38,10 +38,7 @@ impl InsertPort for PgInsertPort {
             ON CONFLICT (tenant_id, idempotency_key) WHERE idempotency_key IS NOT NULL
             DO NOTHING";
 
-        let metadata_json = record
-            .metadata
-            .as_ref()
-            .map(|v| serde_json::to_string(v).unwrap_or_default());
+        let metadata_json = record.metadata.as_ref().map(|v| v.to_string());
 
         let result = sqlx::query(insert_sql)
             .bind(record.tenant_id)

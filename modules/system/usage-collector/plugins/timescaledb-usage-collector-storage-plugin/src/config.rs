@@ -89,14 +89,27 @@ impl TimescaleDbConfig {
         if self.database_url.is_empty() {
             anyhow::bail!("database_url is required");
         }
-        let tls_modes = ["sslmode=require", "sslmode=verify-ca", "sslmode=verify-full"];
-        if !tls_modes.iter().any(|m| self.database_url.contains(m)) {
-            anyhow::bail!(
+        // Parse the query string to find the effective sslmode (last occurrence wins, matching
+        // how the PostgreSQL driver resolves duplicate parameters).
+        let sslmode = self.database_url
+            .split_once('?')
+            .and_then(|(_, qs)| {
+                qs.split('&')
+                    .filter(|p| p.split_once('=').map(|(k, _)| k == "sslmode").unwrap_or(false))
+                    .last()
+                    .and_then(|p| p.split_once('=').map(|(_, v)| v))
+            });
+        match sslmode {
+            Some("require" | "verify-ca" | "verify-full") => {}
+            _ => anyhow::bail!(
                 "database_url must include sslmode=require, sslmode=verify-ca, or sslmode=verify-full for TLS enforcement"
-            );
+            ),
         }
         if self.pool_size_min < 1 {
             anyhow::bail!("pool_size_min must be >= 1, got {}", self.pool_size_min);
+        }
+        if self.pool_size_min > 64 {
+            anyhow::bail!("pool_size_min must be <= 64, got {}", self.pool_size_min);
         }
         if self.pool_size_max < self.pool_size_min {
             anyhow::bail!(
@@ -104,6 +117,9 @@ impl TimescaleDbConfig {
                 self.pool_size_max,
                 self.pool_size_min
             );
+        }
+        if self.pool_size_max > 128 {
+            anyhow::bail!("pool_size_max must be <= 128, got {}", self.pool_size_max);
         }
         let min_retention = Duration::from_secs(SEVEN_DAYS_SECS);
         let max_retention = Duration::from_secs(SEVEN_YEARS_SECS);
