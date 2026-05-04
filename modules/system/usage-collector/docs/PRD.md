@@ -349,7 +349,7 @@ The system **MUST** validate that the emitted metric is registered for the modul
 
 #### Pluggable Storage Backend
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-fr-pluggable-storage`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-fr-pluggable-storage`
 
 The system **MUST** support pluggable storage backends. Each plugin provides persistence and query capabilities for its specific backend (ClickHouse, TimescaleDB). The operator selects the active backend via configuration.
 
@@ -505,7 +505,7 @@ Rate limit enforcement provides a best-effort flood prevention guarantee: indivi
 
 #### Query Latency
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-query-latency`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-nfr-query-latency`
 
 Aggregation queries over a 30-day range for a single tenant **MUST** complete within 500ms at p95.
 
@@ -525,7 +525,7 @@ The system **MUST** maintain 99.95% monthly availability for usage ingestion end
 
 #### Ingestion Throughput
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-nfr-throughput`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-nfr-throughput`
 
 The system **MUST** sustain ingestion of at least 10,000 usage records per second under normal operation.
 

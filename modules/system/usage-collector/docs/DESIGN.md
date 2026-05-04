@@ -185,7 +185,7 @@ Usage records are persisted in the source's local database at emit time, within 
 
 #### Plugin-Based Storage
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-principle-pluggable-storage`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-principle-pluggable-storage`
 
 All storage operations — write, aggregation query, and raw query — are delegated to the active storage plugin. The gateway contains no backend-specific logic. New backends are added by implementing the plugin trait and registering via GTS, without changes to the gateway.
 
@@ -236,7 +236,7 @@ The `usage-collector` gateway module registers the outbox queue and applies the 
 
 #### Single Active Plugin
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-constraint-single-plugin`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-constraint-single-plugin`
 
 Only one storage backend plugin is active at a time, selected by operator configuration. Simultaneous dual-backend writes and online backend migration are not supported in this version.
 
@@ -266,7 +266,7 @@ The Usage Collector does not implement pricing, rating, billing rules, invoice g
 
 #### Encrypted Transport and Storage
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-constraint-encryption`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-constraint-encryption`
 
 All plugin connections to ClickHouse and TimescaleDB MUST use TLS; connection parameters are managed via `SecureConn`. Storage backends MUST be configured to reject unencrypted connections. Encryption at rest is mandatory and governed by platform infrastructure policy (ClickHouse native AES-128 encryption or filesystem-level encryption; TimescaleDB encrypted tablespace or OS-level encryption). Encryption key management is the responsibility of the platform secret management system. Record deletion via retention enforcement (`cpt-cf-usage-collector-fr-retention-policies`) constitutes secure disposal; no per-module key rotation is required for non-PII usage data.
 

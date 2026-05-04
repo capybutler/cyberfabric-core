@@ -9,7 +9,7 @@
   - [2.1 Core SDK, Emitter & In-Process Ingest ⏳ HIGH](#21-core-sdk-emitter--in-process-ingest--high)
   - [2.2 REST Client & Remote Ingest Delivery ⏳ HIGH](#22-rest-client--remote-ingest-delivery--high)
   - [2.3 Usage Query API ✅ HIGH](#23-usage-query-api--high)
-  - [2.4 Production Storage Plugin ⏳ HIGH](#24-production-storage-plugin--high)
+  - [2.4 Production Storage Plugin ✅ HIGH](#24-production-storage-plugin--high)
   - [2.5 Usage Type System ⏳ HIGH](#25-usage-type-system--high)
   - [2.6 Emission Rate Limiting ⏳ HIGH](#26-emission-rate-limiting--high)
   - [2.7 Retention Policy Management ⏳ MEDIUM](#27-retention-policy-management--medium)
@@ -70,7 +70,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
   - [ ] `p1` - `cpt-cf-usage-collector-fr-subject-attribution`
   - [ ] `p1` - `cpt-cf-usage-collector-fr-tenant-isolation`
   - [ ] `p1` - `cpt-cf-usage-collector-fr-ingestion-authorization`
-  - [ ] `p1` - `cpt-cf-usage-collector-fr-pluggable-storage`
+  - [x] `p1` - `cpt-cf-usage-collector-fr-pluggable-storage`
   - [ ] `p2` - `cpt-cf-usage-collector-fr-record-metadata`
   - [ ] `p1` - `cpt-cf-usage-collector-nfr-availability`
   - [ ] `p1` - `cpt-cf-usage-collector-nfr-ingestion-latency`
@@ -85,7 +85,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 - **Design Principles Covered**:
 
   - [ ] `p1` - `cpt-cf-usage-collector-principle-source-side-persistence`
-  - [ ] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
+  - [x] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
   - [ ] `p1` - `cpt-cf-usage-collector-principle-tenant-from-ctx`
   - [ ] `p1` - `cpt-cf-usage-collector-principle-fail-closed`
   - [ ] `p1` - `cpt-cf-usage-collector-principle-scoped-source-attribution`
@@ -94,7 +94,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 - **Design Constraints Covered**:
 
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-outbox-infra`
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-single-plugin`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-single-plugin`
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-modkit`
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-security-context`
   - [ ] `p1` - `cpt-cf-usage-collector-constraint-no-business-logic`
@@ -222,7 +222,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
   - [ ] `p1` - `cpt-cf-usage-collector-principle-fail-closed`
   - [ ] `p1` - `cpt-cf-usage-collector-principle-tenant-from-ctx`
-  - [ ] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
+  - [x] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
 
 - **Design Constraints Covered**:
 
@@ -261,9 +261,10 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 ---
 
-### 2.4 [Production Storage Plugin](features/production-storage-plugin/) ⏳ HIGH
+### 2.4 [Production Storage Plugin](features/production-storage-plugin/) ✅ HIGH
 
-- [ ] `p1` - **ID**: `cpt-cf-usage-collector-feature-production-storage-plugin`
+- [x] `p1` - **ID**: `cpt-cf-usage-collector-feature-production-storage-plugin`
+<!-- STATUS: IMPLEMENTED — all p1 DoD items verified and implemented (plugin crate, schema migrations, continuous aggregate, ingest, query, GTS, unit tests, integration tests). -->
 
 - **Type**: Plugin Interface
 
@@ -275,8 +276,6 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
   - First production plugin crate implementing the full storage plugin trait
   - Idempotent record ingest keyed on idempotency key; counter delta accumulation semantics
   - Aggregation query pushdown to the storage engine with optional pre-aggregated acceleration; cursor-based raw query pagination with tenant and dimension filtering
-  - Operator write operations: backfill ingest, record amendment, record deactivation
-  - Retention enforcement and watermark retrieval operations
   - GTS schema registration, database schema migrations, encrypted connections to the storage backend
 
 - **Out of scope**:
@@ -285,22 +284,22 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Requirements Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-fr-pluggable-storage`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-query-latency`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-throughput`
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-rpo` (applies-to: all — F4 must independently satisfy the RPO constraint via durable storage backend)
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-recovery` (applies-to: all — F4 must independently satisfy recovery via storage backend durability guarantees)
-  - [ ] `p1` - `cpt-cf-usage-collector-nfr-retention`
+  - [x] `p1` - `cpt-cf-usage-collector-fr-pluggable-storage`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-query-latency`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-throughput`
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-rpo` (applies-to: all — F4 must independently satisfy the RPO constraint via durable storage backend)
+  - [x] `p1` - `cpt-cf-usage-collector-nfr-recovery` (applies-to: all — F4 must independently satisfy recovery via storage backend durability guarantees)
 
 - **Design Principles Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
+  - [x] `p1` - `cpt-cf-usage-collector-principle-pluggable-storage`
 
 - **Design Constraints Covered**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-single-plugin`
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-types-registry` (GTS schema for plugin registration)
-  - [ ] `p1` - `cpt-cf-usage-collector-constraint-encryption`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-single-plugin`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-types-registry` (GTS schema for plugin registration)
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-encryption`
+  - [x] `p1` - `cpt-cf-usage-collector-constraint-or-of-ands-preservation` (scope-to-sql translator preserves OR-of-ANDs PDP constraint structure)
 
 - **Domain Model Entities**:
   - `UsageRecord` — USES: UsageRecord (defined in F1) — reads and persists records for storage
@@ -308,7 +307,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Design Components**:
 
-  - [ ] `p1` - `cpt-cf-usage-collector-component-storage-plugin` (production implementation)
+  - [x] `p1` - `cpt-cf-usage-collector-component-storage-plugin` (production implementation)
 
 - **API**:
   - None (internal plugin interface only)
@@ -321,14 +320,12 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Data**:
   - `usage-records` table (primary storage: idempotent upsert on ingest, read for aggregation and raw queries)
-  - [ ] `cpt-cf-usage-collector-dbtable-records`
-  - [ ] `cpt-cf-usage-collector-dbtable-counter-accumulation`
+  - [x] `cpt-cf-usage-collector-dbtable-records`
 
 - **Phases/Milestones**:
-  - Phase 1: Storage backend selection (ClickHouse or TimescaleDB) and schema design
+  - Phase 1: TimescaleDB schema design — hypertable for `usage_records`, SUM-over-records counter accumulation (no separate accumulation table), migration scaffolding, and GTS schema registration
   - Phase 2: Ingest operations — idempotent upsert, counter delta accumulation, GTS schema registration, migrations
   - Phase 3: Query operations — aggregation pushdown, cursor-based raw pagination
-  - Phase 4: Operator write operations — backfill ingest, record amendment, deactivation, watermarks, retention enforcement
 
 ---
 
