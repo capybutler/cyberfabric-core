@@ -14,10 +14,11 @@ use tracing::{debug, info, warn};
 use types_registry_sdk::{ListQuery, TypesRegistryClient};
 use usage_collector_sdk::AllowedMetric;
 use usage_collector_sdk::ModuleConfig;
-use usage_collector_sdk::UsageCollectorClientV1;
-use usage_collector_sdk::UsageCollectorError;
-use usage_collector_sdk::UsageRecord;
-use usage_collector_sdk::{UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1};
+use usage_collector_sdk::{
+    AggregationQuery, AggregationResult, PagedResult, RawQuery, UsageCollectorClientV1,
+    UsageCollectorError, UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1,
+    UsageRecord,
+};
 
 use crate::config::UsageCollectorConfig;
 
@@ -330,6 +331,61 @@ impl UsageCollectorClientV1 for UsageCollectorLocalClient {
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-get-module-config:p2:inst-cfg-p-4
         Ok(ModuleConfig { allowed_metrics })
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-get-module-config:p2:inst-cfg-p-4
+    }
+}
+
+/// Creates a [`UsageCollectorPluginClientV1`] proxy backed by this local client.
+///
+/// The returned proxy delegates all plugin operations to the resolved storage plugin
+/// via `get_plugin()`. Use this to obtain a `Arc<dyn UsageCollectorPluginClientV1>`
+/// for injection into query handlers without adding method-name conflicts with the
+/// `UsageCollectorClientV1` trait impl.
+impl UsageCollectorLocalClient {
+    pub(crate) fn as_plugin_client(
+        local: Arc<Self>,
+    ) -> Arc<dyn UsageCollectorPluginClientV1> {
+        Arc::new(LocalPluginProxy { inner: local })
+    }
+}
+
+/// Thin proxy that implements [`UsageCollectorPluginClientV1`] by delegating to the
+/// resolved plugin instance via [`UsageCollectorLocalClient::get_plugin()`].
+struct LocalPluginProxy {
+    inner: Arc<UsageCollectorLocalClient>,
+}
+
+#[async_trait]
+impl UsageCollectorPluginClientV1 for LocalPluginProxy {
+    async fn create_usage_record(&self, record: UsageRecord) -> Result<(), UsageCollectorError> {
+        self.inner.get_plugin().await?.create_usage_record(record).await
+    }
+
+    async fn query_aggregated(
+        &self,
+        query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        let is_open = self.inner.circuit_breaker.lock().await.is_open();
+        if is_open {
+            return Err(UsageCollectorError::circuit_open());
+        }
+        let plugin = self.inner.get_plugin().await?;
+        timeout(self.inner.config.plugin_timeout, plugin.query_aggregated(query))
+            .await
+            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?
+    }
+
+    async fn query_raw(
+        &self,
+        query: RawQuery,
+    ) -> Result<PagedResult<UsageRecord>, UsageCollectorError> {
+        let is_open = self.inner.circuit_breaker.lock().await.is_open();
+        if is_open {
+            return Err(UsageCollectorError::circuit_open());
+        }
+        let plugin = self.inner.get_plugin().await?;
+        timeout(self.inner.config.plugin_timeout, plugin.query_raw(query))
+            .await
+            .map_err(|_elapsed| UsageCollectorError::plugin_timeout())?
     }
 }
 

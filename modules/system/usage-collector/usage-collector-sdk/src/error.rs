@@ -38,6 +38,16 @@ pub enum UsageCollectorError {
         /// Detail for operators and logs.
         message: String,
     },
+
+    /// The aggregation query would return more rows than the configured `MAX_AGG_ROWS` limit.
+    /// The query must be narrowed (smaller time range, additional filters, or finer grouping).
+    #[error("query result too large: got {result_count} rows, limit is {limit}")]
+    QueryResultTooLarge {
+        /// Number of rows the query would produce.
+        result_count: usize,
+        /// Configured row limit.
+        limit: usize,
+    },
 }
 
 impl UsageCollectorError {
@@ -76,6 +86,14 @@ impl UsageCollectorError {
     pub fn unavailable(message: impl Into<String>) -> Self {
         Self::Unavailable {
             message: message.into(),
+        }
+    }
+
+    #[must_use]
+    pub fn query_result_too_large(result_count: usize, limit: usize) -> Self {
+        Self::QueryResultTooLarge {
+            result_count,
+            limit,
         }
     }
 }
