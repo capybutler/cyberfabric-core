@@ -2093,6 +2093,24 @@ dependencies = [
 ]
 
 [[package]]
+name = "cf-noop-usage-collector-storage-plugin"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cf-modkit",
+ "cf-modkit-macros",
+ "cf-types-registry-sdk",
+ "cf-usage-collector-sdk",
+ "chrono",
+ "serde",
+ "serde_json",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "cf-oagw"
 version = "0.2.23"
 dependencies = [
@@ -2573,6 +2591,35 @@ dependencies = [
 ]
 
 [[package]]
+name = "cf-usage-collector"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "cf-authz-resolver-sdk",
+ "cf-modkit",
+ "cf-modkit-db",
+ "cf-modkit-macros",
+ "cf-modkit-security",
+ "cf-modkit-utils",
+ "cf-types-registry-sdk",
+ "cf-usage-collector-sdk",
+ "cf-usage-emitter",
+ "chrono",
+ "http",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tower",
+ "tracing",
+ "utoipa",
+ "uuid",
+]
+
+[[package]]
 name = "cf-usage-collector-sdk"
 version = "0.1.0"
 dependencies = [
@@ -2587,6 +2634,26 @@ dependencies = [
  "thiserror 2.0.18",
  "tokio",
  "utoipa",
+ "uuid",
+]
+
+[[package]]
+name = "cf-usage-emitter"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "cf-authz-resolver-sdk",
+ "cf-modkit-db",
+ "cf-modkit-security",
+ "cf-usage-collector-sdk",
+ "chrono",
+ "sea-orm-migration",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
  "uuid",
 ]
 
