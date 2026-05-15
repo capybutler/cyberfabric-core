@@ -21,11 +21,32 @@ pub struct AllowedMetric {
 
 /// Per-module configuration returned by [`crate::UsageCollectorClientV1::get_module_config`].
 ///
-/// Extensible: future fields may include rate limit config, max metadata size, etc.
+/// Extensible: future fields may include rate limit config, sampling policies, etc.
+///
+/// # Fields
+///
+/// - `allowed_metrics` — metrics this module is allowed to emit.
+/// - `max_metadata_bytes` — maximum serialized metadata size in bytes that the
+///   emitter will accept on a [`UsageRecord`]. A value of `0` means metadata is
+///   **disabled**: any non-`None` metadata payload is rejected by the emitter.
+///   The upper bound on this value is enforced by the collector (not by this
+///   SDK type); the SDK trusts whatever value the collector sends.
+///
+/// # Wire compatibility
+///
+/// `max_metadata_bytes` is a **required** serde field with no `#[serde(default)]`.
+/// Payloads from an older collector that omit the field intentionally fail to
+/// decode — the in-repo collector and emitter ship together, so this wire-break
+/// surfaces a version-skew rather than silently falling back to an unspecified
+/// default.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, utoipa::ToSchema)]
 pub struct ModuleConfig {
     /// Metrics this module is allowed to emit.
     pub allowed_metrics: Vec<AllowedMetric>,
+    /// Maximum serialized metadata size in bytes enforced by the emitter on
+    /// outgoing [`UsageRecord`]s. `0` disables metadata entirely; the upper
+    /// bound is enforced by the collector (not by this SDK type).
+    pub max_metadata_bytes: u32,
 }
 
 // TODO: consider lifting to modkit-security — same id+type-or-equivalent dance
@@ -101,8 +122,10 @@ impl Subject {
 ///   is a *decode-time* error at the next hop, not a clean emit failure.
 ///   Emitters MUST filter non-finite values before submission; do not rely
 ///   on the serializer to surface them.
-/// - `metadata` size (the "max 8 192 bytes serialized" budget is advisory at
-///   this layer);
+/// - `metadata` size — enforced by the emitter using
+///   [`ModuleConfig::max_metadata_bytes`] returned by
+///   [`crate::UsageCollectorClientV1::get_module_config`]; a value of `0`
+///   disables metadata entirely. Not enforced at this SDK layer.
 /// - `idempotency_key` length or format.
 ///
 /// Validation of these invariants is the **emitter's** responsibility — see
@@ -151,9 +174,11 @@ pub struct UsageRecord {
     pub idempotency_key: String,
     /// Timestamp of the observation.
     pub timestamp: DateTime<Utc>,
-    /// Optional caller-supplied metadata. The 8 192-byte serialized-size
-    /// budget is advisory at this layer — emitters enforce it before
-    /// submission.
+    /// Optional caller-supplied metadata. The serialized-size limit is
+    /// enforced by the emitter using
+    /// [`ModuleConfig::max_metadata_bytes`] returned by
+    /// [`crate::UsageCollectorClientV1::get_module_config`]; a value of `0`
+    /// disables metadata entirely. Not enforced at this SDK layer.
     /// Absent when not provided; serializes as absent JSON field, not `null`.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub metadata: Option<serde_json::Value>,

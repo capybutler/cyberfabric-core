@@ -25,8 +25,10 @@ pub trait UsageCollectorClientV1: Send + Sync {
 
     /// Retrieve per-module configuration from the collector.
     ///
-    /// Returns the set of metrics `module_name` is allowed to emit.
-    /// Extensible: future versions may include rate limit config, max metadata size, etc.
+    /// Returns the set of metrics `module_name` is allowed to emit together
+    /// with the configured `max_metadata_bytes` limit that the emitter will
+    /// enforce on outgoing [`UsageRecord`] metadata. Extensible: future
+    /// versions may include rate limit config, sampling policies, etc.
     ///
     /// # Errors
     ///
