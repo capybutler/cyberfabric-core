@@ -79,7 +79,7 @@ impl UsageCollectorPluginClientV1 for MyStoragePlugin {
 `UsageRecord` is an unvalidated data carrier. The type does not enforce:
 
 - finite `value` (NaN / ±∞ pass through — some storage backends reject them on the wire);
-- `metadata` size (the 8 192-byte serialized budget is advisory at this layer);
+- `metadata` size — the limit is configured by the collector and returned via `get_module_config` as `ModuleConfig.max_metadata_bytes`; the emitter enforces it (a value of `0` disables metadata entirely);
 - `idempotency_key` length or format.
 
 The **emitter is the validation gateway** — `usage-emitter` rejects records that violate these invariants before they reach `UsageCollectorClientV1`. Storage plugins MAY perform additional defensive checks but should not rely on this type to enforce them.

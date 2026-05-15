@@ -47,7 +47,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
   - `usage-collector-sdk` crate: client and plugin-client trait definitions, shared usage record model types, GTS schema for plugin registration, error types
   - `usage-emitter` crate: scoped emitter with two-phase authorization flow (pre-authorization and per-record authorization), transactional outbox enqueue, background outbox delivery handler
   - `usage-collector` gateway crate: plugin resolution via GTS with timeout enforcement, outbox queue registration and schema migrations, record ingest endpoint, module config fetch endpoint, static metric configuration
-  - `noop-usage-collector-storage-plugin` crate: no-op storage plugin implementation for tests and local development
+  - `noop-usage-collector-plugin` crate: no-op storage plugin implementation for tests and local development
   - Owns authorization check on all inbound requests via `component-gateway`
   <!-- Metrics Config Boundary: F1 owns collection config (what data to collect, sampling rates, collection intervals); F5 owns reporting/export config (exporters, dashboards, alerting thresholds) -->
 
@@ -133,7 +133,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
   - Phase 1: SDK crate (`usage-collector-sdk`) — core traits, data model, error types
   - Phase 2: Emitter crate (`usage-emitter`) — two-phase authorization, outbox enqueue, background delivery
   - Phase 3: Gateway crate (`usage-collector`) — plugin resolution, ingest endpoint, config endpoint, static metric config
-  - Phase 4: No-op storage plugin (`noop-usage-collector-storage-plugin`) — test/local-dev plugin
+  - Phase 4: No-op plugin (`noop-usage-collector-plugin`) — test/local-dev plugin
 
 ---
 

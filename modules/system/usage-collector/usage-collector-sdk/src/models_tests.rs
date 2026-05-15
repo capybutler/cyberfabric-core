@@ -187,12 +187,74 @@ fn module_config_tolerates_unknown_fields() {
     // fields). This test pins the *opposite* choice from UsageRecord: an
     // unknown field must be silently ignored so newer collectors can add
     // fields without breaking older SDK consumers.
-    let json = r#"{"allowed_metrics": [], "future_quota_field": 42}"#;
+    let json = r#"{"allowed_metrics": [], "max_metadata_bytes": 8192, "future_quota_field": 42}"#;
     let cfg: ModuleConfig = serde_json::from_str(json).expect(
         "ModuleConfig must accept unknown fields for forward compatibility - \
          flip this test only after updating the doc on ModuleConfig",
     );
     assert!(cfg.allowed_metrics.is_empty());
+    assert_eq!(cfg.max_metadata_bytes, 8192);
+}
+
+#[test]
+fn module_config_roundtrip_with_max_metadata_bytes() {
+    // Full round-trip with a non-default `max_metadata_bytes` value pins the
+    // serde shape: the field is on the wire as `max_metadata_bytes` and the
+    // value survives a serialize/deserialize cycle unchanged.
+    let cfg = ModuleConfig {
+        allowed_metrics: vec![AllowedMetric {
+            name: "requests.total".to_owned(),
+            kind: UsageKind::Counter,
+        }],
+        max_metadata_bytes: 16384,
+    };
+    let json = serde_json::to_string(&cfg).unwrap();
+    assert!(
+        json.contains("\"max_metadata_bytes\":16384"),
+        "max_metadata_bytes must appear on the wire with the configured value, got: {json}"
+    );
+    let deserialized: ModuleConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized, cfg);
+}
+
+#[test]
+fn module_config_rejects_missing_max_metadata_bytes() {
+    // `max_metadata_bytes` is a *required* serde field with no #[serde(default)].
+    // Older payloads that omit it MUST fail to decode — the in-repo collector
+    // and emitter ship together, so this wire-break surfaces version skew
+    // rather than silently using an unspecified default. The exact JSON shape
+    // below (mandated by the phase manifest) intentionally also uses the older
+    // string-array form of `allowed_metrics` to mirror a pre-`AllowedMetric`
+    // payload; either omission alone is enough to break the wire, and the
+    // assertion only pins that deserialization fails.
+    let json = r#"{
+      "module_id": "test-module",
+      "allowed_metrics": ["cpu", "mem"]
+    }"#;
+    let result = serde_json::from_str::<ModuleConfig>(json);
+    assert!(
+        result.is_err(),
+        "payload omitting max_metadata_bytes must fail to deserialize, got: {result:?}"
+    );
+}
+
+#[test]
+fn module_config_roundtrip_with_zero_max_metadata_bytes() {
+    // `0` carries the documented "metadata disabled" semantics at the SDK
+    // layer; the emitter behavior under `0` is asserted in a later phase.
+    // This test only pins that `0` is a valid wire value and round-trips.
+    let cfg = ModuleConfig {
+        allowed_metrics: Vec::new(),
+        max_metadata_bytes: 0,
+    };
+    let json = serde_json::to_string(&cfg).unwrap();
+    assert!(
+        json.contains("\"max_metadata_bytes\":0"),
+        "zero must serialize explicitly (not be dropped as default), got: {json}"
+    );
+    let deserialized: ModuleConfig = serde_json::from_str(&json).unwrap();
+    assert_eq!(deserialized, cfg);
+    assert_eq!(deserialized.max_metadata_bytes, 0);
 }
 
 #[test]
@@ -223,6 +285,7 @@ fn module_config_roundtrip_serde() {
                 kind: UsageKind::Gauge,
             },
         ],
+        max_metadata_bytes: 8192,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     let deserialized: ModuleConfig = serde_json::from_str(&json).unwrap();

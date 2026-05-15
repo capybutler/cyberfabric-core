@@ -22,7 +22,7 @@
   - [SDK Crate (`usage-collector-sdk`)](#sdk-crate-usage-collector-sdk)
   - [Emitter Crate (`usage-emitter`)](#emitter-crate-usage-emitter)
   - [Gateway Crate (`usage-collector`) — Ingest & Config](#gateway-crate-usage-collector--ingest--config)
-  - [No-Op Storage Plugin (`noop-usage-collector-storage-plugin`)](#no-op-storage-plugin-noop-usage-collector-storage-plugin)
+  - [No-Op Plugin (`noop-usage-collector-plugin`)](#no-op-plugin-noop-usage-collector-plugin)
   - [Known Limitations / Technical Debt](#known-limitations--technical-debt)
 - [6. Acceptance Criteria](#6-acceptance-criteria)
 - [7. Non-Applicability Notes](#7-non-applicability-notes)
@@ -42,7 +42,7 @@ Establishes the core Usage Collector data model, SDK trait boundaries, three-lay
 
 ### 1.2 Purpose
 
-Implements the foundation for all usage collection capabilities. Covers the SDK crate (`usage-collector-sdk`), the emitter crate (`usage-emitter`), the gateway crate (`usage-collector`) ingest and config endpoints, and the no-op storage plugin (`noop-usage-collector-storage-plugin`). This feature is the prerequisite for all other Usage Collector features.
+Implements the foundation for all usage collection capabilities. Covers the SDK crate (`usage-collector-sdk`), the emitter crate (`usage-emitter`), the gateway crate (`usage-collector`) ingest and config endpoints, and the no-op storage plugin (`noop-usage-collector-plugin`). This feature is the prerequisite for all other Usage Collector features.
 
 **Requirements**: `cpt-cf-usage-collector-fr-ingestion`, `cpt-cf-usage-collector-fr-idempotency`, `cpt-cf-usage-collector-fr-delivery-guarantee`, `cpt-cf-usage-collector-fr-counter-semantics`, `cpt-cf-usage-collector-fr-gauge-semantics`, `cpt-cf-usage-collector-fr-tenant-attribution`, `cpt-cf-usage-collector-fr-resource-attribution`, `cpt-cf-usage-collector-fr-subject-attribution`, `cpt-cf-usage-collector-fr-tenant-isolation`, `cpt-cf-usage-collector-fr-ingestion-authorization`, `cpt-cf-usage-collector-fr-pluggable-storage`, `cpt-cf-usage-collector-fr-record-metadata` (`p2`), `cpt-cf-usage-collector-nfr-availability`, `cpt-cf-usage-collector-nfr-ingestion-latency`, `cpt-cf-usage-collector-nfr-authentication`, `cpt-cf-usage-collector-nfr-authorization`, `cpt-cf-usage-collector-nfr-scalability`, `cpt-cf-usage-collector-nfr-fault-tolerance`, `cpt-cf-usage-collector-nfr-recovery`, `cpt-cf-usage-collector-nfr-graceful-degradation`, `cpt-cf-usage-collector-nfr-rpo`
 
@@ -197,8 +197,8 @@ design.
    1. [x] - `p1` - **RETURN** `UsageEmitterError::InvalidArgument` (built via `UsageRecordError::invalid_argument()`) - `inst-enq-5a`
 5a. [x] - `p1` - **IF** idempotency_key is None (gauge record without caller-supplied key) — generate a UUID v4 and assign it as the idempotency_key; an empty or whitespace-only string MUST be treated as absent and triggers the UUID fallback - `inst-enq-5b`
 6. [x] - `p1` - Validate `record.module` equals the handle's bound module name; if mismatch RETURN `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()` with reason "record module does not match authorized emitter"). Validate `record.subject == self.subject` (structural equality on `Option<Subject>`); if mismatch RETURN `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()` with reason "record subject does not match authorized token"). The "type without id" payload is not expressible, so subject mismatch is a single structural comparison. - `inst-enq-6`
-7. [x] - `p1` - **IF** metadata is present AND byte length > 8192 - `inst-enq-7`
-   1. [x] - `p1` - **RETURN** `UsageEmitterError::InvalidArgument` (built via `UsageRecordError::invalid_argument()` with constraint "metadata byte length exceeds the 8192-byte limit") - `inst-enq-7a`
+7. [x] - `p1` - **IF** metadata is present AND byte length > `self.max_metadata_bytes` (sourced from `ModuleConfig.max_metadata_bytes` at `.authorize()` time; value 0 disables metadata entirely so any non-None payload is rejected) - `inst-enq-7`
+   1. [x] - `p1` - **RETURN** `UsageEmitterError::InvalidArgument` (built via `UsageRecordError::invalid_argument()` with constraint "metadata byte length exceeds the configured `max_metadata_bytes` limit") - `inst-enq-7a`
 8. [x] - `p1` - Serialize `UsageRecord` (tenant_id, module, kind, metric, value, idempotency_key, resource_id, resource_type, `subject: Option<Subject>`, metadata, timestamp) with `payload_type = "usage-collector.record.v1"`; `subject` and `metadata` serialize as absent JSON fields when `None` (not as `null`). When `subject` is `Some`, it is emitted as a nested object: `"subject": { "id": "...", "type": "user" }` (the inner `type` is itself absent when `Subject.r#type` is `None`). - `inst-enq-8`
 9. [x] - `p1` - Call `Outbox::enqueue(db, payload, payload_type)` against the `DBRunner` resolved by the entry point — for `enqueue_in(db)` this is the caller's connection or transaction handle; for `enqueue()` it is a pooled connection acquired from the source's configured `DBRunner` provider; the outbox INSERT therefore participates in the caller's active transaction whenever one was supplied - `inst-enq-9`
 10. [x] - `p1` - **RETURN** `Ok(())`; record is durably enqueued and delivery proceeds asynchronously - `inst-enq-10`
@@ -223,10 +223,10 @@ design.
 4. [x] - `p1` - Call `UsageCollectorClientV1::create_usage_record(record)` - `inst-dlv-4`
 5. [x] - `p1` - **IF** call succeeds (204 No Content) - `inst-dlv-5`
    1. [x] - `p1` - **RETURN** `HandlerResult::Success`; outbox row is deleted - `inst-dlv-5a`
-6. [x] - `p1` - **IF** transient failure (connection/transport error, AuthN service temporarily unreachable, network timeout, 5xx, 429) - `inst-dlv-6`
+6. [x] - `p1` - **IF** the canonical error is canonically retryable — one of `UsageCollectorError::DeadlineExceeded` (network/server timeout), `UsageCollectorError::ResourceExhausted` (HTTP 429 rate limit), `UsageCollectorError::ServiceUnavailable` (connection/transport error, AuthN service temporarily unreachable, circuit breaker open, plugin not ready), `UsageCollectorError::Cancelled` (caller cancellation, recoverable on a later attempt), or `UsageCollectorError::Aborted` (concurrency conflict on the receiver) - `inst-dlv-6`
    1. [x] - `p1` - **RETURN** `HandlerResult::Retry`; outbox library applies exponential backoff; `outbox_backoff_max` MUST be configured below 15 minutes to satisfy `cpt-cf-usage-collector-nfr-recovery` - `inst-dlv-6a`
-7. [x] - `p1` - **IF** permanent failure (4xx excluding 429) - `inst-dlv-7`
-   1. [x] - `p1` - **RETURN** `HandlerResult::Reject`; message moved to dead-letter store and surfaced via monitoring - `inst-dlv-7a`
+7. [x] - `p1` - **IF** the canonical error is permanent — caller-induced variants (`InvalidArgument`, `Unauthenticated`, `PermissionDenied`, `NotFound`, `AlreadyExists`, `FailedPrecondition`, `OutOfRange`, `Unimplemented`) **OR** the gRPC-canonically permanent variants `Internal`, `Unknown`, `DataLoss` (serious defects, unrecognized error space, or unrecoverable corruption — none of which improve with retry; real transient infra conditions surface as `ServiceUnavailable` per the gateway's `DomainError → UsageCollectorError` translation) - `inst-dlv-7`
+   1. [x] - `p1` - **RETURN** `HandlerResult::Reject`; message moved to dead-letter store and surfaced via monitoring for operator inspection - `inst-dlv-7a`
 
 ### Gateway Ingest Handler
 
@@ -237,7 +237,7 @@ design.
 **Output**: 204 No Content or error response
 
 **Steps**:
-1. [x] - `p1` - Enforce metadata size limit: reject if `record.metadata` byte length > 8192 - `inst-gw-1`
+1. [x] - `p1` - Enforce no per-record metadata size limit at the gateway — the limit is enforced upstream by the emitter using `ModuleConfig.max_metadata_bytes`; the gateway only publishes this value via `get_module_config` - `inst-gw-1`
 2. [x] - `p1` - Check circuit breaker state for the active plugin instance - `inst-gw-2`
 3. [x] - `p1` - **IF** circuit is open **OR** circuit is in half-open state with a probe already in-flight - `inst-gw-3`
    1. [x] - `p1` - **RETURN** `503 Service Unavailable` - `inst-gw-3a`
@@ -315,7 +315,7 @@ The system **MUST** implement the `usage-emitter` crate providing the three-laye
 The crate is laid out as follows under `usage-emitter/src/`:
 
 - `api.rs` — defines the public `UsageEmitterRuntimeV1` trait (the `ClientHub` registration key consumed by source modules and by `usage-collector-rest-client`).
-- `config.rs` — `UsageEmitterConfig` (authorization age, outbox backoff bounds, metadata size limit).
+- `config.rs` — `UsageEmitterConfig` (authorization age, outbox backoff bounds).
 - `error.rs` — `UsageEmitterError = CanonicalError`; the crate-specific enum is no longer exposed (canonical taxonomy aligned per v1.11 changelog).
 - `domain/runtime.rs` — `UsageEmitterRuntime` (layer 1): concrete struct holding the outbox worker (`OutboxHandle` for process-lifetime task ownership), gateway client, PDP resolver, shared `Arc`s, and config. Exposes the async constructor `UsageEmitterRuntime::build(config, db, authz, collector)` (this is where config validation lives) and implements `UsageEmitterRuntimeV1::factory(module_name) -> UsageEmitterFactory`. One runtime instance is registered per process by the gateway / REST-client modules.
 - `domain/factory.rs` — `UsageEmitterFactory` (layer 2): cloneable, module-scoped struct holding the shared `Arc`s cloned from the runtime, the immutable `module: String` (set at construction by `runtime.factory(name)` — there is no `with_module(...)` setter), and the overridable scope (`tenant: Option<Uuid>`, `subject: SubjectChoice` — a crate-private enum with three reachable states: `DefaultFromCtx` (the runtime default — fall back to `SecurityContext` at `.authorize()` time), `Explicit(Some(s))` (set by `.with_subject(s)`), `Explicit(None)` (set by `.without_subject()`)). Exposes `with_tenant`, `with_subject`, `without_subject`, and the terminal `authorize`. Also contains the free function `fn subject_from_ctx(ctx: &SecurityContext) -> Subject` used as the in-process-default fallback; this is a free function (not a `From` impl) because Rust orphan rules forbid an `impl From<&SecurityContext> for Subject` when both types are foreign to this crate.
@@ -378,7 +378,7 @@ no raw queries.
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-sdk-and-ingest-core-gateway-crate`
 
-The system **MUST** implement in the `usage-collector` gateway crate: outbox queue registration (`"usage-records"`, 4 partitions, configurable) and schema migrations via `DatabaseCapability::migrations()`, `POST /usage-collector/v1/records` ingest handler (metadata size enforcement, GTS plugin resolution with timeout, circuit breaker — 5 failures / 10 s open, 30 s half-open probe), `GET /usage-collector/v1/modules/{module_name}/config` handler (static metric config lookup), and construction + registration of `UsageEmitterRuntimeV1` (backed by `UsageCollectorLocalClient`) in `ClientHub` during `init()`.
+The system **MUST** implement in the `usage-collector` gateway crate: outbox queue registration (`"usage-records"`, 4 partitions, configurable) and schema migrations via `DatabaseCapability::migrations()`, `POST /usage-collector/v1/records` ingest handler (GTS plugin resolution with timeout, circuit breaker — 5 failures / 10 s open, 30 s half-open probe), `GET /usage-collector/v1/modules/{module_name}/config` handler (static metric config lookup; exposes `max_metadata_bytes` alongside the allowed-metrics list so emitters share the gateway's policy), and construction + registration of `UsageEmitterRuntimeV1` (backed by `UsageCollectorLocalClient`) in `ClientHub` during `init()`.
 
 The crate's domain layer is structured as the following modules under `src/domain/`:
 
@@ -454,13 +454,13 @@ No feature flags are used; all configuration is static and requires gateway rest
 rest and in transit is deferred to Feature 4 (Production Storage Plugin) which owns the
 production storage backend.
 
-### No-Op Storage Plugin (`noop-usage-collector-storage-plugin`)
+### No-Op Plugin (`noop-usage-collector-plugin`)
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-sdk-and-ingest-core-noop-plugin`
 
 > _(p2: deferred — noop plugin validation is a test-time concern; plugin interface is validated by integration tests)_
 
-The system **MUST** implement the `noop-usage-collector-storage-plugin` crate providing a no-op implementation of `UsageCollectorPluginClientV1` where all write operations succeed without persisting data and all read operations return empty results. Must register via `UsageCollectorPluginSpecV1` GTS schema for selection by operator configuration in test and local-dev deployments.
+The system **MUST** implement the `noop-usage-collector-plugin` crate providing a no-op implementation of `UsageCollectorPluginClientV1` where all write operations succeed without persisting data and all read operations return empty results. Must register via `UsageCollectorPluginSpecV1` GTS schema for selection by operator configuration in test and local-dev deployments.
 
 **Implements**:
 - `cpt-cf-usage-collector-component-storage-plugin` (no-op only)
@@ -487,7 +487,7 @@ The system **MUST** implement the `noop-usage-collector-storage-plugin` crate pr
 - [ ] Records with a metric name not in the module's allowed-metrics list are rejected by `enqueue()` in-memory before the outbox INSERT
 - [ ] PDP denial in the factory's `.authorize()` step surfaces as `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()` with reason `AUTHORIZATION_DENIED`) with no record persisted
 - [ ] The outbox delivery pipeline delivers records to the gateway with at-least-once semantics; transient failures trigger exponential backoff retry with `outbox_backoff_max` configured below 15 minutes
-- [ ] The gateway ingest endpoint enforces the 8 KB metadata limit, resolves the active plugin via GTS, and delegates record persistence with a 5 s default timeout
+- [ ] The gateway publishes the configurable metadata limit via `get_module_config`; the emitter enforces it. The gateway ingest endpoint resolves the active plugin via GTS and delegates record persistence with a 5 s default timeout
 - [ ] The circuit breaker opens after 5 consecutive plugin call failures within a 10 s window; the gateway returns `503 Service Unavailable` while open; exactly one probe call is admitted after 30 s, with all other concurrent requests during the half-open window rejected until the probe completes
 - [ ] `GET /usage-collector/v1/modules/{name}/config` returns the static allowed-metrics list for a configured module and 404 for an unknown module
 - [ ] The no-op plugin accepts all write calls with no side effects and returns empty results for reads; integration tests pass with the no-op backend selected
@@ -506,7 +506,7 @@ The system **MUST** implement the `noop-usage-collector-storage-plugin` crate pr
     `gauge` metric.
 (2) PDP stub must support permit/deny configuration for `USAGE_RECORD`/`CREATE` actions by
     `tenant_id`/`resource_id` pair.
-(3) Integration tests use `noop-usage-collector-storage-plugin`.
+(3) Integration tests use `noop-usage-collector-plugin`.
 (4) Idempotency collision test: submit two records with the same `idempotency_key` for the same
     metric and verify deduplication.
 
