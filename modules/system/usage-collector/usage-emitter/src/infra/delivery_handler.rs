@@ -4,16 +4,17 @@ use async_trait::async_trait;
 use modkit_db::outbox::{LeasedMessageHandler, MessageResult, OutboxMessage};
 use tracing::{debug, error, info, warn};
 use usage_collector_sdk::models::UsageRecord;
-use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
+use usage_collector_sdk::UsageCollectorClientV1;
+use usage_collector_sdk::UsageCollectorError;
 
 /// Outbox delivery handler that forwards dequeued usage records to the usage collector,
 /// calling [`UsageCollectorClientV1::create_usage_record`] once per message.
 ///
 /// Implements [`LeasedMessageHandler`]:
 /// - Deserialization failures dead-letter the message (permanent: corrupt payload).
-/// - [`UsageCollectorError::PluginTimeout`], [`UsageCollectorError::CircuitOpen`], and
-///   [`UsageCollectorError::Unavailable`] trigger retry (transient: timeout, open circuit,
-///   connection/transport error, or identity service temporarily unreachable).
+/// - [`UsageCollectorError::DeadlineExceeded`], [`UsageCollectorError::ResourceExhausted`], and
+///   [`UsageCollectorError::ServiceUnavailable`] trigger retry (transient: timeout, resource
+///   exhaustion, or service temporarily unreachable).
 /// - All other collector errors dead-letter the message (permanent: auth denial,
 ///   module not configured, or unexpected condition).
 pub struct DeliveryHandler {
@@ -36,30 +37,27 @@ impl LeasedMessageHandler for DeliveryHandler {
         // this handler still delivers each payload individually.
 
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-1
-        let record_result = serde_json::from_slice::<UsageRecord>(&msg.payload);
+        let record = match serde_json::from_slice::<UsageRecord>(&msg.payload) {
+            Ok(r) => r,
+            // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-2
+            Err(err) => {
+                warn!(
+                    msg.seq,
+                    msg.partition_id,
+                    %err,
+                    "usage record deserialization failed"
+                );
+                // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-2a
+                return MessageResult::Reject(err.to_string());
+                // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-2a
+            } // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-2
+        };
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-1
-
-        // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-2
-        if let Err(ref err) = record_result {
-            warn!(
-                msg.seq,
-                msg.partition_id,
-                %err,
-                "usage record deserialization failed"
-            );
-            // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-2a
-            return MessageResult::Reject(err.to_string());
-            // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-2a
-        }
-        // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-2
 
         // inst-dlv-3: gateway ingest request assembly from UsageRecord fields is performed
         // inside UsageCollectorClientV1::create_usage_record — see rest_client.rs
         // (UsageRecord IS the request at this layer; DTO assembly is an implementation detail
         //  of the REST client adapter).
-        // SAFETY: the Err branch above always returns; this value is Ok.
-        #[allow(clippy::unwrap_used)]
-        let record = record_result.unwrap();
 
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-4
         let delivery_result = self.collector.create_usage_record(record).await;
@@ -76,13 +74,13 @@ impl LeasedMessageHandler for DeliveryHandler {
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-5
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-6
             Err(
-                e @ (UsageCollectorError::PluginTimeout
-                | UsageCollectorError::CircuitOpen
-                | UsageCollectorError::Unavailable { .. }),
+                e @ (UsageCollectorError::DeadlineExceeded { .. }
+                | UsageCollectorError::ResourceExhausted { .. }
+                | UsageCollectorError::ServiceUnavailable { .. }),
             ) => {
-                // PluginTimeout: network timeout, HTTP 429, HTTP 5xx (see rest_client.rs).
-                // CircuitOpen: gateway circuit breaker is open; retry after backoff.
-                // Unavailable: connection/transport error or identity service temporarily
+                // DeadlineExceeded: network timeout (see rest_client.rs).
+                // ResourceExhausted: HTTP 429 rate limiting (see rest_client.rs).
+                // ServiceUnavailable: connection/transport error or service temporarily
                 //   unreachable; the request never reached the gateway (see rest_client.rs).
                 info!(error = %e, "transient collector delivery error; will retry");
                 // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-6a

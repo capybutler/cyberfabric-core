@@ -7,8 +7,9 @@ use axum::{Extension, Router};
 
 use modkit::api::operation_builder::LicenseFeature;
 use modkit::api::{OpenApiRegistry, OperationBuilder};
-use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorPluginClientV1};
-use usage_emitter::UsageEmitterV1;
+use usage_emitter::UsageEmitterFactoryV1;
+
+use crate::domain::Service;
 
 use super::dto::{AggregationResultDto, CreateUsageRecordRequest, ModuleConfigResponse};
 use super::handlers;
@@ -29,10 +30,9 @@ impl LicenseFeature for License {}
 pub fn register_routes(
     router: Router,
     openapi: &dyn OpenApiRegistry,
-    emitter: Arc<dyn UsageEmitterV1>,
-    collector: Arc<dyn UsageCollectorClientV1>,
+    emitter: Arc<dyn UsageEmitterFactoryV1>,
+    service: Arc<Service>,
     authz_client: Arc<dyn AuthZResolverClient>,
-    plugin_client: Arc<dyn UsageCollectorPluginClientV1>,
 ) -> Router {
     let router = OperationBuilder::post("/usage-collector/v1/records")
         .operation_id("usage_collector.create_usage_record")
@@ -46,7 +46,7 @@ pub fn register_routes(
         .json_request::<CreateUsageRecordRequest>(openapi, "Usage record to create")
         .allow_content_types(&["application/json"])
         .handler(handlers::handle_create_usage_record)
-        .json_response(http::StatusCode::NO_CONTENT, "Record accepted and stored")
+        .no_content_response(http::StatusCode::NO_CONTENT, "Record accepted and stored")
         .error_403(openapi)
         .error_422(openapi)
         .error_500(openapi)
@@ -91,6 +91,16 @@ pub fn register_routes(
         .error_400(openapi)
         .error_403(openapi)
         .error_500(openapi)
+        .problem_response(
+            openapi,
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            "Service Unavailable",
+        )
+        .problem_response(
+            openapi,
+            http::StatusCode::GATEWAY_TIMEOUT,
+            "Gateway Timeout",
+        )
         .register(router, openapi);
 
     let router = OperationBuilder::get("/usage-collector/v1/raw")
@@ -108,11 +118,20 @@ pub fn register_routes(
         .error_400(openapi)
         .error_403(openapi)
         .error_500(openapi)
+        .problem_response(
+            openapi,
+            http::StatusCode::SERVICE_UNAVAILABLE,
+            "Service Unavailable",
+        )
+        .problem_response(
+            openapi,
+            http::StatusCode::GATEWAY_TIMEOUT,
+            "Gateway Timeout",
+        )
         .register(router, openapi);
 
     router
         .layer(Extension(emitter))
-        .layer(Extension(collector))
+        .layer(Extension(service))
         .layer(Extension(authz_client))
-        .layer(Extension(plugin_client))
 }

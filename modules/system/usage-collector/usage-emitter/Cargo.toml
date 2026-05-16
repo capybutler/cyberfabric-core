@@ -23,6 +23,7 @@ authz-resolver-sdk = { workspace = true }
 usage-collector-sdk = { workspace = true }
 
 # ModKit dependencies
+modkit-canonical-errors = { workspace = true }
 modkit-db = { workspace = true, features = ["preview-outbox"] }
 modkit-security = { workspace = true }
 
@@ -36,7 +37,6 @@ uuid = { workspace = true }
 
 # Error handling
 anyhow = { workspace = true }
-thiserror = { workspace = true }
 
 # Serialization
 serde = { workspace = true }

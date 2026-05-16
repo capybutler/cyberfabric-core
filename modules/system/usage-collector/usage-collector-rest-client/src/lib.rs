@@ -6,27 +6,25 @@
 //!
 //! Each `create_usage_record` exchanges `OAuth2` client credentials via [`AuthNResolverClient`],
 //! reads the bearer token from the returned [`SecurityContext`], and POSTs the record
-//! to `POST {base_url}/usage-collector/v1/records`.
+//! to `POST {collector_url}/usage-collector/v1/records`.
 //!
 //! ## Configuration
 //!
-//! `client_id` and `client_secret` are required. `base_url`, `scopes`, and
-//! `request_timeout` are optional and use defaults when omitted.
+//! `collector_url` and `oauth` are required. `scopes` within `oauth` is optional.
 //!
 //! ```yaml
 //! modules:
 //!   usage-collector-rest-client:
 //!     config:
-//!       client_id: "my-client"
-//!       client_secret: "${CLIENT_SECRET}"
-//!       base_url: "http://127.0.0.1:8080"
-//!       scopes: []
-//!       request_timeout: "30s"
+//!       collector_url: "http://127.0.0.1:8080"
+//!       oauth:
+//!         client_id: "my-client"
+//!         client_secret: "${CLIENT_SECRET}"
+//!         scopes: []
 //! ```
 
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
-mod api;
 mod config;
 mod infra;
 mod module;

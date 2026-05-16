@@ -1,22 +1,23 @@
-use crate::scoped_emitter::ScopedUsageEmitter;
+use crate::domain::emitter::UsageEmitter;
 
 /// Source-facing trait for emitting usage records with module-scoped authorization.
 ///
-/// Obtain from `ClientHub`: `hub.get::<dyn UsageEmitterV1>()?`
+/// Obtain from `ClientHub`: `hub.get::<dyn UsageEmitterFactoryV1>()?`
 ///
-/// The emitter is registered in `ClientHub` by the `usage-collector` module (in-process delivery)
-/// or the `usage-collector-rest-client` module (HTTP delivery to a remote collector).
+/// The emitter factory is registered in `ClientHub` by the `usage-collector` module
+/// (in-process delivery) or the `usage-collector-rest-client` module (HTTP delivery to a
+/// remote collector).
 ///
-/// Call [`Self::for_module`] with the module's name constant to obtain a [`ScopedUsageEmitter`]
+/// Call [`Self::for_module`] with the module's name constant to obtain a [`UsageEmitter`]
 /// that carries the module name and knows the allowed metrics for that module.
 ///
 /// ```ignore
 /// // In init():
-/// let emitter = hub.get::<dyn UsageEmitterV1>()?;
-/// let scoped = emitter.for_module(Self::MODULE_NAME);
+/// let factory = hub.get::<dyn UsageEmitterFactoryV1>()?;
+/// let emitter = factory.for_module(Self::MODULE_NAME);
 ///
 /// // In handlers:
-/// let authorized = scoped
+/// let authorized = emitter
 ///     .authorize(&ctx, resource_id, "resource_type".to_owned())
 ///     .await?;
 /// authorized
@@ -24,10 +25,10 @@ use crate::scoped_emitter::ScopedUsageEmitter;
 ///     .enqueue()
 ///     .await?;
 /// ```
-pub trait UsageEmitterV1: Send + Sync {
-    /// Obtain a [`ScopedUsageEmitter`] bound to `module_name`.
+pub trait UsageEmitterFactoryV1: Send + Sync {
+    /// Obtain a [`UsageEmitter`] bound to `module_name`.
     ///
-    /// The scoped emitter stores the module name and uses it to fetch the allowed metrics list
-    /// from the collector during [`ScopedUsageEmitter::authorize_for`].
-    fn for_module(&self, module_name: &str) -> ScopedUsageEmitter;
+    /// The returned emitter stores the module name and uses it to fetch the allowed metrics list
+    /// from the collector during [`UsageEmitter::authorize_for`].
+    fn for_module(&self, module_name: &str) -> UsageEmitter;
 }

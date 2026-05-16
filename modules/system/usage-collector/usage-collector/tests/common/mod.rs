@@ -1,5 +1,6 @@
 #![allow(clippy::unwrap_used, clippy::expect_used)]
 
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use async_trait::async_trait;
@@ -11,21 +12,29 @@ use authz_resolver_sdk::{AuthZResolverClient, AuthZResolverError, DenyReason};
 use axum::routing::{get, post};
 use axum::{Extension, Router};
 use chrono::Utc;
+use modkit::client_hub::{ClientHub, ClientScope};
 use modkit_db::migration_runner::run_migrations_for_testing;
 use modkit_db::outbox::outbox_migrations;
 use modkit_db::{ConnectOpts, connect_db};
 use modkit_odata::SortDir;
 use modkit_security::SecurityContext;
 use modkit_security::access_scope::pep_properties;
+use types_registry_sdk::testing::make_test_instance;
+use types_registry_sdk::{
+    GtsInstance, GtsTypeSchema, InstanceQuery, RegisterResult, TypeSchemaQuery,
+    TypesRegistryClient, TypesRegistryError,
+};
 use usage_collector::api::rest::handlers::{
     handle_create_usage_record, handle_get_module_config, handle_query_aggregated, handle_query_raw,
 };
+use usage_collector::config::{MetricConfig, UsageCollectorConfig};
+use usage_collector::domain::Service;
 use usage_collector_sdk::{
-    AggregationQuery, AggregationResult, AllowedMetric, CursorV1, ModuleConfig, Page, PageInfo,
-    RawQuery, UsageCollectorClientV1, UsageCollectorError, UsageCollectorPluginClientV1, UsageKind,
-    UsageRecord,
+    AggregationQuery, AggregationResult, AllowedMetric, UsageCollectorError, CursorV1, ModuleConfig,
+    Page, PageInfo, RawQuery, UsageCollectorClientV1, UsageCollectorPluginClientV1,
+    UsageCollectorPluginSpecV1, UsageKind, UsageRecord, UsageRecordError,
 };
-use usage_emitter::{ScopedUsageEmitter, UsageEmitter, UsageEmitterConfig, UsageEmitterV1};
+use usage_emitter::{UsageEmitter, UsageEmitterConfig, UsageEmitterFactory, UsageEmitterFactoryV1};
 use uuid::Uuid;
 
 // ── AuthZ mocks ───────────────────────────────────────────────────────────────
@@ -86,37 +95,32 @@ impl AuthZResolverClient for MockAuthZResolverClient {
     }
 }
 
-// ── Collector mocks ───────────────────────────────────────────────────────────
+// ── Collector mocks (used by the embedded emitter only) ───────────────────────
 
-pub struct MockUsageCollectorClientV1 {
-    pub config: ModuleConfig,
+pub struct EmitterCollector {
+    config: ModuleConfig,
+}
+
+impl EmitterCollector {
+    fn new() -> Self {
+        Self {
+            config: ModuleConfig {
+                allowed_metrics: vec![AllowedMetric {
+                    name: "test.gauge".to_owned(),
+                    kind: UsageKind::Gauge,
+                }],
+            },
+        }
+    }
 }
 
 #[async_trait]
-impl UsageCollectorClientV1 for MockUsageCollectorClientV1 {
+impl UsageCollectorClientV1 for EmitterCollector {
     async fn create_usage_record(&self, _: UsageRecord) -> Result<(), UsageCollectorError> {
         Ok(())
     }
-
     async fn get_module_config(&self, _: &str) -> Result<ModuleConfig, UsageCollectorError> {
         Ok(self.config.clone())
-    }
-}
-
-#[allow(dead_code)]
-pub struct NotFoundCollector;
-
-#[async_trait]
-impl UsageCollectorClientV1 for NotFoundCollector {
-    async fn create_usage_record(&self, _: UsageRecord) -> Result<(), UsageCollectorError> {
-        Ok(())
-    }
-
-    async fn get_module_config(
-        &self,
-        module_name: &str,
-    ) -> Result<ModuleConfig, UsageCollectorError> {
-        Err(UsageCollectorError::module_not_found(module_name))
     }
 }
 
@@ -163,7 +167,11 @@ impl UsageCollectorPluginClientV1 for MockUsageCollectorPluginClientV1 {
         _: AggregationQuery,
     ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
         if self.too_large {
-            return Err(UsageCollectorError::query_result_too_large(10_001, 10_000));
+            return Err(UsageRecordError::resource_exhausted(
+                "query result too large: 10001 rows exceeds limit of 10000",
+            )
+            .with_quota_violation("rows", "10001 rows exceeds limit of 10000")
+            .create());
         }
         Ok(vec![])
     }
@@ -207,12 +215,129 @@ impl UsageCollectorPluginClientV1 for MockUsageCollectorPluginClientV1 {
     }
 }
 
+// ── Service builder ───────────────────────────────────────────────────────────
+
+struct StubRegistry {
+    instances: Vec<GtsInstance>,
+}
+
+#[async_trait]
+impl TypesRegistryClient for StubRegistry {
+    async fn register(
+        &self,
+        _: Vec<serde_json::Value>,
+    ) -> Result<Vec<RegisterResult>, TypesRegistryError> {
+        Ok(vec![])
+    }
+    async fn register_type_schemas(
+        &self,
+        _: Vec<serde_json::Value>,
+    ) -> Result<Vec<RegisterResult>, TypesRegistryError> {
+        Ok(vec![])
+    }
+    async fn get_type_schema(&self, _: &str) -> Result<GtsTypeSchema, TypesRegistryError> {
+        unimplemented!()
+    }
+    async fn get_type_schema_by_uuid(
+        &self,
+        _: Uuid,
+    ) -> Result<GtsTypeSchema, TypesRegistryError> {
+        unimplemented!()
+    }
+    async fn get_type_schemas(
+        &self,
+        _: Vec<String>,
+    ) -> HashMap<String, Result<GtsTypeSchema, TypesRegistryError>> {
+        unimplemented!()
+    }
+    async fn get_type_schemas_by_uuid(
+        &self,
+        _: Vec<Uuid>,
+    ) -> HashMap<Uuid, Result<GtsTypeSchema, TypesRegistryError>> {
+        unimplemented!()
+    }
+    async fn list_type_schemas(
+        &self,
+        _: TypeSchemaQuery,
+    ) -> Result<Vec<GtsTypeSchema>, TypesRegistryError> {
+        unimplemented!()
+    }
+    async fn register_instances(
+        &self,
+        _: Vec<serde_json::Value>,
+    ) -> Result<Vec<RegisterResult>, TypesRegistryError> {
+        Ok(vec![])
+    }
+    async fn get_instance(&self, _: &str) -> Result<GtsInstance, TypesRegistryError> {
+        unimplemented!()
+    }
+    async fn get_instance_by_uuid(&self, _: Uuid) -> Result<GtsInstance, TypesRegistryError> {
+        unimplemented!()
+    }
+    async fn get_instances(
+        &self,
+        _: Vec<String>,
+    ) -> HashMap<String, Result<GtsInstance, TypesRegistryError>> {
+        unimplemented!()
+    }
+    async fn get_instances_by_uuid(
+        &self,
+        _: Vec<Uuid>,
+    ) -> HashMap<Uuid, Result<GtsInstance, TypesRegistryError>> {
+        unimplemented!()
+    }
+    async fn list_instances(
+        &self,
+        _: InstanceQuery,
+    ) -> Result<Vec<GtsInstance>, TypesRegistryError> {
+        Ok(self.instances.clone())
+    }
+}
+
+fn plugin_content(gts_id: &str, vendor: &str) -> serde_json::Value {
+    serde_json::json!({
+        "id": gts_id,
+        "vendor": vendor,
+        "priority": 0,
+        "properties": {},
+    })
+}
+
+#[allow(dead_code)]
+pub fn build_service(
+    plugin: Arc<dyn UsageCollectorPluginClientV1>,
+    metrics: HashMap<String, MetricConfig>,
+) -> Arc<Service> {
+    let instance_id = format!(
+        "{}test.usage.mock.harness_test.v1",
+        UsageCollectorPluginSpecV1::gts_schema_id()
+    );
+    let hub = Arc::new(ClientHub::default());
+    hub.register::<dyn TypesRegistryClient>(Arc::new(StubRegistry {
+        instances: vec![make_test_instance(
+            &instance_id,
+            plugin_content(&instance_id, "cyberfabric"),
+        )],
+    }));
+    hub.register_scoped::<dyn UsageCollectorPluginClientV1>(
+        ClientScope::gts_id(&instance_id),
+        plugin,
+    );
+    Arc::new(Service::new(
+        UsageCollectorConfig {
+            metrics,
+            ..UsageCollectorConfig::default()
+        },
+        hub,
+    ))
+}
+
 // ── Emitter mock ──────────────────────────────────────────────────────────────
 
-/// Wraps a real `UsageEmitter` because `ScopedUsageEmitter::new()` is `pub(crate)`.
-pub struct MockUsageEmitterV1(UsageEmitter);
+/// Wraps a real [`UsageEmitterFactory`] because [`UsageEmitter::new`] is `pub(crate)`.
+pub struct MockUsageEmitterFactoryV1(UsageEmitterFactory);
 
-impl MockUsageEmitterV1 {
+impl MockUsageEmitterFactoryV1 {
     pub async fn with_allow_authz() -> Self {
         let authz: Arc<dyn AuthZResolverClient> =
             Arc::new(MockAuthZResolverClient::allow(Uuid::new_v4()));
@@ -226,13 +351,13 @@ impl MockUsageEmitterV1 {
     }
 }
 
-impl UsageEmitterV1 for MockUsageEmitterV1 {
-    fn for_module(&self, module_name: &str) -> ScopedUsageEmitter {
+impl UsageEmitterFactoryV1 for MockUsageEmitterFactoryV1 {
+    fn for_module(&self, module_name: &str) -> UsageEmitter {
         self.0.for_module(module_name)
     }
 }
 
-async fn build_real_emitter(authz: Arc<dyn AuthZResolverClient>) -> UsageEmitter {
+async fn build_real_emitter(authz: Arc<dyn AuthZResolverClient>) -> UsageEmitterFactory {
     let db_name = format!("uc_gw_{}", Uuid::new_v4().simple());
     let url = format!("sqlite:file:{db_name}?mode=memory&cache=shared");
     let db = connect_db(
@@ -247,15 +372,8 @@ async fn build_real_emitter(authz: Arc<dyn AuthZResolverClient>) -> UsageEmitter
     run_migrations_for_testing(&db, outbox_migrations())
         .await
         .unwrap();
-    let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(MockUsageCollectorClientV1 {
-        config: ModuleConfig {
-            allowed_metrics: vec![AllowedMetric {
-                name: "test.gauge".to_owned(),
-                kind: UsageKind::Gauge,
-            }],
-        },
-    });
-    UsageEmitter::build(UsageEmitterConfig::default(), db, authz, collector)
+    let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(EmitterCollector::new());
+    UsageEmitterFactory::build(UsageEmitterConfig::default(), db, authz, collector)
         .await
         .unwrap()
 }
@@ -270,90 +388,62 @@ impl AppHarness {
     #[allow(dead_code)]
     pub async fn new() -> Self {
         let emitter =
-            Arc::new(MockUsageEmitterV1::with_allow_authz().await) as Arc<dyn UsageEmitterV1>;
-        let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(MockUsageCollectorClientV1 {
-            config: ModuleConfig {
-                allowed_metrics: vec![AllowedMetric {
-                    name: "test.gauge".to_owned(),
-                    kind: UsageKind::Gauge,
-                }],
-            },
-        });
+            Arc::new(MockUsageEmitterFactoryV1::with_allow_authz().await) as Arc<dyn UsageEmitterFactoryV1>;
         let authz: Arc<dyn AuthZResolverClient> =
             Arc::new(MockAuthZResolverClient::allow(Uuid::new_v4()));
         let plugin: Arc<dyn UsageCollectorPluginClientV1> =
             Arc::new(MockUsageCollectorPluginClientV1::new());
-        Self::build(emitter, collector, authz, plugin)
+        let service = build_service(plugin, HashMap::new());
+        Self::build(emitter, service, authz)
     }
 
     #[allow(dead_code)]
     pub async fn with_plugin(plugin: Arc<dyn UsageCollectorPluginClientV1>) -> Self {
         let emitter =
-            Arc::new(MockUsageEmitterV1::with_allow_authz().await) as Arc<dyn UsageEmitterV1>;
-        let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(MockUsageCollectorClientV1 {
-            config: ModuleConfig {
-                allowed_metrics: vec![AllowedMetric {
-                    name: "test.gauge".to_owned(),
-                    kind: UsageKind::Gauge,
-                }],
-            },
-        });
+            Arc::new(MockUsageEmitterFactoryV1::with_allow_authz().await) as Arc<dyn UsageEmitterFactoryV1>;
         let authz: Arc<dyn AuthZResolverClient> =
             Arc::new(MockAuthZResolverClient::allow(Uuid::new_v4()));
-        Self::build(emitter, collector, authz, plugin)
+        let service = build_service(plugin, HashMap::new());
+        Self::build(emitter, service, authz)
     }
 
     #[allow(dead_code)]
-    pub fn with_emitter(emitter: Arc<dyn UsageEmitterV1>) -> Self {
-        let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(MockUsageCollectorClientV1 {
-            config: ModuleConfig {
-                allowed_metrics: vec![AllowedMetric {
-                    name: "test.gauge".to_owned(),
-                    kind: UsageKind::Gauge,
-                }],
-            },
-        });
+    pub fn with_emitter(emitter: Arc<dyn UsageEmitterFactoryV1>) -> Self {
         let authz: Arc<dyn AuthZResolverClient> =
             Arc::new(MockAuthZResolverClient::allow(Uuid::new_v4()));
         let plugin: Arc<dyn UsageCollectorPluginClientV1> =
             Arc::new(MockUsageCollectorPluginClientV1::new());
-        Self::build(emitter, collector, authz, plugin)
+        let service = build_service(plugin, HashMap::new());
+        Self::build(emitter, service, authz)
     }
 
     #[allow(dead_code)]
-    pub async fn with_collector(collector: Arc<dyn UsageCollectorClientV1>) -> Self {
+    pub async fn with_metrics(metrics: HashMap<String, MetricConfig>) -> Self {
         let emitter =
-            Arc::new(MockUsageEmitterV1::with_allow_authz().await) as Arc<dyn UsageEmitterV1>;
+            Arc::new(MockUsageEmitterFactoryV1::with_allow_authz().await) as Arc<dyn UsageEmitterFactoryV1>;
         let authz: Arc<dyn AuthZResolverClient> =
             Arc::new(MockAuthZResolverClient::allow(Uuid::new_v4()));
         let plugin: Arc<dyn UsageCollectorPluginClientV1> =
             Arc::new(MockUsageCollectorPluginClientV1::new());
-        Self::build(emitter, collector, authz, plugin)
+        let service = build_service(plugin, metrics);
+        Self::build(emitter, service, authz)
     }
 
     #[allow(dead_code)]
     pub async fn with_deny_authz() -> Self {
         let emitter =
-            Arc::new(MockUsageEmitterV1::with_deny_authz().await) as Arc<dyn UsageEmitterV1>;
-        let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(MockUsageCollectorClientV1 {
-            config: ModuleConfig {
-                allowed_metrics: vec![AllowedMetric {
-                    name: "test.gauge".to_owned(),
-                    kind: UsageKind::Gauge,
-                }],
-            },
-        });
+            Arc::new(MockUsageEmitterFactoryV1::with_deny_authz().await) as Arc<dyn UsageEmitterFactoryV1>;
         let authz: Arc<dyn AuthZResolverClient> = Arc::new(MockAuthZResolverClient::deny());
         let plugin: Arc<dyn UsageCollectorPluginClientV1> =
             Arc::new(MockUsageCollectorPluginClientV1::new());
-        Self::build(emitter, collector, authz, plugin)
+        let service = build_service(plugin, HashMap::new());
+        Self::build(emitter, service, authz)
     }
 
     fn build(
-        emitter: Arc<dyn UsageEmitterV1>,
-        collector: Arc<dyn UsageCollectorClientV1>,
+        emitter: Arc<dyn UsageEmitterFactoryV1>,
+        service: Arc<Service>,
         authz: Arc<dyn AuthZResolverClient>,
-        plugin: Arc<dyn UsageCollectorPluginClientV1>,
     ) -> Self {
         let ctx = SecurityContext::builder()
             .subject_id(Uuid::new_v4())
@@ -375,9 +465,8 @@ impl AppHarness {
             )
             .route("/usage-collector/v1/raw", get(handle_query_raw))
             .layer(Extension(emitter))
-            .layer(Extension(collector))
+            .layer(Extension(service))
             .layer(Extension(authz))
-            .layer(Extension(plugin))
             .layer(Extension(ctx));
         Self { router }
     }

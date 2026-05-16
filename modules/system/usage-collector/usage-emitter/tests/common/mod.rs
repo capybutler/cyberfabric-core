@@ -16,7 +16,7 @@ use modkit_db::outbox::{
 use modkit_db::{ConnectOpts, Db, connect_db};
 use modkit_security::SecurityContext;
 use usage_collector_sdk::models::{UsageKind, UsageRecord};
-use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
+use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError, UsageRecordError};
 use usage_emitter::UsageEmitterConfig;
 use uuid::Uuid;
 
@@ -105,13 +105,13 @@ impl UsageCollectorClientV1 for MockCollector {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         match self.outcome {
             CollectorOutcome::Ok => Ok(()),
-            CollectorOutcome::Transient => Err(UsageCollectorError::plugin_timeout()),
+            CollectorOutcome::Transient => {
+                Err(UsageRecordError::deadline_exceeded("plugin timed out").create())
+            }
             CollectorOutcome::Permanent => {
-                Err(UsageCollectorError::authorization_failed("permanent"))
+                Err(UsageCollectorError::unauthenticated().with_reason("permanent").create())
             }
-            CollectorOutcome::Unavailable => {
-                Err(UsageCollectorError::unavailable("connection refused"))
-            }
+            CollectorOutcome::Unavailable => Err(UsageCollectorError::service_unavailable().create()),
         }
     }
 

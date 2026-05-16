@@ -143,7 +143,7 @@ The Usage Collector DESIGN is decomposed into 8 features following a build-from-
 
 - **Type**: Service
 
-- **Purpose**: Enable out-of-process usage sources to emit records using the same `UsageEmitterV1` API as in-process sources. The `usage-collector-rest-client` crate registers `UsageEmitterV1` in `ClientHub` backed by an HTTP client that acquires a bearer token from the AuthN resolver and POSTs records to the gateway ingest endpoint with identical authorization and validation semantics.
+- **Purpose**: Enable out-of-process usage sources to emit records using the same `UsageEmitterFactoryV1` API as in-process sources. The `usage-collector-rest-client` crate registers `UsageEmitterFactoryV1` in `ClientHub` backed by an HTTP client that acquires a bearer token from the AuthN resolver and POSTs records to the gateway ingest endpoint with identical authorization and validation semantics.
 
 - **Depends On**: `cpt-cf-usage-collector-feature-sdk-and-ingest-core`
 

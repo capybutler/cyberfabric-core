@@ -12,6 +12,15 @@ const PROP_RESOURCE_ID: &str = "resource_id";
 /// Property name for the resource type used in usage records.
 const PROP_RESOURCE_TYPE: &str = "resource_type";
 
+/// Property name for the source module used in usage records.
+const PROP_MODULE: &str = "module";
+
+/// Property name for the subject identifier used in usage records.
+const PROP_SUBJECT_ID: &str = "subject_id";
+
+/// Property name for the subject type used in usage records.
+const PROP_SUBJECT_TYPE: &str = "subject_type";
+
 /// A typed SQL bind parameter produced by [`scope_to_sql`].
 ///
 /// Callers bind these values positionally to a sqlx query in the order they appear
@@ -92,7 +101,19 @@ pub fn scope_to_sql(scope: &AccessScope) -> Result<(String, Vec<SqlValue>), Scop
                 bind_params.push(val);
             }
             // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-scope-to-sql:p1:inst-s2s-3b-iv
-            else {
+            else if filter.property() == PROP_MODULE {
+                let (frag, val) = build_text_filter(filter, param_n, "module");
+                predicate_fragments.push(frag);
+                bind_params.push(val);
+            } else if filter.property() == PROP_SUBJECT_ID {
+                let (frag, val) = build_uuid_filter(filter, param_n, "subject_id")?;
+                predicate_fragments.push(frag);
+                bind_params.push(val);
+            } else if filter.property() == PROP_SUBJECT_TYPE {
+                let (frag, val) = build_text_filter(filter, param_n, "subject_type");
+                predicate_fragments.push(frag);
+                bind_params.push(val);
+            } else {
                 return Err(ScopeTranslationError::UnsupportedPredicate {
                     kind: format!("unknown property: {}", filter.property()),
                 });
@@ -270,6 +291,40 @@ mod tests {
         let (sql, params) = scope_to_sql(&scope).unwrap();
         assert!(sql.contains("resource_type = ANY($1)"), "sql: {sql}");
         assert_eq!(params[0], SqlValue::TextArray(vec!["vm".to_owned()]));
+    }
+
+    #[test]
+    fn test_scope_to_sql_module_filter() {
+        let scope = AccessScope::single(ScopeConstraint::new(vec![ScopeFilter::r#in(
+            PROP_MODULE,
+            vec![ScopeValue::String("billing".to_owned())],
+        )]));
+        let (sql, params) = scope_to_sql(&scope).unwrap();
+        assert!(sql.contains("module = ANY($1)"), "sql: {sql}");
+        assert_eq!(params[0], SqlValue::TextArray(vec!["billing".to_owned()]));
+    }
+
+    #[test]
+    fn test_scope_to_sql_subject_id_filter() {
+        let sid = uid();
+        let scope = AccessScope::single(ScopeConstraint::new(vec![ScopeFilter::in_uuids(
+            PROP_SUBJECT_ID,
+            vec![sid],
+        )]));
+        let (sql, params) = scope_to_sql(&scope).unwrap();
+        assert!(sql.contains("subject_id = ANY($1)"), "sql: {sql}");
+        assert_eq!(params[0], SqlValue::UuidArray(vec![sid]));
+    }
+
+    #[test]
+    fn test_scope_to_sql_subject_type_filter() {
+        let scope = AccessScope::single(ScopeConstraint::new(vec![ScopeFilter::r#in(
+            PROP_SUBJECT_TYPE,
+            vec![ScopeValue::String("user".to_owned())],
+        )]));
+        let (sql, params) = scope_to_sql(&scope).unwrap();
+        assert!(sql.contains("subject_type = ANY($1)"), "sql: {sql}");
+        assert_eq!(params[0], SqlValue::TextArray(vec!["user".to_owned()]));
     }
 
     #[test]

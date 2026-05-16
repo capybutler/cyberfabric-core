@@ -1,4 +1,4 @@
-#![allow(clippy::unwrap_used, clippy::expect_used, dead_code)]
+#![allow(clippy::unwrap_used, clippy::expect_used)]
 
 use std::sync::Arc;
 
@@ -9,32 +9,59 @@ use authn_resolver_sdk::{
 use chrono::Utc;
 use modkit_security::SecurityContext;
 use serde_json::json;
-use usage_collector_rest_client::{UsageCollectorRestClient, UsageCollectorRestClientConfig};
 use usage_collector_sdk::models::{UsageKind, UsageRecord};
 use uuid::Uuid;
 
-pub enum MockAuthN {
+use crate::config::UsageCollectorRestClientConfig;
+
+pub(crate) enum AuthNOutcome {
     WithToken(String),
     WithoutToken,
     Unauthorized,
     NoPlugin,
+    TokenAcquisitionFailed,
+    ServiceUnavailable,
+}
+
+pub(crate) struct MockAuthN {
+    outcome: AuthNOutcome,
 }
 
 impl MockAuthN {
-    pub fn with_token(token: impl Into<String>) -> Arc<Self> {
-        Arc::new(Self::WithToken(token.into()))
+    pub(crate) fn with_token(token: impl Into<String>) -> Arc<Self> {
+        Arc::new(Self {
+            outcome: AuthNOutcome::WithToken(token.into()),
+        })
     }
 
-    pub fn without_token() -> Arc<Self> {
-        Arc::new(Self::WithoutToken)
+    pub(crate) fn without_token() -> Arc<Self> {
+        Arc::new(Self {
+            outcome: AuthNOutcome::WithoutToken,
+        })
     }
 
-    pub fn unauthorized() -> Arc<Self> {
-        Arc::new(Self::Unauthorized)
+    pub(crate) fn unauthorized() -> Arc<Self> {
+        Arc::new(Self {
+            outcome: AuthNOutcome::Unauthorized,
+        })
     }
 
-    pub fn no_plugin() -> Arc<Self> {
-        Arc::new(Self::NoPlugin)
+    pub(crate) fn no_plugin() -> Arc<Self> {
+        Arc::new(Self {
+            outcome: AuthNOutcome::NoPlugin,
+        })
+    }
+
+    pub(crate) fn token_acquisition_failed() -> Arc<Self> {
+        Arc::new(Self {
+            outcome: AuthNOutcome::TokenAcquisitionFailed,
+        })
+    }
+
+    pub(crate) fn service_unavailable() -> Arc<Self> {
+        Arc::new(Self {
+            outcome: AuthNOutcome::ServiceUnavailable,
+        })
     }
 }
 
@@ -52,8 +79,8 @@ impl AuthNResolverClient for MockAuthN {
         _request: &ClientCredentialsRequest,
     ) -> Result<AuthenticationResult, AuthNResolverError> {
         let nil = Uuid::nil();
-        match self {
-            Self::WithToken(token) => {
+        match &self.outcome {
+            AuthNOutcome::WithToken(token) => {
                 let ctx = SecurityContext::builder()
                     .subject_id(nil)
                     .subject_tenant_id(nil)
@@ -64,7 +91,7 @@ impl AuthNResolverClient for MockAuthN {
                     security_context: ctx,
                 })
             }
-            Self::WithoutToken => {
+            AuthNOutcome::WithoutToken => {
                 let ctx = SecurityContext::builder()
                     .subject_id(nil)
                     .subject_tenant_id(nil)
@@ -74,24 +101,32 @@ impl AuthNResolverClient for MockAuthN {
                     security_context: ctx,
                 })
             }
-            Self::Unauthorized => Err(AuthNResolverError::Unauthorized(
+            AuthNOutcome::Unauthorized => Err(AuthNResolverError::Unauthorized(
                 "bad credentials".to_owned(),
             )),
-            Self::NoPlugin => Err(AuthNResolverError::NoPluginAvailable),
+            AuthNOutcome::NoPlugin => Err(AuthNResolverError::NoPluginAvailable),
+            AuthNOutcome::TokenAcquisitionFailed => Err(AuthNResolverError::TokenAcquisitionFailed(
+                "invalid client credentials".to_owned(),
+            )),
+            AuthNOutcome::ServiceUnavailable => Err(AuthNResolverError::ServiceUnavailable(
+                "identity service temporarily unreachable".to_owned(),
+            )),
         }
     }
 }
 
-pub fn test_cfg(base_url: &str) -> UsageCollectorRestClientConfig {
+pub(crate) fn test_cfg(collector_url: &str) -> UsageCollectorRestClientConfig {
     serde_json::from_value(json!({
-        "client_id": "test-client",
-        "client_secret": "test-secret",
-        "base_url": base_url
+        "collector_url": collector_url,
+        "oauth": {
+            "client_id": "test-client",
+            "client_secret": "test-secret"
+        }
     }))
     .unwrap()
 }
 
-pub fn test_record() -> UsageRecord {
+pub(crate) fn test_record() -> UsageRecord {
     UsageRecord {
         module: "test-module".to_owned(),
         tenant_id: Uuid::nil(),
@@ -106,11 +141,4 @@ pub fn test_record() -> UsageRecord {
         timestamp: Utc::now(),
         metadata: None,
     }
-}
-
-pub fn make_client(
-    base_url: &str,
-    authn: Arc<dyn AuthNResolverClient>,
-) -> UsageCollectorRestClient {
-    UsageCollectorRestClient::new(&test_cfg(base_url), authn).expect("client build")
 }

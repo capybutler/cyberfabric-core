@@ -12,13 +12,13 @@ use modkit_db::{ConnectOpts, Db, connect_db};
 use modkit_security::SecurityContext;
 use modkit_security::pep_properties;
 use usage_collector_sdk::models::UsageRecord;
-use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
+use usage_collector_sdk::{UsageCollectorClientV1, UsageRecordError};
 use uuid::Uuid;
 
-use super::{UsageEmitter, enforcer_error_to_emitter_error};
-use crate::UsageEmitterV1;
+use super::UsageEmitterFactory;
+use crate::UsageEmitterFactoryV1;
 use crate::config::UsageEmitterConfig;
-use crate::error::UsageEmitterError;
+use crate::error::{UsageEmitterError, enforcer_error_to_emitter_error};
 
 const TEST_MODULE: &str = "test-module";
 
@@ -144,14 +144,14 @@ struct NoopCollector;
 
 #[async_trait]
 impl UsageCollectorClientV1 for NoopCollector {
-    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageEmitterError> {
         Ok(())
     }
 
     async fn get_module_config(
         &self,
         _module_name: &str,
-    ) -> Result<usage_collector_sdk::ModuleConfig, UsageCollectorError> {
+    ) -> Result<usage_collector_sdk::ModuleConfig, UsageEmitterError> {
         Ok(usage_collector_sdk::ModuleConfig {
             allowed_metrics: vec![],
         })
@@ -159,19 +159,19 @@ impl UsageCollectorClientV1 for NoopCollector {
 }
 
 struct FailingCollector {
-    error: fn() -> UsageCollectorError,
+    error: fn() -> UsageEmitterError,
 }
 
 #[async_trait]
 impl UsageCollectorClientV1 for FailingCollector {
-    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
+    async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageEmitterError> {
         Ok(())
     }
 
     async fn get_module_config(
         &self,
         _module_name: &str,
-    ) -> Result<usage_collector_sdk::ModuleConfig, UsageCollectorError> {
+    ) -> Result<usage_collector_sdk::ModuleConfig, UsageEmitterError> {
         Err((self.error)())
     }
 }
@@ -195,8 +195,8 @@ async fn build_db(name: &str) -> Db {
     db
 }
 
-async fn build_emitter(db: Db, authz: Arc<dyn AuthZResolverClient>) -> UsageEmitter {
-    UsageEmitter::build(
+async fn build_emitter(db: Db, authz: Arc<dyn AuthZResolverClient>) -> UsageEmitterFactory {
+    UsageEmitterFactory::build(
         UsageEmitterConfig::default(),
         db,
         authz,
@@ -210,8 +210,8 @@ async fn build_emitter_with_collector(
     db: Db,
     authz: Arc<dyn AuthZResolverClient>,
     collector: Arc<dyn UsageCollectorClientV1>,
-) -> UsageEmitter {
-    UsageEmitter::build(UsageEmitterConfig::default(), db, authz, collector)
+) -> UsageEmitterFactory {
+    UsageEmitterFactory::build(UsageEmitterConfig::default(), db, authz, collector)
         .await
         .unwrap()
 }
@@ -227,11 +227,9 @@ fn make_ctx() -> SecurityContext {
 // ── enforcer_error_to_emitter_error ──────────────────────────────────────────
 
 #[test]
-fn enforcer_denied_without_reason_uses_default_message() {
+fn enforcer_denied_maps_to_permission_denied() {
     let err = enforcer_error_to_emitter_error(EnforcerError::Denied { deny_reason: None });
-    assert!(
-        matches!(err, UsageEmitterError::AuthorizationFailed { ref message } if message == "access denied by policy")
-    );
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[test]
@@ -241,9 +239,7 @@ fn enforcer_denied_with_code_and_details() {
         details: Some("tenant not allowed".to_owned()),
     });
     let err = enforcer_error_to_emitter_error(EnforcerError::Denied { deny_reason });
-    assert!(
-        matches!(err, UsageEmitterError::AuthorizationFailed { ref message } if message == "ERR_FORBIDDEN: tenant not allowed")
-    );
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[test]
@@ -253,25 +249,23 @@ fn enforcer_denied_with_code_no_details() {
         details: None,
     });
     let err = enforcer_error_to_emitter_error(EnforcerError::Denied { deny_reason });
-    assert!(
-        matches!(err, UsageEmitterError::AuthorizationFailed { ref message } if message == "ERR_FORBIDDEN")
-    );
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[test]
-fn enforcer_compile_failed_maps_to_internal() {
+fn enforcer_compile_failed_maps_to_permission_denied() {
     let err = enforcer_error_to_emitter_error(EnforcerError::CompileFailed(
         ConstraintCompileError::ConstraintsRequiredButAbsent,
     ));
-    assert!(matches!(err, UsageEmitterError::Internal { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[test]
-fn enforcer_evaluation_failed_maps_to_internal() {
+fn enforcer_evaluation_failed_maps_to_permission_denied() {
     let err = enforcer_error_to_emitter_error(EnforcerError::EvaluationFailed(
         AuthZResolverError::Internal("rpc error".to_owned()),
     ));
-    assert!(matches!(err, UsageEmitterError::Internal { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 // ── Tests ─────────────────────────────────────────────────────────────────────
@@ -306,11 +300,11 @@ async fn authorize_returns_error_on_deny_all_authz() {
     else {
         panic!("expected authorization to fail");
     };
-    assert!(matches!(err, UsageEmitterError::AuthorizationFailed { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]
-async fn authorize_returns_internal_error_on_authz_failure() {
+async fn authorize_returns_permission_denied_on_authz_failure() {
     let db = build_db("emit_authz_fail").await;
     let emitter = build_emitter(db, Arc::new(FailingAuthZ)).await;
     let ctx = make_ctx();
@@ -321,7 +315,7 @@ async fn authorize_returns_internal_error_on_authz_failure() {
     else {
         panic!("expected authorization to fail");
     };
-    assert!(matches!(err, UsageEmitterError::Internal { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]
@@ -357,7 +351,7 @@ async fn authorize_for_denies_when_pdp_rejects_owner_tenant() {
     else {
         panic!("expected authorization to fail");
     };
-    assert!(matches!(err, UsageEmitterError::AuthorizationFailed { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]
@@ -412,16 +406,16 @@ async fn authorize_for_sends_barrier_mode_ignore_to_pdp() {
         .expect("barrier assert + allow");
 }
 
-// ── Collector infrastructure failures map to Internal (not AuthorizationFailed) ──
+// ── Collector infrastructure failures propagate the canonical variant ──
 
 #[tokio::test]
-async fn authorize_for_maps_collector_plugin_timeout_to_internal() {
+async fn authorize_for_propagates_collector_deadline_exceeded() {
     let db = build_db("emit_collector_timeout").await;
     let emitter = build_emitter_with_collector(
         db,
         Arc::new(AllowAllAuthZ),
         Arc::new(FailingCollector {
-            error: UsageCollectorError::plugin_timeout,
+            error: || UsageRecordError::deadline_exceeded("plugin timed out").create(),
         }),
     )
     .await;
@@ -430,36 +424,20 @@ async fn authorize_for_maps_collector_plugin_timeout_to_internal() {
         .for_module(TEST_MODULE)
         .authorize(&ctx, Uuid::new_v4(), "test.resource".to_owned())
         .await;
-    assert!(matches!(result, Err(UsageEmitterError::Internal { .. })));
+    assert!(matches!(
+        result,
+        Err(UsageEmitterError::DeadlineExceeded { .. })
+    ));
 }
 
 #[tokio::test]
-async fn authorize_for_maps_collector_circuit_open_to_internal() {
-    let db = build_db("emit_collector_circuit_open").await;
-    let emitter = build_emitter_with_collector(
-        db,
-        Arc::new(AllowAllAuthZ),
-        Arc::new(FailingCollector {
-            error: UsageCollectorError::circuit_open,
-        }),
-    )
-    .await;
-    let ctx = make_ctx();
-    let result = emitter
-        .for_module(TEST_MODULE)
-        .authorize(&ctx, Uuid::new_v4(), "test.resource".to_owned())
-        .await;
-    assert!(matches!(result, Err(UsageEmitterError::Internal { .. })));
-}
-
-#[tokio::test]
-async fn authorize_for_maps_collector_unavailable_to_internal() {
+async fn authorize_for_propagates_collector_service_unavailable() {
     let db = build_db("emit_collector_unavailable").await;
     let emitter = build_emitter_with_collector(
         db,
         Arc::new(AllowAllAuthZ),
         Arc::new(FailingCollector {
-            error: || UsageCollectorError::unavailable("gateway unreachable"),
+            error: || UsageEmitterError::service_unavailable().create(),
         }),
     )
     .await;
@@ -468,17 +446,44 @@ async fn authorize_for_maps_collector_unavailable_to_internal() {
         .for_module(TEST_MODULE)
         .authorize(&ctx, Uuid::new_v4(), "test.resource".to_owned())
         .await;
-    assert!(matches!(result, Err(UsageEmitterError::Internal { .. })));
+    assert!(matches!(
+        result,
+        Err(UsageEmitterError::ServiceUnavailable { .. })
+    ));
 }
 
 #[tokio::test]
-async fn authorize_for_maps_collector_internal_error_to_internal() {
+async fn authorize_for_propagates_collector_resource_exhausted() {
+    let db = build_db("emit_collector_resource_exhausted").await;
+    let emitter = build_emitter_with_collector(
+        db,
+        Arc::new(AllowAllAuthZ),
+        Arc::new(FailingCollector {
+            error: || UsageRecordError::resource_exhausted("rate limited")
+                .with_quota_violation("requests", "rate limit exceeded")
+                .create(),
+        }),
+    )
+    .await;
+    let ctx = make_ctx();
+    let result = emitter
+        .for_module(TEST_MODULE)
+        .authorize(&ctx, Uuid::new_v4(), "test.resource".to_owned())
+        .await;
+    assert!(matches!(
+        result,
+        Err(UsageEmitterError::ResourceExhausted { .. })
+    ));
+}
+
+#[tokio::test]
+async fn authorize_for_propagates_collector_internal_error() {
     let db = build_db("emit_collector_internal").await;
     let emitter = build_emitter_with_collector(
         db,
         Arc::new(AllowAllAuthZ),
         Arc::new(FailingCollector {
-            error: || UsageCollectorError::internal("unexpected state"),
+            error: || UsageEmitterError::internal("unexpected state").create(),
         }),
     )
     .await;
@@ -505,7 +510,7 @@ impl AuthZResolverClient for AssertModulePropertyAuthZ {
         &self,
         request: EvaluationRequest,
     ) -> Result<EvaluationResponse, AuthZResolverError> {
-        use crate::domain::authz::properties;
+        use usage_collector_sdk::authz::properties;
         let module_val = request
             .resource
             .properties
@@ -535,7 +540,7 @@ impl AuthZResolverClient for AssertSubjectPropertiesAuthZ {
         &self,
         request: EvaluationRequest,
     ) -> Result<EvaluationResponse, AuthZResolverError> {
-        use crate::domain::authz::properties;
+        use usage_collector_sdk::authz::properties;
         let subj_id = request
             .resource
             .properties
@@ -639,7 +644,7 @@ impl AuthZResolverClient for AssertNoSubjectPropertiesAuthZ {
         &self,
         request: EvaluationRequest,
     ) -> Result<EvaluationResponse, AuthZResolverError> {
-        use crate::domain::authz::properties;
+        use usage_collector_sdk::authz::properties;
         let has_subject_id = request
             .resource
             .properties

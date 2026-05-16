@@ -123,7 +123,7 @@ async fn query_aggregated_result_too_large() {
         .unwrap();
 
     let response = harness.router.oneshot(request).await.unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert_eq!(response.status(), StatusCode::TOO_MANY_REQUESTS);
 }
 
 #[tokio::test]

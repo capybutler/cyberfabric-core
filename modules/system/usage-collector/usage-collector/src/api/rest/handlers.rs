@@ -1,30 +1,43 @@
 //! REST handlers for the usage-collector gateway.
 
 use std::sync::Arc;
+use std::time::Duration;
 
 use authz_resolver_sdk::AuthZResolverClient;
 use axum::extract::{Path, Query};
 use axum::{Extension, Json};
 use chrono::{DateTime, Utc};
 use http::StatusCode;
-use modkit::api::problem::{Problem, internal_error};
+use modkit::api::problem::Problem;
 use modkit_security::SecurityContext;
+use usage_collector_sdk::authz::{USAGE_RECORD, actions};
 use usage_collector_sdk::models::{AggregationQuery, GroupByDimension, RawQuery};
-use usage_collector_sdk::{
-    CursorV1, Page, UsageCollectorClientV1, UsageCollectorError, UsageCollectorPluginClientV1,
-    UsageRecord,
-};
-use usage_emitter::{UsageEmitterError, UsageEmitterV1};
+use usage_collector_sdk::{CursorV1, Page, UsageRecord, UsageCollectorError};
+use usage_emitter::UsageEmitterFactoryV1;
 
-use crate::config::{
-    DEFAULT_PAGE_SIZE, MAX_AGG_ROWS, MAX_FILTER_STRING_LEN, MAX_PAGE_SIZE, MAX_QUERY_TIME_RANGE,
-};
-use crate::domain::authz::{USAGE_RECORD_READ, actions, authorize_and_compile_scope};
+use crate::domain::authz::authorize_and_compile_scope;
+
+use crate::domain::{DomainError, Service};
 
 use super::dto::{
     AggregatedQueryParams, AggregationResultDto, AllowedMetricResponse, CreateUsageRecordRequest,
     ModuleConfigResponse, RawQueryParams,
 };
+
+/// Default number of raw records returned per page when `page_size` is absent.
+const DEFAULT_PAGE_SIZE: usize = 100;
+
+/// Maximum allowed value for `page_size` in raw queries.
+const MAX_PAGE_SIZE: usize = 1_000;
+
+/// Maximum number of rows `query_aggregated` may return before returning `QueryResultTooLarge`.
+const MAX_AGG_ROWS: usize = 10_000;
+
+/// Maximum byte length for string filter fields (`usage_type`, `resource_type`, `subject_type`, `source`).
+const MAX_FILTER_STRING_LEN: usize = 256;
+
+/// Maximum allowed query time range (from, to) per request (~1 year).
+const MAX_QUERY_TIME_RANGE: Duration = Duration::from_hours(8784);
 
 /// Handler for `POST /usage-collector/v1/records`.
 ///
@@ -32,15 +45,9 @@ use super::dto::{
 /// Returns a [`Problem`] on authorization failure, validation errors, or internal emitter failure.
 pub async fn handle_create_usage_record(
     Extension(ctx): Extension<SecurityContext>,
-    Extension(emitter): Extension<Arc<dyn UsageEmitterV1>>,
+    Extension(emitter): Extension<Arc<dyn UsageEmitterFactoryV1>>,
     Json(req): Json<CreateUsageRecordRequest>,
 ) -> Result<StatusCode, Problem> {
-    // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-gateway-ingest-handler:inst-gw-1
-    if let Some(err) = validate_metadata_size(req.metadata.as_ref()) {
-        return Err(err);
-    }
-    // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-gateway-ingest-handler:inst-gw-1
-
     let authorized = authorize_request(&ctx, &emitter, &req).await?;
 
     let mut builder = authorized
@@ -55,40 +62,24 @@ pub async fn handle_create_usage_record(
         builder = builder.with_metadata(meta);
     }
 
-    builder.enqueue().await.map_err(emitter_error_to_problem)?;
+    builder.enqueue().await.map_err(|e| canonical_error_to_problem(&e))?;
 
     // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-gateway-ingest-handler:inst-gw-7
     Ok(StatusCode::NO_CONTENT)
     // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-gateway-ingest-handler:inst-gw-7
 }
 
-fn validate_metadata_size(metadata: Option<&serde_json::Value>) -> Option<Problem> {
-    let meta = metadata?;
-    let byte_len = serde_json::to_vec(meta).map_or(0, |v| v.len());
-    if byte_len > 8192 {
-        tracing::warn!(
-            byte_len,
-            limit = 8192,
-            "Metadata byte length exceeds limit; rejecting record"
-        );
-        return Some(Problem::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Metadata too large",
-            format!("metadata byte length {byte_len} exceeds limit of 8192"),
-        ));
-    }
-    None
-}
-
 async fn authorize_request(
     ctx: &SecurityContext,
-    emitter: &Arc<dyn UsageEmitterV1>,
+    emitter: &Arc<dyn UsageEmitterFactoryV1>,
     req: &CreateUsageRecordRequest,
 ) -> Result<usage_emitter::AuthorizedUsageEmitter, Problem> {
     match (&req.subject_id, &req.subject_type) {
         (None, None) => {
-            // No subject — skip PDP authorization.
-            tracing::debug!("No subject fields present; skipping PDP authorization");
+            // No subject context — call PDP without subject_id/subject_type properties.
+            tracing::debug!(
+                "No subject fields present; calling PDP without subject_id/subject_type properties"
+            );
             emitter
                 .for_module(&req.module)
                 .authorize_for(
@@ -100,7 +91,7 @@ async fn authorize_request(
                     None,
                 )
                 .await
-                .map_err(emitter_error_to_problem)
+                .map_err(|e| canonical_error_to_problem(&e))
         }
         (Some(subject_id), _) => {
             // subject_id present (subject_type optional) — authorize via PDP.
@@ -115,7 +106,7 @@ async fn authorize_request(
                     req.subject_type.clone(),
                 )
                 .await
-                .map_err(emitter_error_to_problem)
+                .map_err(|e| canonical_error_to_problem(&e))
         }
         _ => {
             // subject_type present without subject_id — invalid.
@@ -135,51 +126,21 @@ async fn authorize_request(
 // @cpt-flow:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2
 pub async fn handle_get_module_config(
     Path(module_name): Path<String>,
-    Extension(collector): Extension<Arc<dyn UsageCollectorClientV1>>,
+    Extension(service): Extension<Arc<Service>>,
 ) -> Result<Json<ModuleConfigResponse>, Problem> {
     // @cpt-begin:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-2
     // Authenticated request received; ModKit pipeline enforces authentication before handler entry.
     // @cpt-end:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-2
 
     // @cpt-begin:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-3
-    let result = collector.get_module_config(&module_name).await;
+    let result = service.get_module_config(&module_name);
     // @cpt-end:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-3
 
     // @cpt-begin:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-4
     let config = match result {
         // @cpt-begin:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-4a
-        Err(UsageCollectorError::ModuleNotFound {
-            module_name: ref name,
-        }) => {
-            return Err(Problem::new(
-                StatusCode::NOT_FOUND,
-                "Module not found",
-                format!("module '{name}' is not configured"),
-            ));
-        }
+        Err(e) => return Err(domain_error_to_problem(&e)),
         // @cpt-end:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-4a
-        Err(UsageCollectorError::PluginTimeout) => {
-            return Err(Problem::new(
-                StatusCode::GATEWAY_TIMEOUT,
-                "Gateway timeout",
-                UsageCollectorError::PluginTimeout.to_string(),
-            ));
-        }
-        Err(UsageCollectorError::CircuitOpen) => {
-            return Err(Problem::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Service unavailable",
-                UsageCollectorError::CircuitOpen.to_string(),
-            ));
-        }
-        Err(UsageCollectorError::Unavailable { ref message }) => {
-            return Err(Problem::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Service unavailable",
-                message.clone(),
-            ));
-        }
-        Err(e) => return Err(internal_error(e.to_string())),
         Ok(c) => c,
     };
     // @cpt-end:cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config:p2:inst-cfg-4
@@ -208,7 +169,7 @@ pub async fn handle_get_module_config(
 pub async fn handle_query_aggregated(
     Extension(ctx): Extension<SecurityContext>,
     Extension(authz): Extension<Arc<dyn AuthZResolverClient>>,
-    Extension(plugin): Extension<Arc<dyn UsageCollectorPluginClientV1>>,
+    Extension(service): Extension<Arc<Service>>,
     Query(params): Query<AggregatedQueryParams>,
 ) -> Result<Json<Vec<AggregationResultDto>>, Problem> {
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-1
@@ -293,7 +254,7 @@ pub async fn handle_query_aggregated(
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-5
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6
     let Ok(scope) =
-        authorize_and_compile_scope(&ctx, Arc::clone(&authz), &USAGE_RECORD_READ, actions::LIST)
+        authorize_and_compile_scope(&ctx, Arc::clone(&authz), &USAGE_RECORD, actions::LIST)
             .await
     else {
         // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-6a
@@ -325,34 +286,18 @@ pub async fn handle_query_aggregated(
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-7
 
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8
-    let rows = match plugin.query_aggregated(query).await {
+    let rows = match service.query_aggregated(query).await {
         Ok(rows) => rows,
         // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8b
-        Err(UsageCollectorError::QueryResultTooLarge { .. }) => {
-            return Err(Problem::new(
-                StatusCode::BAD_REQUEST,
-                "Query too broad",
-                r#"{"error":"query too broad"}"#.to_owned(),
-            ));
-        }
         // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8b
         // @cpt-begin:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8c
         Err(e) => {
-            let correlation_id = ctx.subject_id().to_string();
             tracing::error!(
-                correlation_id = %correlation_id,
+                subject_id = %ctx.subject_id(),
                 error = %e,
                 "Storage plugin error during query_aggregated"
             );
-            return Err(Problem::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Service unavailable",
-                serde_json::json!({
-                    "error": "service_unavailable",
-                    "correlation_id": correlation_id,
-                })
-                .to_string(),
-            ));
+            return Err(domain_error_to_problem(&e));
         } // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8c
     };
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-aggregated:p1:inst-agg-8
@@ -372,7 +317,7 @@ pub async fn handle_query_aggregated(
 pub async fn handle_query_raw(
     Extension(ctx): Extension<SecurityContext>,
     Extension(authz): Extension<Arc<dyn AuthZResolverClient>>,
-    Extension(plugin): Extension<Arc<dyn UsageCollectorPluginClientV1>>,
+    Extension(service): Extension<Arc<Service>>,
     Query(params): Query<RawQueryParams>,
 ) -> Result<Json<Page<UsageRecord>>, Problem> {
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-1
@@ -460,7 +405,7 @@ pub async fn handle_query_raw(
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-5
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6
     let Ok(scope) =
-        authorize_and_compile_scope(&ctx, Arc::clone(&authz), &USAGE_RECORD_READ, actions::LIST)
+        authorize_and_compile_scope(&ctx, Arc::clone(&authz), &USAGE_RECORD, actions::LIST)
             .await
     else {
         // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-6a
@@ -489,25 +434,16 @@ pub async fn handle_query_raw(
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-7
 
     // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8
-    let paged = match plugin.query_raw(query).await {
+    let paged = match service.query_raw(query).await {
         Ok(p) => p,
         // @cpt-begin:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8b
         Err(e) => {
-            let correlation_id = ctx.subject_id().to_string();
             tracing::error!(
-                correlation_id = %correlation_id,
+                subject_id = %ctx.subject_id(),
                 error = %e,
                 "Storage plugin error during query_raw"
             );
-            return Err(Problem::new(
-                StatusCode::SERVICE_UNAVAILABLE,
-                "Service unavailable",
-                serde_json::json!({
-                    "error": "service_unavailable",
-                    "correlation_id": correlation_id,
-                })
-                .to_string(),
-            ));
+            return Err(domain_error_to_problem(&e));
         } // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8b
     };
     // @cpt-end:cpt-cf-usage-collector-flow-query-api-raw:p2:inst-raw-8
@@ -544,50 +480,57 @@ fn decode_and_validate_cursor(
     Some(cursor)
 }
 
-fn emitter_error_to_problem(e: UsageEmitterError) -> Problem {
+fn canonical_error_to_problem(e: &UsageCollectorError) -> Problem {
+    Problem::new(
+        StatusCode::from_u16(e.status_code()).unwrap_or(StatusCode::INTERNAL_SERVER_ERROR),
+        e.title(),
+        e.detail(),
+    )
+}
+
+fn domain_error_to_problem(e: &DomainError) -> Problem {
     match e {
-        UsageEmitterError::AuthorizationFailed { message } => {
-            Problem::new(StatusCode::FORBIDDEN, "Forbidden", message)
-        }
-        UsageEmitterError::AuthorizationExpired => {
-            Problem::new(StatusCode::FORBIDDEN, "Forbidden", e.to_string())
-        }
-        UsageEmitterError::InvalidRecord { message } => Problem::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Invalid usage record",
-            message,
+        DomainError::ModuleNotConfigured { module } => Problem::new(
+            StatusCode::NOT_FOUND,
+            "Not Found",
+            format!("module '{module}' not configured"),
         ),
-        UsageEmitterError::MetricNotAllowed { metric } => Problem::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Metric not allowed",
-            format!("metric not allowed for this module: {metric}"),
+        DomainError::Timeout => Problem::new(
+            StatusCode::GATEWAY_TIMEOUT,
+            "Gateway Timeout",
+            "plugin call timed out",
         ),
-        UsageEmitterError::MetricKindMismatch {
-            metric,
-            expected,
-            actual,
-        } => Problem::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Metric kind mismatch",
-            format!("metric '{metric}' expects kind {expected:?} but record specifies {actual:?}"),
+        DomainError::CircuitOpen => Problem::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Service Unavailable",
+            "circuit breaker open",
         ),
-        UsageEmitterError::NegativeCounterValue { value } => Problem::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Invalid usage record",
-            format!("counter usage record has a negative value: {value}"),
+        DomainError::PluginUnavailable { gts_id, reason } => Problem::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Service Unavailable",
+            format!("plugin not available for '{gts_id}': {reason}"),
         ),
-        UsageEmitterError::MetadataTooLarge { len } => Problem::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Metadata too large",
-            format!("metadata byte length {len} exceeds the 8192-byte limit"),
+        DomainError::PluginNotFound { vendor } => Problem::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Service Unavailable",
+            format!("no plugin instances found for vendor '{vendor}'"),
         ),
-        UsageEmitterError::ModuleNotConfigured { module_name } => Problem::new(
-            StatusCode::UNPROCESSABLE_ENTITY,
-            "Module not configured",
-            format!("module '{module_name}' is not configured in the gateway"),
+        DomainError::TypesRegistryUnavailable(reason) => Problem::new(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "Service Unavailable",
+            format!("types registry is not available: {reason}"),
         ),
-        UsageEmitterError::Internal { message } => internal_error(message),
-        UsageEmitterError::Outbox(err) => internal_error(err.to_string()),
+        DomainError::Plugin(canonical) => canonical_error_to_problem(canonical),
+        DomainError::InvalidPluginInstance { gts_id, reason } => Problem::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+            format!("invalid plugin instance '{gts_id}': {reason}"),
+        ),
+        DomainError::Internal(reason) => Problem::new(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "Internal Server Error",
+            reason.clone(),
+        ),
     }
 }
 

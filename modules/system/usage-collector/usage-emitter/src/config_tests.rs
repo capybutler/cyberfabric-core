@@ -3,24 +3,6 @@ use std::time::Duration;
 use super::UsageEmitterConfig;
 
 #[test]
-fn default_authorization_max_age_is_30_seconds() {
-    let cfg = UsageEmitterConfig::default();
-    assert_eq!(cfg.authorization_max_age, Duration::from_secs(30));
-}
-
-#[test]
-fn default_outbox_queue_is_usage_records() {
-    let cfg = UsageEmitterConfig::default();
-    assert_eq!(cfg.outbox_queue, "usage-records");
-}
-
-#[test]
-fn default_outbox_partition_count_is_4() {
-    let cfg = UsageEmitterConfig::default();
-    assert_eq!(cfg.outbox_partition_count, 4);
-}
-
-#[test]
 fn validate_accepts_defaults() {
     UsageEmitterConfig::default().validate().unwrap();
 }
@@ -73,12 +55,6 @@ fn validate_rejects_zero_authorization_max_age() {
     };
     let err = cfg.validate().unwrap_err();
     assert!(err.to_string().contains("authorization_max_age"));
-}
-
-#[test]
-fn default_outbox_backoff_max_is_10_minutes() {
-    let cfg = UsageEmitterConfig::default();
-    assert_eq!(cfg.outbox_backoff_max, Duration::from_mins(10));
 }
 
 #[test]

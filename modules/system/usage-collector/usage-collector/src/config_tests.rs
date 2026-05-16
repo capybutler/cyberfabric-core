@@ -2,7 +2,7 @@ use std::time::Duration;
 
 use usage_collector_sdk::UsageKind;
 
-use super::UsageCollectorConfig;
+use super::{CircuitBreakerConfig, UsageCollectorConfig};
 
 #[test]
 fn test_validate_rejects_plugin_timeout_zero() {
@@ -33,28 +33,32 @@ fn test_validate_rejects_plugin_timeout_above_30s() {
 #[test]
 fn test_validate_rejects_circuit_breaker_failure_threshold_zero() {
     let cfg = UsageCollectorConfig {
-        circuit_breaker_failure_threshold: 0,
+        circuit_breaker: CircuitBreakerConfig {
+            failure_threshold: 0,
+            ..CircuitBreakerConfig::default()
+        },
         ..UsageCollectorConfig::default()
     };
     let err = cfg.validate().unwrap_err();
     assert!(
-        err.to_string()
-            .contains("circuit_breaker_failure_threshold"),
-        "error must mention circuit_breaker_failure_threshold, got: {err}"
+        err.to_string().contains("circuit_breaker.failure_threshold"),
+        "error must mention circuit_breaker.failure_threshold, got: {err}"
     );
 }
 
 #[test]
 fn test_validate_rejects_circuit_breaker_failure_threshold_above_100() {
     let cfg = UsageCollectorConfig {
-        circuit_breaker_failure_threshold: 101,
+        circuit_breaker: CircuitBreakerConfig {
+            failure_threshold: 101,
+            ..CircuitBreakerConfig::default()
+        },
         ..UsageCollectorConfig::default()
     };
     let err = cfg.validate().unwrap_err();
     assert!(
-        err.to_string()
-            .contains("circuit_breaker_failure_threshold"),
-        "error must mention circuit_breaker_failure_threshold, got: {err}"
+        err.to_string().contains("circuit_breaker.failure_threshold"),
+        "error must mention circuit_breaker.failure_threshold, got: {err}"
     );
 }
 
@@ -74,39 +78,48 @@ fn test_validate_rejects_plugin_timeout_below_100ms() {
 #[test]
 fn test_validate_rejects_circuit_breaker_window_below_100ms() {
     let cfg = UsageCollectorConfig {
-        circuit_breaker_window: Duration::ZERO,
+        circuit_breaker: CircuitBreakerConfig {
+            window: Duration::ZERO,
+            ..CircuitBreakerConfig::default()
+        },
         ..UsageCollectorConfig::default()
     };
     let err = cfg.validate().unwrap_err();
     assert!(
-        err.to_string().contains("circuit_breaker_window"),
-        "error must mention circuit_breaker_window, got: {err}"
+        err.to_string().contains("circuit_breaker.window"),
+        "error must mention circuit_breaker.window, got: {err}"
     );
 }
 
 #[test]
 fn test_validate_rejects_circuit_breaker_recovery_timeout_zero() {
     let cfg = UsageCollectorConfig {
-        circuit_breaker_recovery_timeout: Duration::ZERO,
+        circuit_breaker: CircuitBreakerConfig {
+            recovery_timeout: Duration::ZERO,
+            ..CircuitBreakerConfig::default()
+        },
         ..UsageCollectorConfig::default()
     };
     let err = cfg.validate().unwrap_err();
     assert!(
-        err.to_string().contains("circuit_breaker_recovery_timeout"),
-        "error must mention circuit_breaker_recovery_timeout, got: {err}"
+        err.to_string().contains("circuit_breaker.recovery_timeout"),
+        "error must mention circuit_breaker.recovery_timeout, got: {err}"
     );
 }
 
 #[test]
 fn test_validate_rejects_circuit_breaker_recovery_timeout_above_5min() {
     let cfg = UsageCollectorConfig {
-        circuit_breaker_recovery_timeout: Duration::from_secs(301),
+        circuit_breaker: CircuitBreakerConfig {
+            recovery_timeout: Duration::from_secs(301),
+            ..CircuitBreakerConfig::default()
+        },
         ..UsageCollectorConfig::default()
     };
     let err = cfg.validate().unwrap_err();
     assert!(
-        err.to_string().contains("circuit_breaker_recovery_timeout"),
-        "error must mention circuit_breaker_recovery_timeout, got: {err}"
+        err.to_string().contains("circuit_breaker.recovery_timeout"),
+        "error must mention circuit_breaker.recovery_timeout, got: {err}"
     );
 }
 

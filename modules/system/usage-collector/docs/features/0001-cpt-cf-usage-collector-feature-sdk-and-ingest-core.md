@@ -1,7 +1,37 @@
 ---
 cpt:
-  version: "1.10"
+  version: "1.16"
   changelog:
+    - version: "1.16"
+      date: "2026-05-10"
+      changes:
+        - "§3 Phase 2 Entry points paragraph: drop the `SecureConn /` prefix from the `enqueue()` description; the actual call resolves a pooled connection via the source's `modkit_db::Db` handle (which implements / provides `DBRunner`), not a `SecureConn` directly held by the emitter. Brings the paragraph in line with `usage-emitter/src/domain/usage_record_builder.rs:78-85` (`self.emitter.db.conn()`)."
+        - "§5.2 Emitter Crate DoD bodies: rewrite the `enqueue()` clauses at the DoD paragraph (line ~376) and at `domain/usage_record_builder.rs` bullet (line ~386) so they describe the pooled-connection convenience path correctly and call out the `.enqueue_in(db)` overload as the canonical transactional-outbox path. Previously both wordings claimed `enqueue()` ran `Outbox::enqueue()` within the caller's transaction — that path is `enqueue_in(db)` per `usage_record_builder.rs:78-85` and `:94`. Brings §5.2 in line with the §3 Entry points paragraph (line 250) and the §6 acceptance criteria (lines 546-547)."
+    - version: "1.15"
+      date: "2026-05-10"
+      changes:
+        - "Document the `enqueue_in(db: &(dyn DBRunner + Sync))` builder overload (RESEARCH-diverge issue L). §3 Phase 2 now describes both entry points: `enqueue()` resolves a pooled connection and delegates, while `enqueue_in(db)` accepts a caller-supplied `DBRunner` (connection or active transaction) so the outbox INSERT is performed inside the caller's transaction — the canonical transactional-outbox path. Updated `inst-enq-9` wording to reflect the `DBRunner`-bound INSERT, and added an §6 acceptance criterion for the `enqueue_in(db)` overload."
+    - version: "1.14"
+      date: "2026-05-10"
+      changes:
+        - "§5 Gateway Crate DoD `circuit_breaker.rs` paragraph: qualify the failure-classification rules with HalfOpen-strict probe semantics so the spec matches `circuit_breaker.rs::CircuitBreaker::execute`. The `is_health_failure` classifier list (which `DomainError` and canonical-plugin variants count as plugin/infrastructure failures, and which variants — including `DomainError::CircuitOpen`, `DomainError::InvalidPluginInstance`, `DomainError::ModuleNotConfigured`, and any caller-induced `CanonicalError`) now applies only to `Closed`-state traffic. During a `HalfOpen` probe the breaker is strict: any non-success outcome — including caller-induced `CanonicalError` that would be ignored in `Closed` — re-opens the circuit irrespective of `is_health_failure`. Only a successful probe transitions the breaker back to `Closed`."
+    - version: "1.13"
+      date: "2026-05-10"
+      changes:
+        - "Document the gateway crate's domain-layer module breakdown (RESEARCH-diverge issue H): §5 Gateway Crate DoD now enumerates `domain/service.rs`, `domain/local_client.rs`, `domain/authz.rs`, `domain/circuit_breaker.rs`, and `domain/error.rs`, and spells out the circuit-breaker's `is_health_failure` classifier — which `DomainError` and `CanonicalError` variants count as plugin/infrastructure failures and trip the breaker, and which are treated as caller-induced and do not trip it. Document the emitter crate's `domain/` layout (RESEARCH-diverge issue K): §5.2 Emitter Crate DoD now reflects the actual file layout (`api.rs`, `config.rs`, `error.rs`, `domain/factory.rs`, `domain/emitter.rs`, `domain/authorized_emitter.rs`, `domain/usage_record_builder.rs`, `infra/delivery_handler.rs`) and the public re-exports (`UsageEmitterFactoryV1`, `UsageEmitterFactory`, `UsageEmitter`, `AuthorizedUsageEmitter`, `UsageRecordBuilder`, `UsageEmitterConfig`, `UsageEmitterError`, `DeliveryHandler`)."
+    - version: "1.13"
+      date: "2026-05-10"
+      changes:
+        - "§3 inst-authz-5: stop collapsing non-`NotFound` `get_module_config` errors into `UsageEmitterError::Internal`. The emitter now propagates the canonical variant unchanged (`NotFound`, `DeadlineExceeded`, `ServiceUnavailable`, `ResourceExhausted`, `PermissionDenied`, `Internal`), preserving the categorization deliberately exposed by the collector and REST client so source modules using `UsageEmitterFactoryV1` over REST can map a transient gateway outage to 503/504 (and rate-limit to 429) instead of an opaque 500. Removed `inst-authz-5b`; merged the `NotFound` arm into a single propagation step on `inst-authz-5a`."
+    - version: "1.12"
+      date: "2026-05-10"
+      changes:
+        - "Align emitter trait/struct names with the implemented crate surface (RESEARCH-diverge issues C, D): `UsageEmitterV1` → `UsageEmitterFactoryV1` (the `ClientHub` registration key) and `ScopedUsageEmitter` → `UsageEmitter` (the type returned by `for_module()`; the previously-separate `ScopedUsageEmitter` wrapper has been merged into `UsageEmitter`). Updated §2 Usage Emission Flow narrative, §3 inst-emit-1 / inst-emit-2 / inst-emit-3, §5 Emitter Crate DoD body, §5 Gateway Crate DoD body, §6 AC for `ClientHub` availability."
+        - "Rewrite §5.2 SDK Crate DoD body to enumerate the actual `usage-collector-sdk` public surface (RESEARCH-diverge issue F): added the `authz` module (USAGE_RECORD ResourceType, actions::{CREATE,LIST}, properties::{RESOURCE_ID, RESOURCE_TYPE, MODULE, SUBJECT_ID, SUBJECT_TYPE}); added the `UsageRecordError` and `ModuleConfigError` resource-scoped builders with their GTS prefixes; called out `UsageCollectorError = CanonicalError` and the `CanonicalError` re-export; added the `CursorV1` / `Page` / `PageInfo` re-exports from `modkit-odata`; added the F3-defined query-side models (`AggregationFn`, `BucketSize`, `GroupByDimension`, `AggregationQuery`, `AggregationResult`, `RawQuery`); fixed the GTS schema name (`UsageCollectorStoragePluginSpecV1` → `UsageCollectorPluginSpecV1`); added a clarifying note that the plugin trait's read operations (added by Feature 3) take no separate `SecurityContext` — the gateway embeds the compiled `AccessScope` in `AggregationQuery.scope` / `RawQuery.scope`."
+    - version: "1.11"
+      date: "2026-05-10"
+      changes:
+        - "Align UsageEmitterError variants with the canonical taxonomy (UsageEmitterError = CanonicalError; resource-scoped builders UsageRecordError / ModuleConfigError). Replaced legacy variant names across §2 Error Scenarios, §2 Module Config Retrieval Flow, §3 authorize-for / enqueue, §5 DoD, §6 AC, and changelog entries v1.5 / v1.6: AuthorizationDenied → PermissionDenied (built via UsageRecordError::permission_denied()); ModuleNotConfigured → NotFound (built via ModuleConfigError::not_found()); MetricNotAllowed → PermissionDenied; InvalidRecord → InvalidArgument; AuthorizationExpired → Unauthenticated (built via UsageEmitterError::unauthenticated()); MetadataTooLarge → InvalidArgument; legacy infrastructure-failure carriers (PluginTimeout / CircuitOpen / Unavailable) → DeadlineExceeded / ServiceUnavailable; Internal retained as a CanonicalError variant."
     - version: "1.10"
       date: "2026-04-28"
       changes:
@@ -21,11 +51,11 @@ cpt:
     - version: "1.6"
       date: "2026-04-27"
       changes:
-        - "§3 authorize-for: added inst-authz-5b — collector infrastructure failures (PluginTimeout, CircuitOpen, Unavailable, Internal) now return UsageEmitterError::Internal instead of AuthorizationFailed; fixes misclassification of retryable failures as 403 policy denials"
+        - "§3 authorize-for: added inst-authz-5b — collector infrastructure failures (DeadlineExceeded, ServiceUnavailable, Internal) now return UsageEmitterError::Internal instead of PermissionDenied; fixes misclassification of retryable failures as 403 policy denials"
     - version: "1.5"
       date: "2026-04-27"
       changes:
-        - "§3 inst-dlv-6: clarified transient failure list to explicitly include connection/transport errors and AuthN service unavailability; introduces UsageCollectorError::Unavailable as the carrier for these cases"
+        - "§3 inst-dlv-6: clarified transient failure list to explicitly include connection/transport errors and AuthN service unavailability; introduces UsageCollectorError::ServiceUnavailable as the carrier for these cases"
     - version: "1.4"
       date: "2026-04-27"
       changes:
@@ -137,18 +167,18 @@ response-time and throughput targets.
 - Outbox background pipeline delivers the record to the gateway; plugin confirms storage
 
 **Error Scenarios**:
-- PDP denies `USAGE_RECORD`/`CREATE` → `UsageEmitterError::AuthorizationDenied`; no outbox INSERT
-- Module not configured → `UsageEmitterError::ModuleNotConfigured`; no outbox INSERT
-- Metric not in allowed list → `UsageEmitterError::MetricNotAllowed`; no outbox INSERT
-- Counter record with negative value or missing idempotency key → `UsageEmitterError::InvalidRecord`; no outbox INSERT
-- `AuthorizedUsageEmitter` token exceeded max age → `UsageEmitterError::AuthorizationExpired`; no outbox INSERT
-- Metadata exceeds 8 KB → `UsageEmitterError::MetadataTooLarge`; no outbox INSERT
+- PDP denies `USAGE_RECORD`/`CREATE` → `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()`); no outbox INSERT
+- Module not configured → `UsageEmitterError::NotFound` (built via `ModuleConfigError::not_found()`); no outbox INSERT
+- Metric not in allowed list → `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()`); no outbox INSERT
+- Counter record with negative value or missing idempotency key → `UsageEmitterError::InvalidArgument` (built via `UsageRecordError::invalid_argument()`); no outbox INSERT
+- `AuthorizedUsageEmitter` token exceeded max age → `UsageEmitterError::Unauthenticated` (built via `UsageEmitterError::unauthenticated()`); no outbox INSERT
+- Metadata exceeds 8 KB → `UsageEmitterError::InvalidArgument` (built via `UsageRecordError::invalid_argument()`); no outbox INSERT
 - Outbox delivery fails after retry budget exhausted → message moved to dead-letter store; surfaced via monitoring
 
 **Steps**:
-1. [x] - `p1` - Source retrieves `UsageEmitterV1` from `ClientHub` at module initialization - `inst-emit-1`
-2. [x] - `p1` - Source calls `UsageEmitterV1::for_module(MODULE_NAME)` to obtain a `ScopedUsageEmitter` bound to the source module's identity - `inst-emit-2`
-3. [x] - `p1` - Before opening a DB transaction, source calls `ScopedUsageEmitter::authorize_for(ctx, tenant_id, resource_id, resource_type)` with optional `subject_id` and `subject_type` — triggers phase 1 authorization - `inst-emit-3`
+1. [x] - `p1` - Source retrieves `UsageEmitterFactoryV1` from `ClientHub` at module initialization - `inst-emit-1`
+2. [x] - `p1` - Source calls `UsageEmitterFactoryV1::for_module(MODULE_NAME)` to obtain a `UsageEmitter` bound to the source module's identity - `inst-emit-2`
+3. [x] - `p1` - Before opening a DB transaction, source calls `UsageEmitter::authorize_for(ctx, tenant_id, resource_id, resource_type)` with optional `subject_id` and `subject_type` — triggers phase 1 authorization - `inst-emit-3`
 4. [x] - `p1` - **IF** PDP denies or module is not configured - `inst-emit-4`
    1. [x] - `p1` - **RETURN** `UsageEmitterError`; no record is persisted - `inst-emit-4a`
 5. [x] - `p1` - **RETURN** `AuthorizedUsageEmitter` token carrying PDP permit, allowed-metrics list, and bound `tenant_id`/`resource_id`/`resource_type` - `inst-emit-5`
@@ -175,14 +205,18 @@ response-time and throughput targets.
 - Gateway returns `ModuleConfig` with the static `allowed_metrics` list for the requesting module
 
 **Error Scenarios**:
-- Module not registered in static config → gateway returns 404; `authorize_for()` surfaces `UsageEmitterError::ModuleNotConfigured`
+- Module not registered in static config → gateway returns 404; `authorize_for()` surfaces `UsageEmitterError::NotFound` (built via `ModuleConfigError::not_found()`)
+- Transport failure or gateway 5xx → REST client returns `UsageEmitterError::ServiceUnavailable`; `authorize_for()` propagates it unchanged so the source module can surface it as HTTP 503
+- Request deadline exceeded → REST client returns `UsageEmitterError::DeadlineExceeded`; `authorize_for()` propagates it unchanged so the source module can surface it as HTTP 504
+- Gateway rate-limits the lookup (HTTP 429) → REST client returns `UsageEmitterError::ResourceExhausted`; `authorize_for()` propagates it unchanged
+- Caller is rejected by the gateway (HTTP 403) → REST client returns `UsageEmitterError::PermissionDenied`; `authorize_for()` propagates it unchanged
 
 **Steps**:
 1. [x] - `p2` - During `authorize_for()` phase 1, emitter calls `UsageCollectorClientV1::get_module_config(module_name)` - `inst-cfg-1`
 2. [x] - `p2` - Gateway receives `GET /usage-collector/v1/modules/{module_name}/config` authenticated via SecurityContext - `inst-cfg-2`
 3. [x] - `p2` - Gateway looks up static metric configuration for the module - `inst-cfg-3`
 4. [x] - `p2` - **IF** module not in static config - `inst-cfg-4`
-   1. [x] - `p2` - **RETURN** 404; emitter surfaces `UsageEmitterError::ModuleNotConfigured` - `inst-cfg-4a`
+   1. [x] - `p2` - **RETURN** 404; emitter surfaces `UsageEmitterError::NotFound` (built via `ModuleConfigError::not_found()`) - `inst-cfg-4a`
 5. [x] - `p2` - **RETURN** `ModuleConfig { module_name, allowed_metrics: [AllowedMetric { name, kind }] }` - `inst-cfg-5`
 
 ## 3. Processes / Business Logic (CDSL)
@@ -208,11 +242,10 @@ design.
 **Steps**:
 1. [x] - `p1` - Call platform PDP: `USAGE_RECORD`/`CREATE`, passing `tenant_id`, `resource_id`/`resource_type` as resource properties, MODULE (the scoped emitter's bound module name) as a resource property, and — **IF** `subject_id` and `subject_type` are present — SUBJECT_ID/SUBJECT_TYPE as resource properties; when absent, PDP subject properties are omitted from the request - `inst-authz-2`
 2. [x] - `p1` - **IF** PDP denies - `inst-authz-3`
-   1. [x] - `p1` - **RETURN** `UsageEmitterError::AuthorizationDenied` - `inst-authz-3a`
+   1. [x] - `p1` - **RETURN** `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()`) - `inst-authz-3a`
 3. [x] - `p1` - Call `get_module_config(module_name)` to fetch `AllowedMetric` list from gateway - `inst-authz-4`
-4. [x] - `p1` - **IF** module not in static config - `inst-authz-5`
-   1. [x] - `p1` - **RETURN** `UsageEmitterError::ModuleNotConfigured` - `inst-authz-5a`
-   2. [x] - `p1` - **ELSE IF** `get_module_config` returns any other error (e.g. plugin timeout, circuit open, unavailable, internal) - **RETURN** `UsageEmitterError::Internal` - `inst-authz-5b`
+4. [x] - `p1` - **IF** `get_module_config` returns an error - `inst-authz-5`
+   1. [x] - `p1` - **RETURN** the `UsageEmitterError` unchanged so the canonical variant chosen by the collector (or REST client) flows end-to-end: `NotFound` (built via `ModuleConfigError::not_found()`) when the module is not in static config; `DeadlineExceeded`, `ServiceUnavailable`, `ResourceExhausted`, `PermissionDenied`, or `Internal` for transport / gateway / parse failures. The emitter MUST NOT collapse non-`NotFound` variants into `Internal` — the categorization is the contract source modules use to map a transient gateway outage to HTTP 503/504 (or rate-limit to 429) instead of an opaque 500. - `inst-authz-5a`
 5. [x] - `p1` - Bind PDP permit result, allowed-metrics list, `tenant_id`, `resource_id`, `resource_type`, optional `subject_id` (`Option<Uuid>`), optional `subject_type` (`Option<String>`), and issuance timestamp into `AuthorizedUsageEmitter` token - `inst-authz-6`
 6. [x] - `p1` - **RETURN** `AuthorizedUsageEmitter` token - `inst-authz-7`
 
@@ -226,21 +259,23 @@ design.
 
 **Optional field serialization**: `metadata` is optional. When absent it serializes as an absent JSON field (not `null`). Deserialization treats absent as `None` with no default substitution. `idempotency_key` is optional from the caller's perspective but is **always present in the serialized record** — when the caller omits it, a UUID v4 is auto-generated before enqueue so the wire format always carries a non-null key. Blank strings (`""` or whitespace-only) are semantically equivalent to `None` for this field and MUST NOT be stored as a valid key.
 
+**Entry points**: `UsageRecordBuilder` exposes two equivalent terminal operations. `enqueue()` resolves a pooled connection via the source's `modkit_db::Db` handle (the `DBRunner` provider obtained at emitter construction) and then runs the same algorithm as `enqueue_in(db)`; this is the convenience path for callers that do not already hold a transaction. `enqueue_in(db: &(dyn DBRunner + Sync))` accepts a caller-supplied `DBRunner` (a pooled connection, a borrowed connection, or an in-flight transaction handle) and runs the outbox INSERT against that handle so the record is enqueued *inside the caller's open transaction*. `enqueue_in` is the canonical transactional-outbox entry point — when the caller passes a transaction handle, the outbox INSERT either commits with the rest of the caller's writes or is rolled back atomically with them. The two entry points share `inst-enq-1` through `inst-enq-10` verbatim; only the source of the `DBRunner` differs.
+
 **Steps**:
 1. [x] - `p1` - Verify `AuthorizedUsageEmitter` token has not exceeded its maximum age - `inst-enq-1`
 2. [x] - `p1` - **IF** token is expired - `inst-enq-2`
-   1. [x] - `p1` - **RETURN** `UsageEmitterError::AuthorizationExpired` - `inst-enq-2a`
+   1. [x] - `p1` - **RETURN** `UsageEmitterError::Unauthenticated` (built via `UsageEmitterError::unauthenticated()` with reason "emit authorization token has expired") - `inst-enq-2a`
 3. [x] - `p1` - Verify metric name is present in the token's allowed-metrics list - `inst-enq-3`
 4. [x] - `p1` - **IF** metric not in allowed list - `inst-enq-4`
-   1. [x] - `p1` - **RETURN** `UsageEmitterError::MetricNotAllowed` - `inst-enq-4a`
+   1. [x] - `p1` - **RETURN** `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()` with reason "metric not allowed for this module") - `inst-enq-4a`
 5. [x] - `p1` - **IF** metric kind is `counter` AND (value < 0 OR idempotency_key is None); an empty or whitespace-only string MUST be treated as absent (equivalent to `None`) - `inst-enq-5`
-   1. [x] - `p1` - **RETURN** `UsageEmitterError::InvalidRecord` - `inst-enq-5a`
+   1. [x] - `p1` - **RETURN** `UsageEmitterError::InvalidArgument` (built via `UsageRecordError::invalid_argument()`) - `inst-enq-5a`
 5a. [x] - `p1` - **IF** idempotency_key is None (gauge record without caller-supplied key) — generate a UUID v4 and assign it as the idempotency_key; an empty or whitespace-only string MUST be treated as absent and triggers the UUID fallback - `inst-enq-5b`
-6. [x] - `p1` - Validate `record.module` equals the token's bound module name; if mismatch RETURN `UsageEmitterError::InvalidRecord`. **IF** the token's `subject_id`/`subject_type` are present, validate `record.subject_id` and `record.subject_type` match them; if mismatch RETURN `UsageEmitterError::InvalidRecord`. **IF** the token's subject values are `None`, `record.subject_id` and `record.subject_type` MUST also be absent; if present RETURN `UsageEmitterError::InvalidRecord` - `inst-enq-6`
+6. [x] - `p1` - Validate `record.module` equals the token's bound module name; if mismatch RETURN `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()` with reason "record module does not match authorized token"). **IF** the token's `subject_id`/`subject_type` are present, validate `record.subject_id` and `record.subject_type` match them; if mismatch RETURN `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()` with reason "record subject does not match authorized token"). **IF** the token's subject values are `None`, `record.subject_id` and `record.subject_type` MUST also be absent; if present RETURN `UsageEmitterError::PermissionDenied` (same reason) - `inst-enq-6`
 7. [x] - `p1` - **IF** metadata is present AND byte length > 8192 - `inst-enq-7`
-   1. [x] - `p1` - **RETURN** `UsageEmitterError::MetadataTooLarge` - `inst-enq-7a`
+   1. [x] - `p1` - **RETURN** `UsageEmitterError::InvalidArgument` (built via `UsageRecordError::invalid_argument()` with constraint "metadata byte length exceeds the 8192-byte limit") - `inst-enq-7a`
 8. [x] - `p1` - Serialize `UsageRecord` (tenant_id, module, kind, metric, value, idempotency_key, resource_id, resource_type, subject_id, subject_type, metadata, timestamp) with `payload_type = "usage-collector.record.v1"`; `subject_id`, `subject_type`, and `metadata` serialize as absent JSON fields when `None` (not as `null`) - `inst-enq-8`
-9. [x] - `p1` - Call `Outbox::enqueue(payload, payload_type)` within the caller's active DB transaction - `inst-enq-9`
+9. [x] - `p1` - Call `Outbox::enqueue(db, payload, payload_type)` against the `DBRunner` resolved by the entry point — for `enqueue_in(db)` this is the caller's connection or transaction handle; for `enqueue()` it is a pooled connection acquired from the source's configured `DBRunner` provider; the outbox INSERT therefore participates in the caller's active transaction whenever one was supplied - `inst-enq-9`
 10. [x] - `p1` - **RETURN** `Ok(())`; record is durably enqueued and delivery proceeds asynchronously - `inst-enq-10`
 
 ### Outbox Delivery `MessageHandler`
@@ -318,7 +353,16 @@ Not applicable for this feature. `UsageRecord.status` transitions (`active` → 
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-sdk-and-ingest-core-sdk-crate`
 
-The system **MUST** implement the `usage-collector-sdk` crate providing: `UsageCollectorClientV1` delivery trait (`create_usage_record()`, `get_module_config()`), `UsageCollectorPluginClientV1` plugin trait (`create_usage_record()` write operation), shared model types (`UsageRecord`, `ModuleConfig`, `AllowedMetric`, `UsageKind`, error types), and the GTS schema `UsageCollectorStoragePluginSpecV1` for storage plugin registration.
+The system **MUST** implement the `usage-collector-sdk` crate providing the following public surface:
+
+- **Delivery trait**: `UsageCollectorClientV1` (`create_usage_record()`, `get_module_config()`) — passed by constructor argument to the emitter, never registered in `ClientHub`.
+- **Plugin trait**: `UsageCollectorPluginClientV1` (`create_usage_record()` write operation; `query_aggregated()` and `query_raw()` read operations are added by Feature 3 and the gateway compiles the PDP-derived `AccessScope` into `AggregationQuery.scope` / `RawQuery.scope`, so the plugin contract takes no separate `SecurityContext`).
+- **Ingest-side model types**: `UsageRecord`, `UsageKind`, `ModuleConfig`, `AllowedMetric`.
+- **Query-side model types** (re-exported for plugin and gateway implementors; defined in detail by Feature 3): `AggregationFn`, `BucketSize`, `GroupByDimension`, `AggregationQuery`, `AggregationResult`, `RawQuery`.
+- **Pagination types** (re-exported from `modkit-odata`): `CursorV1`, `Page`, `PageInfo`.
+- **Error taxonomy**: `UsageCollectorError = CanonicalError` (re-exported from `modkit-canonical-errors`), plus the resource-scoped error builders `UsageRecordError` (GTS prefix `gts.cf.core.usage.record.v1~`) and `ModuleConfigError` (GTS prefix `gts.cf.core.usage.module_config.v1~`) — these builders are the canonical error-construction API used by the emitter, gateway, REST client, and storage plugins.
+- **PDP authorization constants**: an `authz` module exporting `USAGE_RECORD: ResourceType` (with `supported_properties` covering `OWNER_TENANT_ID`, `RESOURCE_ID`, `RESOURCE_TYPE`, `MODULE`, `SUBJECT_ID`, `SUBJECT_TYPE`), the `actions::{CREATE, LIST}` constants, and the `properties::{RESOURCE_ID, RESOURCE_TYPE, MODULE, SUBJECT_ID, SUBJECT_TYPE}` property-name constants. Used by the emitter (`CREATE`) and the collector gateway (`LIST`) to call the platform PDP with a consistent attribute surface.
+- **GTS schema**: `UsageCollectorPluginSpecV1` for storage-plugin registration.
 
 **Implements**:
 - `cpt-cf-usage-collector-component-sdk`
@@ -341,7 +385,20 @@ and its infrastructure (Feature 4 — Production Storage Plugin).
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-sdk-and-ingest-core-emitter-crate`
 
-The system **MUST** implement the `usage-emitter` crate providing: `UsageEmitterV1::for_module(name) -> ScopedUsageEmitter`, `ScopedUsageEmitter::authorize_for()` and `authorize()` (PDP call + module config fetch; `subject_id` and `subject_type` are optional — when absent, PDP subject properties are omitted from the authorization request), `AuthorizedUsageEmitter::build_usage_record().enqueue()` (all in-memory validations + `Outbox::enqueue()` within caller's transaction), the outbox `MessageHandler` with `outbox_backoff_max` configured below 15 minutes, and registration of `UsageEmitterV1` in `ClientHub` during gateway `init()`.
+The system **MUST** implement the `usage-emitter` crate providing: `UsageEmitterFactoryV1::for_module(name) -> UsageEmitter`, `UsageEmitter::authorize_for()` and `authorize()` (PDP call + module config fetch; `subject_id` and `subject_type` are optional — when absent, PDP subject properties are omitted from the authorization request), `AuthorizedUsageEmitter::build_usage_record().enqueue()` (all in-memory validations + `Outbox::enqueue()` against a pooled connection resolved from the source's `modkit_db::Db` handle) and the equivalent `.enqueue_in(db: &(dyn DBRunner + Sync))` overload that runs the same algorithm against a caller-supplied `DBRunner` so the outbox INSERT participates in the caller's open transaction (the canonical transactional-outbox path), the outbox `MessageHandler` with `outbox_backoff_max` configured below 15 minutes, and registration of `UsageEmitterFactoryV1` in `ClientHub` during gateway `init()`.
+
+The crate is laid out as follows under `usage-emitter/src/`:
+
+- `api.rs` — defines the public `UsageEmitterFactoryV1` trait (the `ClientHub` registration key consumed by source modules and by `usage-collector-rest-client`).
+- `config.rs` — `UsageEmitterConfig` (authorization age, outbox backoff bounds, metadata size limit).
+- `error.rs` — `UsageEmitterError = CanonicalError`; the crate-specific enum is no longer exposed (canonical taxonomy aligned per v1.11 changelog).
+- `domain/factory.rs` — `UsageEmitterFactory` implementing `UsageEmitterFactoryV1::for_module(name) -> UsageEmitter`; one shared factory is registered per process by the gateway / REST-client modules.
+- `domain/emitter.rs` — `UsageEmitter` (the type returned by `for_module()`; `authorize_for()` / `authorize()` live here). The previously-separate `ScopedUsageEmitter` wrapper has been merged into `UsageEmitter` (see RESEARCH-diverge issue D and the v1.12 changelog).
+- `domain/authorized_emitter.rs` — `AuthorizedUsageEmitter` time-limited token returned by `authorize_for()` / `authorize()`; carries the `tenant_id`, `resource_id`, `resource_type`, optional `subject_id` / `subject_type`, and the resolved `EmitAuthorization` constraint set.
+- `domain/usage_record_builder.rs` — `UsageRecordBuilder`, the fluent builder returned by `AuthorizedUsageEmitter::build_usage_record(metric, value)`; `build_usage_record(...).enqueue()` performs in-memory validations and `Outbox::enqueue()` against a pooled connection resolved from the source's `modkit_db::Db` handle (the convenience path for callers that do not already hold a transaction). `build_usage_record(...).enqueue_in(db: &(dyn DBRunner + Sync))` is the equivalent overload that uses a caller-supplied connection or transaction handle so the outbox INSERT shares the caller's transaction (the canonical "transactional outbox within caller's transaction" path).
+- `infra/delivery_handler.rs` — `DeliveryHandler` implementing the outbox `MessageHandler`: deserializes outbox payloads, calls `UsageCollectorClientV1::create_usage_record()`, and routes `DeadlineExceeded` / `ResourceExhausted` / `ServiceUnavailable` to `HandlerResult::Retry`, everything else to `HandlerResult::Reject`.
+
+The crate's public surface (`lib.rs`) is exactly `pub use api::UsageEmitterFactoryV1; pub use config::UsageEmitterConfig; pub use domain::authorized_emitter::AuthorizedUsageEmitter; pub use domain::emitter::UsageEmitter; pub use domain::factory::UsageEmitterFactory; pub use domain::usage_record_builder::UsageRecordBuilder; pub use error::UsageEmitterError; pub use infra::delivery_handler::DeliveryHandler;`.
 
 **Implements**:
 - `cpt-cf-usage-collector-flow-sdk-and-ingest-core-emit`
@@ -396,7 +453,15 @@ no raw queries.
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-sdk-and-ingest-core-gateway-crate`
 
-The system **MUST** implement in the `usage-collector` gateway crate: outbox queue registration (`"usage-records"`, 4 partitions, configurable) and schema migrations via `DatabaseCapability::migrations()`, `POST /usage-collector/v1/records` ingest handler (metadata size enforcement, GTS plugin resolution with timeout, circuit breaker — 5 failures / 10 s open, 30 s half-open probe), `GET /usage-collector/v1/modules/{module_name}/config` handler (static metric config lookup), and construction + registration of `UsageEmitterV1` (backed by `UsageCollectorLocalClient`) in `ClientHub` during `init()`.
+The system **MUST** implement in the `usage-collector` gateway crate: outbox queue registration (`"usage-records"`, 4 partitions, configurable) and schema migrations via `DatabaseCapability::migrations()`, `POST /usage-collector/v1/records` ingest handler (metadata size enforcement, GTS plugin resolution with timeout, circuit breaker — 5 failures / 10 s open, 30 s half-open probe), `GET /usage-collector/v1/modules/{module_name}/config` handler (static metric config lookup), and construction + registration of `UsageEmitterFactoryV1` (backed by `UsageCollectorLocalClient`) in `ClientHub` during `init()`.
+
+The crate's domain layer is structured as the following modules under `src/domain/`:
+
+- `service.rs` — the `Service` orchestrator that fronts the ingest, query, and module-config code paths; resolves the active storage plugin via GTS, enforces per-call timeouts, and routes plugin invocations through the circuit breaker. Each plugin call propagates a `SecurityContext` and (for queries) a pre-compiled `AccessScope`.
+- `local_client.rs` — `UsageCollectorLocalClient` implementing `usage_collector_sdk::UsageCollectorClientV1` for in-process delivery from the gateway's own outbox `MessageHandler`. Translates `DomainError` to `UsageCollectorError` at the SDK boundary so in-process and remote callers see the same canonical error taxonomy.
+- `authz.rs` — gateway-side PDP enforcement for the query API (`USAGE_RECORD` / `LIST` action) and for any other operation that needs constraint compilation; produces the `AccessScope` that `Service` embeds in `AggregationQuery.scope` / `RawQuery.scope`. Ingest does **not** call this module — tenant attribution is authorized at emit time by `usage-emitter`.
+- `circuit_breaker.rs` — the per-plugin sliding-window breaker (5 failures / 10 s window opens the circuit; one half-open probe is admitted after the configurable recovery interval, default 30 s; everything else is rejected as `DomainError::CircuitOpen`). Failure classification differs by state. In `Closed` state the breaker's failure classifier `is_health_failure` treats the following as plugin/infrastructure ill-health and counts them toward the failure window: `DomainError::TypesRegistryUnavailable`, `DomainError::PluginNotFound`, `DomainError::PluginUnavailable`, `DomainError::Timeout`, `DomainError::Internal`, plus `DomainError::Plugin(canonical)` whose canonical variant is one of `UsageCollectorError::ServiceUnavailable`, `UsageCollectorError::Internal`, `UsageCollectorError::Unknown`, `UsageCollectorError::DataLoss`, or `UsageCollectorError::DeadlineExceeded`. All other variants — including `DomainError::CircuitOpen` (already-open, not a new failure signal), `DomainError::InvalidPluginInstance`, `DomainError::ModuleNotConfigured`, and any caller-induced `CanonicalError` (`InvalidArgument`, `NotFound`, `PermissionDenied`, `Unauthenticated`, `ResourceExhausted`, `FailedPrecondition`, `Aborted`, `OutOfRange`, `AlreadyExists`, `Cancelled`) — do **not** trip the breaker in `Closed` state. The classifier rules above apply only to `Closed` traffic. In `HalfOpen` state the probe is strict: any non-success outcome — including caller-induced `CanonicalError` that would be ignored in `Closed` — re-opens the circuit irrespective of `is_health_failure`. Only a successful probe transitions the breaker back to `Closed`.
+- `error.rs` — the gateway-internal `DomainError` enum (`TypesRegistryUnavailable`, `PluginNotFound`, `InvalidPluginInstance`, `PluginUnavailable`, `Timeout`, `CircuitOpen`, `ModuleNotConfigured`, `Plugin(UsageCollectorError)`, `Internal`) and its `From<DomainError> for UsageCollectorError` translation (`Plugin` passes through; `ModuleNotConfigured` becomes `ModuleConfigError::not_found(...).with_resource(module).create()`; `Timeout` becomes `UsageRecordError::deadline_exceeded(...).create()`; `CircuitOpen` / `PluginNotFound` / `PluginUnavailable` become `UsageCollectorError::service_unavailable()` with the appropriate detail; `InvalidPluginInstance`, `TypesRegistryUnavailable`, and `Internal` become `UsageCollectorError::internal(...)`).
 
 **Implements**:
 - `cpt-cf-usage-collector-flow-sdk-and-ingest-core-fetch-module-config`
@@ -490,19 +555,20 @@ The system **MUST** implement the `noop-usage-collector-storage-plugin` crate pr
 ## 6. Acceptance Criteria
 
 - [ ] A usage source can call `authorize_for()` and receive an `AuthorizedUsageEmitter` token when the PDP permits `USAGE_RECORD`/`CREATE` for the given tenant and resource
-- [ ] `enqueue()` persists a usage record to the source's local outbox within the caller's DB transaction; the transaction commit is the durability boundary for the record
+- [ ] `enqueue()` persists a usage record to the source's local outbox using a pooled connection from the source's configured `DBRunner` provider; the resulting outbox row is durably committed when the pooled connection's implicit transaction commits
+- [ ] `enqueue_in(db)` accepts a caller-supplied `&(dyn DBRunner + Sync)` (pooled connection or active transaction handle) and runs the outbox INSERT against it so the record is enqueued inside the caller's open transaction; rolling back the caller's transaction also rolls back the outbox row, and committing the caller's transaction is the durability boundary for the record
 - [ ] Counter records without an idempotency key or with a negative value are rejected before the outbox INSERT; no outbox row is created
 - [ ] Gauge records without a caller-supplied idempotency key are accepted; the emitter auto-generates a UUID v4 and the stored record always carries a non-null key
 - [ ] Records with a metric name not in the module's allowed-metrics list are rejected by `enqueue()` in-memory before the outbox INSERT
-- [ ] PDP denial in `authorize_for()` surfaces as `UsageEmitterError::AuthorizationDenied` with no record persisted
+- [ ] PDP denial in `authorize_for()` surfaces as `UsageEmitterError::PermissionDenied` (built via `UsageRecordError::permission_denied()` with reason `AUTHORIZATION_DENIED`) with no record persisted
 - [ ] The outbox delivery pipeline delivers records to the gateway with at-least-once semantics; transient failures trigger exponential backoff retry with `outbox_backoff_max` configured below 15 minutes
 - [ ] The gateway ingest endpoint enforces the 8 KB metadata limit, resolves the active plugin via GTS, and delegates record persistence with a 5 s default timeout
 - [ ] The circuit breaker opens after 5 consecutive plugin call failures within a 10 s window; the gateway returns `503 Service Unavailable` while open; exactly one probe call is admitted after 30 s, with all other concurrent requests during the half-open window rejected until the probe completes
 - [ ] `GET /usage-collector/v1/modules/{name}/config` returns the static allowed-metrics list for a configured module and 404 for an unknown module
 - [ ] The no-op plugin accepts all write calls with no side effects and returns empty results for reads; integration tests pass with the no-op backend selected
-- [ ] `UsageEmitterV1` is available in `ClientHub` after gateway `init()` completes; sources can call `for_module()` without additional setup
+- [ ] `UsageEmitterFactoryV1` is available in `ClientHub` after gateway `init()` completes; sources can call `for_module()` without additional setup
 - [ ] Invalid configuration values (out-of-range `plugin_timeout`,
-  `circuit_breaker_failure_threshold`, `circuit_breaker_recovery_timeout`,
+  `circuit_breaker.failure_threshold`, `circuit_breaker.recovery_timeout`,
   or `outbox_backoff_max`) are rejected at module/emitter initialization
   with a descriptive error; the process does not start.
 - [ ] `authorize_for()` succeeds when `subject_id` and `subject_type` are absent (`None`); the PDP call omits SUBJECT_ID/SUBJECT_TYPE resource properties and returns a valid `AuthorizedUsageEmitter` token with `None` subject fields

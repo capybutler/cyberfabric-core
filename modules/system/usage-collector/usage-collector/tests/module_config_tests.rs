@@ -2,26 +2,27 @@
 
 mod common;
 
-use std::sync::Arc;
+use std::collections::HashMap;
 
 use axum::body::{Body, to_bytes};
 use http::{Method, Request, StatusCode};
 use tower::ServiceExt;
-use usage_collector_sdk::{AllowedMetric, ModuleConfig, UsageCollectorClientV1, UsageKind};
+use usage_collector::config::MetricConfig;
+use usage_collector_sdk::UsageKind;
 
-use common::{AppHarness, MockUsageCollectorClientV1, NotFoundCollector};
+use common::AppHarness;
 
 #[tokio::test]
 async fn module_config_found() {
-    let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(MockUsageCollectorClientV1 {
-        config: ModuleConfig {
-            allowed_metrics: vec![AllowedMetric {
-                name: "cpu.usage".to_owned(),
-                kind: UsageKind::Gauge,
-            }],
+    let mut metrics = HashMap::new();
+    metrics.insert(
+        "cpu.usage".to_owned(),
+        MetricConfig {
+            kind: UsageKind::Gauge,
+            modules: None,
         },
-    });
-    let harness = AppHarness::with_collector(collector).await;
+    );
+    let harness = AppHarness::with_metrics(metrics).await;
 
     let request = Request::builder()
         .method(Method::GET)
@@ -41,8 +42,8 @@ async fn module_config_found() {
 
 #[tokio::test]
 async fn module_config_not_found() {
-    let collector: Arc<dyn UsageCollectorClientV1> = Arc::new(NotFoundCollector);
-    let harness = AppHarness::with_collector(collector).await;
+    // Default harness has no metrics configured → service returns ModuleNotConfigured → 404.
+    let harness = AppHarness::new().await;
 
     let request = Request::builder()
         .method(Method::GET)

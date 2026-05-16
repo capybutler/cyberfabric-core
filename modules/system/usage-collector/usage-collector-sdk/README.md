@@ -7,11 +7,14 @@ Transport-agnostic contracts for the usage-collector module family.
 | Item | Description |
 |------|-------------|
 | `UsageCollectorClientV1` | Ingest trait implemented by client modules (`usage-collector`, `usage-collector-rest-client`). **Never registered in `ClientHub`** to prevent unauthorized usage emission. |
-| `UsageCollectorPluginClientV1` | Storage-plugin trait implemented by backend plugins. |
-| `UsageRecord`, `UsageKind` | Transport-agnostic models (`UsageRecord` fields are public for direct construction, serde, and tests). |
+| `UsageCollectorPluginClientV1` | Storage-plugin trait implemented by backend plugins (`create_usage_record`, `query_aggregated`, `query_raw`). |
+| `UsageRecord`, `UsageKind` | Ingest-side models (`UsageRecord` fields are public for direct construction, serde, and tests). |
 | `ModuleConfig`, `AllowedMetric` | Per-module configuration returned by `get_module_config()`; `AllowedMetric` holds a metric name and its `UsageKind`. |
-| `UsageCollectorError` | Error type shared by both traits. |
-| `UsageCollectorStoragePluginSpecV1` | GTS schema for storage plugin registration. |
+| `AggregationQuery`, `AggregationResult`, `AggregationFn`, `BucketSize`, `GroupByDimension` | Query-side models for aggregated usage queries. |
+| `RawQuery` | Parameters for raw paginated usage record queries. |
+| `UsageCollectorError` | Canonical error type shared by both traits). |
+| `UsageRecordError` | Resource-scoped error builder for usage record operations. |
+| `UsageCollectorPluginSpecV1` | GTS schema for storage plugin registration. |
 
 > **Emitting usage** — use the `usage-emitter` crate, which wraps `UsageCollectorClientV1` with PDP authorization and outbox buffering.
 
@@ -59,7 +62,11 @@ let record = UsageRecord {
 
 ```rust
 use async_trait::async_trait;
-use usage_collector_sdk::{UsageCollectorError, UsageCollectorPluginClientV1, UsageRecord};
+use modkit_odata::Page;
+use usage_collector_sdk::{
+    AggregationQuery, AggregationResult, UsageCollectorError, RawQuery,
+    UsageCollectorPluginClientV1, UsageRecord,
+};
 
 struct MyStoragePlugin { /* ... */ }
 
@@ -72,21 +79,20 @@ impl UsageCollectorPluginClientV1 for MyStoragePlugin {
         // idempotent upsert keyed on record.idempotency_key
         todo!()
     }
-}
-```
 
-## Error handling
+    async fn query_aggregated(
+        &self,
+        query: AggregationQuery,
+    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+        todo!()
+    }
 
-```rust
-use usage_collector_sdk::UsageCollectorError;
-
-match result {
-    Ok(()) => {}
-    Err(UsageCollectorError::AuthorizationFailed { message }) => { /* PDP denied */ }
-    Err(UsageCollectorError::ModuleNotFound { module_name }) => { /* module has no configured metrics */ }
-    Err(UsageCollectorError::PluginTimeout) => { /* storage plugin timed out */ }
-    Err(UsageCollectorError::CircuitOpen) => { /* storage plugin circuit breaker open */ }
-    Err(UsageCollectorError::Internal { message }) => { /* unexpected error */ }
+    async fn query_raw(
+        &self,
+        query: RawQuery,
+    ) -> Result<Page<UsageRecord>, UsageCollectorError> {
+        todo!()
+    }
 }
 ```
 

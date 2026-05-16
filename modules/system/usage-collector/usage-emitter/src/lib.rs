@@ -5,17 +5,17 @@
 //!
 //! # Usage
 //!
-//! Source modules should not construct `UsageEmitter` directly. The `usage-collector`
+//! Source modules should not construct [`UsageEmitterFactory`] directly. The `usage-collector`
 //! or `usage-collector-rest-client` `ModKit` module builds and registers
-//! `dyn UsageEmitterV1` in `ClientHub` during `init()`.
+//! `dyn UsageEmitterFactoryV1` in `ClientHub` during `init()`.
 //!
 //! ```ignore
 //! // In init():
-//! let emitter = hub.get::<dyn UsageEmitterV1>()?;
-//! let scoped = emitter.for_module(Self::MODULE_NAME);
+//! let factory = hub.get::<dyn UsageEmitterFactoryV1>()?;
+//! let emitter = factory.for_module(Self::MODULE_NAME);
 //!
 //! // In a handler:
-//! let authorized = scoped
+//! let authorized = emitter
 //!     .authorize(&ctx, resource_id, "resource_type".to_owned())
 //!     .await?;
 //! authorized
@@ -27,20 +27,16 @@
 #![cfg_attr(coverage_nightly, feature(coverage_attribute))]
 
 mod api;
-mod authorized_emitter;
 mod config;
 mod domain;
-mod emitter;
 mod error;
 mod infra;
-mod scoped_emitter;
-mod usage_builder;
 
-pub use api::UsageEmitterV1;
-pub use authorized_emitter::AuthorizedUsageEmitter;
+pub use api::UsageEmitterFactoryV1;
 pub use config::UsageEmitterConfig;
-pub use emitter::UsageEmitter;
+pub use domain::authorized_emitter::AuthorizedUsageEmitter;
+pub use domain::emitter::UsageEmitter;
+pub use domain::factory::UsageEmitterFactory;
+pub use domain::usage_record_builder::UsageRecordBuilder;
 pub use error::UsageEmitterError;
 pub use infra::delivery_handler::DeliveryHandler;
-pub use scoped_emitter::ScopedUsageEmitter;
-pub use usage_builder::UsageRecordBuilder;

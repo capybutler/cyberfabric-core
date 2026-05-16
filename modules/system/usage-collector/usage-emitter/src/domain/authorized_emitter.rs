@@ -5,17 +5,18 @@ use modkit_db::Db;
 use modkit_db::outbox::Outbox;
 use modkit_db::secure::DBRunner;
 use tracing::debug;
+use usage_collector_sdk::error::UsageRecordError;
 use usage_collector_sdk::models::{AllowedMetric, UsageKind, UsageRecord};
 use uuid::Uuid;
 
 use crate::config::UsageEmitterConfig;
+use crate::domain::usage_record_builder::UsageRecordBuilder;
 use crate::error::UsageEmitterError;
-use crate::usage_builder::UsageRecordBuilder;
 
 /// Emitter state after successful PDP authorization; call [`Self::enqueue`] or
 /// [`Self::enqueue_in`] on the returned handle.
 ///
-/// Constructed via [`crate::ScopedUsageEmitter::authorize_for`]; callers cannot forge handles.
+/// Constructed via [`crate::UsageEmitter::authorize_for`]; callers cannot forge handles.
 pub struct AuthorizedUsageEmitter {
     config: Arc<UsageEmitterConfig>,
     pub(crate) db: Db,
@@ -70,7 +71,7 @@ impl AuthorizedUsageEmitter {
         let conn = self
             .db
             .conn()
-            .map_err(|e| UsageEmitterError::internal(e.to_string()))?;
+            .map_err(|e| UsageEmitterError::internal(e.to_string()).create())?;
         self.enqueue_in(&conn, record).await
     }
 
@@ -105,7 +106,7 @@ impl AuthorizedUsageEmitter {
 
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-8
         let payload = serde_json::to_vec(&record).map_err(|e| {
-            UsageEmitterError::internal(format!("payload serialization failed: {e}"))
+            UsageEmitterError::internal(format!("payload serialization failed: {e}")).create()
         })?;
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-8
 
@@ -118,7 +119,12 @@ impl AuthorizedUsageEmitter {
                 payload,
                 "usage-collector.record.v1",
             )
-            .await?;
+            .await
+            .map_err(|e| {
+                UsageEmitterError::service_unavailable()
+                    .with_detail(format!("outbox error: {e}"))
+                    .create()
+            })?;
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-9
 
         debug!(%self.tenant_id, "usage record enqueued");
@@ -136,7 +142,9 @@ impl AuthorizedUsageEmitter {
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-2
         if elapsed > self.config.authorization_max_age {
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-2a
-            return Err(UsageEmitterError::authorization_expired());
+            return Err(UsageEmitterError::unauthenticated()
+                .with_reason("emit authorization token has expired")
+                .create());
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-2a
         }
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-2
@@ -145,24 +153,24 @@ impl AuthorizedUsageEmitter {
 
     fn validate_authorized_tenant(&self, record: &UsageRecord) -> Result<(), UsageEmitterError> {
         if record.tenant_id != self.tenant_id {
-            return Err(UsageEmitterError::authorization_failed(
-                "usage record tenant_id does not match authorized tenant",
-            ));
+            return Err(UsageRecordError::permission_denied()
+                .with_reason("usage record tenant_id does not match authorized tenant")
+                .create());
         }
         Ok(())
     }
 
     fn validate_authorized_resource(&self, record: &UsageRecord) -> Result<(), UsageEmitterError> {
         if record.resource_id != self.resource_id {
-            return Err(UsageEmitterError::authorization_failed(
-                "usage record resource_id does not match authorized resource",
-            ));
+            return Err(UsageRecordError::permission_denied()
+                .with_reason("usage record resource_id does not match authorized resource")
+                .create());
         }
 
         if record.resource_type != self.resource_type {
-            return Err(UsageEmitterError::authorization_failed(
-                "usage record resource_type does not match authorized resource",
-            ));
+            return Err(UsageRecordError::permission_denied()
+                .with_reason("usage record resource_type does not match authorized resource")
+                .create());
         }
 
         Ok(())
@@ -170,9 +178,9 @@ impl AuthorizedUsageEmitter {
 
     fn validate_authorized_module(&self, record: &UsageRecord) -> Result<(), UsageEmitterError> {
         if record.module != self.module {
-            return Err(UsageEmitterError::invalid_record(
-                "record module does not match authorized token",
-            ));
+            return Err(UsageRecordError::permission_denied()
+                .with_reason("record module does not match authorized token")
+                .create());
         }
         Ok(())
     }
@@ -181,9 +189,9 @@ impl AuthorizedUsageEmitter {
         if record.subject_id != self.subject_id
             || record.subject_type.as_deref() != self.subject_type.as_deref()
         {
-            return Err(UsageEmitterError::invalid_record(
-                "record subject does not match authorized token",
-            ));
+            return Err(UsageRecordError::permission_denied()
+                .with_reason("record subject does not match authorized token")
+                .create());
         }
         Ok(())
     }
@@ -196,7 +204,12 @@ impl AuthorizedUsageEmitter {
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-4
         if !metric_allowed {
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-4a
-            return Err(UsageEmitterError::metric_not_allowed(&record.metric));
+            return Err(UsageRecordError::permission_denied()
+                .with_reason(format!(
+                    "metric not allowed for this module: {}",
+                    record.metric
+                ))
+                .create());
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-4a
         }
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-4
@@ -210,18 +223,32 @@ impl AuthorizedUsageEmitter {
             .find(|m| m.name == record.metric)
             && allowed.kind != record.kind
         {
-            return Err(UsageEmitterError::metric_kind_mismatch(
-                &record.metric,
-                allowed.kind,
-                record.kind,
-            ));
+            return Err(UsageRecordError::invalid_argument()
+                .with_constraint(format!(
+                    "metric '{}' expects kind {:?} but record specifies {:?}",
+                    record.metric, allowed.kind, record.kind
+                ))
+                .create());
         }
         Ok(())
     }
 
     fn validate_counter_value(record: &UsageRecord) -> Result<(), UsageEmitterError> {
+        if !record.value.is_finite() {
+            return Err(UsageRecordError::invalid_argument()
+                .with_constraint(format!(
+                    "value must be finite, got: {}",
+                    record.value
+                ))
+                .create());
+        }
         if record.kind == UsageKind::Counter && record.value < 0.0 {
-            return Err(UsageEmitterError::negative_counter_value(record.value));
+            return Err(UsageRecordError::invalid_argument()
+                .with_constraint(format!(
+                    "counter value must be non-negative, got: {}",
+                    record.value
+                ))
+                .create());
         }
         Ok(())
     }
@@ -230,9 +257,9 @@ impl AuthorizedUsageEmitter {
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5
         if record.kind == UsageKind::Counter && record.idempotency_key.trim().is_empty() {
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5a
-            return Err(UsageEmitterError::invalid_record(
-                "counter records require a non-empty idempotency key",
-            ));
+            return Err(UsageRecordError::invalid_argument()
+                .with_constraint("counter records require a non-empty idempotency_key")
+                .create());
             // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5a
         }
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5
@@ -244,12 +271,18 @@ impl AuthorizedUsageEmitter {
         if let Some(ref metadata) = record.metadata {
             let len = serde_json::to_vec(metadata)
                 .map_err(|e| {
-                    UsageEmitterError::internal(format!("metadata serialization failed: {e}"))
+                    UsageRecordError::invalid_argument()
+                        .with_constraint(format!("metadata is not serializable: {e}"))
+                        .create()
                 })?
                 .len();
             if len > 8192 {
                 // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-7a
-                return Err(UsageEmitterError::metadata_too_large(len));
+                return Err(UsageRecordError::invalid_argument()
+                    .with_constraint(format!(
+                        "metadata byte length {len} exceeds the 8192-byte limit"
+                    ))
+                    .create());
                 // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-7a
             }
         }

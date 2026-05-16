@@ -2,18 +2,18 @@ use std::time::Duration;
 
 use serde::Deserialize;
 
-/// Configuration for [`crate::UsageEmitter`].
+/// Configuration for [`crate::UsageEmitterFactory`].
 ///
 /// Host modules embed this inside their own config struct and forward it to
-/// [`crate::UsageEmitter::build`]. All fields have sensible defaults so
+/// [`crate::UsageEmitterFactory::build`]. All fields have sensible defaults so
 /// `#[serde(default)]` on the embedding struct is sufficient for zero-config usage.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(default)]
 pub struct UsageEmitterConfig {
     /// Maximum age of an [`crate::AuthorizedUsageEmitter`] handle after
-    /// [`crate::UsageEmitterV1::authorize`] before
+    /// [`crate::UsageEmitter::authorize`] before
     /// [`crate::AuthorizedUsageEmitter::enqueue`] / [`crate::AuthorizedUsageEmitter::enqueue_in`]
-    /// reject it with [`crate::UsageEmitterError::AuthorizationExpired`].
+    /// reject it with [`crate::UsageEmitterError::Unauthenticated`].
     pub authorization_max_age: Duration,
 
     /// Outbox queue name for usage records delivered to the collector.

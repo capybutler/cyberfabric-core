@@ -3,25 +3,23 @@
 use std::sync::Arc;
 
 use async_trait::async_trait;
-use authn_resolver_sdk::{AuthNResolverClient, AuthNResolverError, ClientCredentialsRequest};
+use authn_resolver_sdk::{AuthNResolverClient, ClientCredentialsRequest};
 use http::StatusCode;
-use modkit_http::{HttpClient, HttpClientBuilder, HttpError};
-use secrecy::{ExposeSecret, SecretString};
+use modkit_http::{HttpClient, HttpClientBuilder, HttpClientConfig, HttpError, HttpResponse};
+use tower::ServiceExt;
 use usage_collector_sdk::models::UsageRecord;
-use usage_collector_sdk::{ModuleConfig, UsageCollectorClientV1, UsageCollectorError};
+use usage_collector_sdk::{
+    ModuleConfig, ModuleConfigError, UsageCollectorClientV1, UsageCollectorError, UsageRecordError,
+};
 
-use crate::api::rest::dto::CreateUsageRecordBody;
 use crate::config::UsageCollectorRestClientConfig;
+use crate::infra::BearerTokenAuthLayer;
 
 // @cpt-dod:cpt-cf-usage-collector-dod-rest-ingest-rest-client-crate:p1
 /// REST-backed [`usage_collector_sdk::UsageCollectorClientV1`].
 pub struct UsageCollectorRestClient {
+    cfg: UsageCollectorRestClientConfig,
     http_client: HttpClient,
-    authn_client: Arc<dyn AuthNResolverClient>,
-    client_id: String,
-    client_secret: SecretString,
-    scopes: Vec<String>,
-    base_url: String,
 }
 
 impl UsageCollectorRestClient {
@@ -32,49 +30,27 @@ impl UsageCollectorRestClient {
     /// Returns an error if the HTTP client cannot be constructed.
     pub fn new(
         cfg: &UsageCollectorRestClientConfig,
-        authn: Arc<dyn AuthNResolverClient>,
+        authn_client: Arc<dyn AuthNResolverClient>,
     ) -> Result<Self, modkit_http::HttpError> {
-        let http_client = HttpClientBuilder::new()
-            .timeout(cfg.request_timeout)
+        let credentials = ClientCredentialsRequest {
+            client_id: cfg.oauth.client_id.clone(),
+            client_secret: cfg.oauth.client_secret.clone(),
+            scopes: cfg.oauth.scopes.clone(),
+        };
+        let layer = BearerTokenAuthLayer::new(authn_client, credentials);
+        let http_client = HttpClientBuilder::with_config(HttpClientConfig::default())
+            .with_auth_layer(move |svc| {
+                tower::ServiceBuilder::new()
+                    .layer(layer)
+                    .service(svc)
+                    .boxed_clone()
+            })
             .build()?;
 
-        let base_url = cfg.base_url.trim_end_matches('/').to_owned();
-
         Ok(Self {
+            cfg: cfg.clone(),
             http_client,
-            authn_client: authn,
-            client_id: cfg.client_id.clone(),
-            client_secret: cfg.client_secret.clone(),
-            scopes: cfg.scopes.clone(),
-            base_url,
         })
-    }
-
-    async fn bearer_token(&self) -> Result<String, UsageCollectorError> {
-        let request = ClientCredentialsRequest {
-            client_id: self.client_id.clone(),
-            client_secret: self.client_secret.clone(),
-            scopes: self.scopes.clone(),
-        };
-
-        let auth_result = self
-            .authn_client
-            .exchange_client_credentials(&request)
-            .await
-            .map_err(authn_error_to_usage_collector_error)?;
-
-        let token = auth_result
-            .security_context
-            .bearer_token()
-            .ok_or_else(|| {
-                UsageCollectorError::internal(
-                    "AuthN exchange succeeded but SecurityContext has no bearer token",
-                )
-            })?
-            .expose_secret()
-            .to_owned();
-
-        Ok(token)
     }
 }
 
@@ -84,48 +60,106 @@ impl UsageCollectorClientV1 for UsageCollectorRestClient {
     async fn create_usage_record(&self, record: UsageRecord) -> Result<(), UsageCollectorError> {
         // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-1
         // inst-dlv-4: called from DeliveryHandler::handle — see delivery_handler.rs
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-2
-        let token = self.bearer_token().await?;
-        let auth_header = format!("Bearer {token}");
-        // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-2
 
         // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-5
-        let url = format!("{}/usage-collector/v1/records", self.base_url);
-
-        // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-3
-        let body = CreateUsageRecordBody {
-            module: record.module,
-            tenant_id: record.tenant_id,
-            resource_type: record.resource_type,
-            resource_id: record.resource_id,
-            metric: record.metric,
-            kind: record.kind,
-            subject_id: record.subject_id,
-            subject_type: record.subject_type,
-            idempotency_key: record.idempotency_key,
-            value: record.value,
-            timestamp: record.timestamp,
-            metadata: record.metadata,
-        };
-        // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-outbox-delivery:p1:inst-dlv-3
+        let mut url = self.cfg.collector_url.clone();
+        url.path_segments_mut()
+            .map_err(|()| UsageCollectorError::internal("collector_url is not a hierarchical URL").create())?
+            .clear()
+            .extend(["usage-collector", "v1", "records"]);
 
         let response = self
             .http_client
-            .post(&url)
-            .header("authorization", &auth_header)
-            .json(&body)
+            .post(url.as_str())
+            .json(&record)
             .map_err(|e| {
-                UsageCollectorError::internal(format!("failed to serialize usage record: {e}"))
+                UsageCollectorError::internal(format!("failed to serialize usage record: {e}")).create()
             })?
             .send()
             .await
-            .map_err(http_send_error_to_usage_collector_error)?;
+            .map_err(|e| match e {
+                // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-3a
+                // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-4a
+                // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-7a
+                // `BearerTokenAuthLayer` wraps every AuthN resolver failure (transient or
+                // permanent credential rejection) as `HttpError::Transport`, so this arm
+                // returns the `ServiceUnavailable` mapping for `inst-rem-3a`/`inst-rem-4a`.
+                // Genuine HTTP transport errors (connection refused, DNS failure, TLS
+                // failure, …) flow through the same arm and satisfy `inst-rem-7a`.
+                HttpError::Transport(inner) => UsageCollectorError::service_unavailable()
+                    .with_detail(format!("REST request failed: {inner}"))
+                    .create(),
+                // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-7a
+                // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-4a
+                // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-3a
+                // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-6
+                // Timeout variants map to DeadlineExceeded to keep the circuit-breaker semantics intact.
+                HttpError::Timeout(_) | HttpError::DeadlineExceeded(_) => {
+                    UsageRecordError::deadline_exceeded("HTTP request deadline exceeded").create()
+                }
+                // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-6
+                // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-7
+                // Residual non-Transport, non-Timeout HttpError variants
+                // (`InvalidHeaderValue`, `BodyTooLarge`, `Tls`, …) are also transient from
+                // the outbox's point of view: the request never reached the server, so
+                // retrying is appropriate.
+                other => UsageCollectorError::service_unavailable()
+                    .with_detail(format!("REST request failed: {other}"))
+                    .create(),
+                // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-7
+            })?;
 
         match response.status() {
             // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-8
             StatusCode::NO_CONTENT => Ok(()),
             // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-8
-            status => Err(http_status_to_usage_collector_error(status)),
+            status => {
+                let body = truncated_response_body(response).await;
+                match status {
+                    // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-9
+                    // 401 is transient: the bearer token may have expired between acquisition and the
+                    // request reaching the gateway. The next delivery attempt acquires a fresh token.
+                    StatusCode::UNAUTHORIZED => Err(UsageCollectorError::service_unavailable()
+                        .with_detail(format!(
+                            "usage collector rejected request with HTTP {}: {body}",
+                            StatusCode::UNAUTHORIZED
+                        ))
+                        .create()),
+                    // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-9
+                    // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-11
+                    // 403 is permanent: the gateway PDP denied the forwarder's service identity.
+                    // Implements the `PermissionDenied` half of `inst-rem-11a`; the catch-all
+                    // status arm below handles the `Internal` half for residual 4xx.
+                    StatusCode::FORBIDDEN => Err(UsageRecordError::permission_denied()
+                        .with_reason(format!(
+                            "usage collector rejected request with HTTP {}: {body}",
+                            StatusCode::FORBIDDEN
+                        ))
+                        .create()),
+                    // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-11
+                    // inst-dlv-6: 429 and 5xx are transient — mapped to ResourceExhausted/ServiceUnavailable to trigger Retry
+                    // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-10
+                    StatusCode::TOO_MANY_REQUESTS => Err(UsageRecordError::resource_exhausted(
+                        "usage collector rejected request: rate limit exceeded",
+                    )
+                    .with_quota_violation(
+                        "requests",
+                        format!("rate limit exceeded by usage collector: {body}"),
+                    )
+                    .create()),
+                    s if s.is_server_error() => Err(UsageCollectorError::service_unavailable()
+                        .with_detail(format!("usage collector returned HTTP {s}: {body}"))
+                        .create()),
+                    // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-10
+                    // inst-dlv-7: other 4xx (excluding 429) and unexpected statuses are permanent
+                    // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-11
+                    status => Err(UsageCollectorError::internal(format!(
+                        "unexpected HTTP status from usage collector: {status}: {body}"
+                    ))
+                    .create()),
+                    // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-11
+                }
+            }
         }
         // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-5
         // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-1
@@ -137,26 +171,31 @@ impl UsageCollectorClientV1 for UsageCollectorRestClient {
         module_name: &str,
     ) -> Result<ModuleConfig, UsageCollectorError> {
         // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-1
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-2
-        let token = self.bearer_token().await?;
-        let auth_header = format!("Bearer {token}");
-        // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-2
 
         // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-3
-        let encoded_module_name = urlencoding::encode(module_name);
-        let url = format!(
-            "{}/usage-collector/v1/modules/{encoded_module_name}/config",
-            self.base_url
-        );
+        let mut url = self.cfg.collector_url.clone();
+        url.path_segments_mut()
+            .map_err(|()| UsageCollectorError::internal("collector_url is not a hierarchical URL").create())?
+            .clear()
+            .extend(["usage-collector", "v1", "modules", module_name, "config"]);
         // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-3
 
         let response = self
             .http_client
-            .get(&url)
-            .header("authorization", &auth_header)
+            .get(url.as_str())
             .send()
             .await
-            .map_err(http_send_error_to_usage_collector_error)?;
+            .map_err(|e| match e {
+                HttpError::Transport(inner) => UsageCollectorError::service_unavailable()
+                    .with_detail(format!("REST request failed: {inner}"))
+                    .create(),
+                HttpError::Timeout(_) | HttpError::DeadlineExceeded(_) => {
+                    ModuleConfigError::deadline_exceeded("HTTP request deadline exceeded").create()
+                }
+                other => UsageCollectorError::service_unavailable()
+                    .with_detail(format!("REST request failed: {other}"))
+                    .create(),
+            })?;
 
         match response.status() {
             // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-4
@@ -164,83 +203,66 @@ impl UsageCollectorClientV1 for UsageCollectorRestClient {
                 UsageCollectorError::internal(format!(
                     "failed to parse module config response: {e}"
                 ))
+                .create()
             }),
             // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-4
             // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-5
-            StatusCode::NOT_FOUND => Err(UsageCollectorError::module_not_found(module_name)),
+            StatusCode::NOT_FOUND => Err(ModuleConfigError::not_found(format!(
+                "module '{module_name}' is not configured"
+            ))
+            .with_resource(module_name)
+            .create()),
             // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-5
             // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-6
-            status => Err(http_status_to_usage_collector_error(status)),
+            status => {
+                let body = truncated_response_body(response).await;
+                match status {
+                    StatusCode::UNAUTHORIZED => Err(UsageCollectorError::service_unavailable()
+                        .with_detail(format!(
+                            "usage collector rejected request with HTTP {}: {body}",
+                            StatusCode::UNAUTHORIZED
+                        ))
+                        .create()),
+                    StatusCode::FORBIDDEN => Err(ModuleConfigError::permission_denied()
+                        .with_reason(format!(
+                            "usage collector rejected request with HTTP {}: {body}",
+                            StatusCode::FORBIDDEN
+                        ))
+                        .create()),
+                    StatusCode::TOO_MANY_REQUESTS => Err(ModuleConfigError::resource_exhausted(
+                        "usage collector rejected request: rate limit exceeded",
+                    )
+                    .with_quota_violation(
+                        "requests",
+                        format!("rate limit exceeded by usage collector: {body}"),
+                    )
+                    .create()),
+                    s if s.is_server_error() => Err(UsageCollectorError::service_unavailable()
+                        .with_detail(format!("usage collector returned HTTP {s}: {body}"))
+                        .create()),
+                    status => Err(UsageCollectorError::internal(format!(
+                        "unexpected HTTP status from usage collector: {status}: {body}"
+                    ))
+                    .create()),
+                }
+            }
             // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-6
         }
         // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-fetch-module-config:p2:inst-cfg-rem-1
     }
 }
 
-fn authn_error_to_usage_collector_error(e: AuthNResolverError) -> UsageCollectorError {
-    match e {
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-4
-        // Permanent: the configured client credentials are actively rejected.
-        AuthNResolverError::Unauthorized(msg) => {
-            UsageCollectorError::authorization_failed(format!("client credentials: {msg}"))
-        }
-        // Permanent misconfiguration: no AuthN plugin is registered in the hub.
-        // Retrying will not help; this requires operator intervention.
-        AuthNResolverError::NoPluginAvailable => UsageCollectorError::internal(
-            "no AuthN plugin available for client credentials exchange",
-        ),
-        // Permanent: an internal error in the AuthN subsystem. Retrying will not fix this.
-        AuthNResolverError::Internal(msg) => UsageCollectorError::unavailable(format!(
-            "AuthN internal error during client credentials exchange: {msg}"
-        )),
-        // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-4
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-3
-        // Transient: the identity service is temporarily unreachable (network outage,
-        // service restart, etc.). Retrying after backoff is appropriate.
-        other => {
-            UsageCollectorError::unavailable(format!("client credentials exchange failed: {other}"))
-        } // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-3
+async fn truncated_response_body(response: HttpResponse) -> String {
+    const MAX: usize = 4_096;
+    let mut body = response
+        .bytes()
+        .await
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .unwrap_or_default();
+    if body.len() > MAX {
+        body.truncate(body.floor_char_boundary(MAX));
     }
-}
-
-fn http_send_error_to_usage_collector_error(e: HttpError) -> UsageCollectorError {
-    match e {
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-6
-        // Timeout variants map to PluginTimeout to keep the circuit-breaker semantics intact.
-        HttpError::Timeout(_) | HttpError::DeadlineExceeded(_) => {
-            UsageCollectorError::plugin_timeout()
-        }
-        // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-6
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-7
-        // All other transport-level errors (connection refused, DNS failure, TLS error, etc.)
-        // are transient: the request never reached the server and retrying is appropriate.
-        other => UsageCollectorError::unavailable(format!("REST request failed: {other}")),
-        // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-7
-    }
-}
-
-fn http_status_to_usage_collector_error(status: StatusCode) -> UsageCollectorError {
-    match status {
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-9
-        StatusCode::UNAUTHORIZED | StatusCode::FORBIDDEN => {
-            UsageCollectorError::authorization_failed(format!(
-                "usage collector rejected request with HTTP {status}"
-            ))
-        }
-        // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-9
-        // inst-dlv-6: 429 and 5xx are transient — mapped to PluginTimeout to trigger Retry
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-10
-        s if s == StatusCode::TOO_MANY_REQUESTS || s.is_server_error() => {
-            UsageCollectorError::plugin_timeout()
-        }
-        // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-10
-        // inst-dlv-7: other 4xx (excluding 429) and unexpected statuses are permanent
-        // @cpt-begin:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-11
-        _ => UsageCollectorError::internal(format!(
-            "unexpected HTTP status from usage collector: {status}"
-        )),
-        // @cpt-end:cpt-cf-usage-collector-flow-rest-ingest-remote-emit:p1:inst-rem-11
-    }
+    body
 }
 
 #[cfg(test)]

@@ -21,7 +21,7 @@ Source modules should emit through **`usage-emitter`** (PDP + outbox). This crat
 
 ## Configuration
 
-`vendor` must match the `vendor` field on the storage plugin GTS content so `choose_plugin_instance` selects the right instance. `plugin_timeout` bounds each `create_usage_record` call; exceeded waits become `UsageCollectorError::PluginTimeout`. `emitter` holds nested `UsageEmitterConfig` for outbox and authorization tuning. `metrics` is a whitelist of allowed metric names, each with a `kind` (`gauge` or `counter`) and an optional `modules` list (if absent, all modules may emit that metric).
+`vendor` must match the `vendor` field on the storage plugin GTS content so `choose_plugin_instance` selects the right instance. `plugin_timeout` bounds each `create_usage_record` call; exceeded waits become `UsageCollectorError::DeadlineExceeded`. `emitter` holds nested `UsageEmitterConfig` for outbox and authorization tuning. `metrics` is a whitelist of allowed metric names, each with a `kind` (`gauge` or `counter`) and an optional `modules` list (if absent, all modules may emit that metric).
 
 ```yaml
 modules:

@@ -22,7 +22,7 @@ use testcontainers::{
 use usage_collector_sdk::models::{
     AggregationFn, AggregationQuery, BucketSize, GroupByDimension, RawQuery, UsageKind, UsageRecord,
 };
-use usage_collector_sdk::{UsageCollectorError, UsageCollectorPluginClientV1};
+use usage_collector_sdk::{CanonicalError, UsageCollectorPluginClientV1};
 use uuid::Uuid;
 
 use timescaledb_usage_collector_storage_plugin::domain::client::TimescaleDbPluginClient;
@@ -1910,7 +1910,7 @@ async fn query_aggregated_result_too_large() {
         .await;
 
     assert!(
-        matches!(result, Err(ref e) if matches!(e, UsageCollectorError::QueryResultTooLarge { .. })),
+        matches!(result, Err(ref e) if matches!(e, CanonicalError::ResourceExhausted { .. })),
         "expected QueryResultTooLarge, got {result:?}"
     );
 }
@@ -2205,8 +2205,8 @@ async fn create_record_negative_counter_value() {
 
     let err = client.create_usage_record(record).await.unwrap_err();
     assert!(
-        matches!(err, UsageCollectorError::Internal { .. }),
-        "expected Internal error for negative counter value, got {err:?}"
+        matches!(err, CanonicalError::InvalidArgument { .. }),
+        "expected InvalidArgument error for negative counter value, got {err:?}"
     );
 }
 
@@ -2222,7 +2222,7 @@ async fn create_record_empty_idempotency_key() {
 
     let err = client.create_usage_record(record).await.unwrap_err();
     assert!(
-        matches!(err, UsageCollectorError::Internal { .. }),
-        "expected Internal error for empty idempotency_key, got {err:?}"
+        matches!(err, CanonicalError::InvalidArgument { .. }),
+        "expected InvalidArgument error for empty idempotency_key, got {err:?}"
     );
 }

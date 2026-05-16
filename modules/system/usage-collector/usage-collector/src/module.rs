@@ -11,16 +11,14 @@ use modkit::{Module, ModuleCtx};
 use sea_orm_migration::MigrationTrait;
 use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
-use usage_collector_sdk::{
-    UsageCollectorClientV1, UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1,
-};
-use usage_emitter::{UsageEmitter, UsageEmitterV1};
+use usage_collector_sdk::UsageCollectorPluginSpecV1;
+use usage_emitter::{UsageEmitterFactory, UsageEmitterFactoryV1};
 
 use crate::api::rest::routes;
 use crate::config::UsageCollectorConfig;
-use crate::domain::UsageCollectorLocalClient;
+use crate::domain::{Service, UsageCollectorLocalClient};
 
-/// Usage collector gateway: registers storage plugin schema, resolves plugins via GTS,
+/// Usage collector gateway: registers plugin schema, resolves plugins via GTS,
 /// exposes `dyn UsageCollectorClientV1` for outbox delivery, and wires REST endpoints
 /// via `DatabaseCapability` and `RestApiCapability`.
 #[modkit::module(
@@ -30,10 +28,8 @@ use crate::domain::UsageCollectorLocalClient;
 )]
 #[derive(Default)]
 pub struct UsageCollectorModule {
-    /// Gateway collector client stored during `init()` for use in `register_rest()`.
-    collector: OnceLock<Arc<dyn UsageCollectorClientV1>>,
-    /// Plugin proxy stored during `init()` for injection into query handlers.
-    plugin_client: OnceLock<Arc<dyn UsageCollectorPluginClientV1>>,
+    /// Gateway service stored during `init()` for use in `register_rest()`.
+    service: OnceLock<Arc<Service>>,
 }
 
 #[async_trait]
@@ -51,13 +47,13 @@ impl Module for UsageCollectorModule {
         );
 
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
-        let schema_str = UsageCollectorStoragePluginSpecV1::gts_schema_with_refs_as_string();
+        let schema_str = UsageCollectorPluginSpecV1::gts_schema_with_refs_as_string();
         let schema_json: serde_json::Value = serde_json::from_str(&schema_str)?;
         let results = registry.register(vec![schema_json]).await?;
         RegisterResult::ensure_all_ok(&results)?;
         info!(
-            schema_id = %UsageCollectorStoragePluginSpecV1::gts_schema_id(),
-            "Registered {} storage plugin schema in types-registry",
+            schema_id = %UsageCollectorPluginSpecV1::gts_schema_id(),
+            "Registered {} plugin schema in types-registry",
             Self::MODULE_NAME,
         );
 
@@ -76,24 +72,18 @@ impl Module for UsageCollectorModule {
                 )
             })?;
 
-        let local = Arc::new(UsageCollectorLocalClient::new(
-            cfg.clone(),
-            ctx.client_hub(),
-        ));
-        let plugin_client = UsageCollectorLocalClient::as_plugin_client(Arc::clone(&local));
-        let collector = local as Arc<dyn UsageCollectorClientV1>;
+        let service = Service::new(cfg.clone(), ctx.client_hub());
+        let service = Arc::new(service);
+        self.service
+            .set(Arc::clone(&service))
+            .map_err(|_| anyhow::anyhow!("{} module already initialized", Self::MODULE_NAME))?;
 
-        let emitter = UsageEmitter::build(cfg.emitter, db, authz, Arc::clone(&collector)).await?;
-        ctx.client_hub()
-            .register::<dyn UsageEmitterV1>(Arc::new(emitter));
+        let collector = UsageCollectorLocalClient::new(service);
+        let collector = Arc::new(collector);
 
-        self.collector
-            .set(collector)
-            .map_err(|_| anyhow::anyhow!("{}: collector already initialized", Self::MODULE_NAME))?;
-
-        self.plugin_client.set(plugin_client).map_err(|_| {
-            anyhow::anyhow!("{}: plugin_client already initialized", Self::MODULE_NAME)
-        })?;
+        let emitter = UsageEmitterFactory::build(cfg.emitter, db, authz, collector).await?;
+        let emitter = Arc::new(emitter);
+        ctx.client_hub().register::<dyn UsageEmitterFactoryV1>(emitter);
 
         Ok(())
     }
@@ -115,18 +105,15 @@ impl RestApiCapability for UsageCollectorModule {
     ) -> anyhow::Result<Router> {
         tracing::info!("Registering {} REST routes", Self::MODULE_NAME);
 
-        let emitter = ctx.client_hub().get::<dyn UsageEmitterV1>().map_err(|e| {
-            anyhow::anyhow!("{}: UsageEmitterV1 not registered: {e}", Self::MODULE_NAME)
+        let emitter = ctx.client_hub().get::<dyn UsageEmitterFactoryV1>().map_err(|e| {
+            anyhow::anyhow!("{}: UsageEmitterFactoryV1 not registered: {e}", Self::MODULE_NAME)
         })?;
 
-        let collector = self
-            .collector
+        let service = self
+            .service
             .get()
-            .ok_or_else(|| anyhow::anyhow!("{}: collector not initialized", Self::MODULE_NAME))?;
-
-        let plugin_client = self.plugin_client.get().ok_or_else(|| {
-            anyhow::anyhow!("{}: plugin_client not initialized", Self::MODULE_NAME)
-        })?;
+            .ok_or_else(|| anyhow::anyhow!("{}: service not initialized", Self::MODULE_NAME))?;
+        let service = Arc::clone(service);
 
         let authz_client = ctx
             .client_hub()
@@ -142,12 +129,11 @@ impl RestApiCapability for UsageCollectorModule {
             router,
             openapi,
             emitter,
-            Arc::clone(collector),
+            service,
             authz_client,
-            Arc::clone(plugin_client),
         );
-
         tracing::info!("{} REST routes registered", Self::MODULE_NAME);
+
         Ok(router)
     }
 }

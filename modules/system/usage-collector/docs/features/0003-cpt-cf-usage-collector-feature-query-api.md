@@ -1,7 +1,23 @@
 ---
 cpt:
-  version: "3.1"
+  version: "3.5"
   changelog:
+    - version: "3.5"
+      date: "2026-05-10"
+      changes:
+        - "Document the gateway-side authz module location (RESEARCH-diverge issue H): the §3 `cpt-cf-usage-collector-algo-query-api-authz-delegate` algorithm is implemented in `usage-collector/src/domain/authz.rs`; `Service` calls it before each query and embeds the resulting `AccessScope` into `AggregationQuery.scope` / `RawQuery.scope`. Document the REST API license-feature gate and OpenAPI 503 declaration drift (RESEARCH-diverge issue I): every `/usage-collector/v1/*` endpoint registered by `routes.rs` is gated behind `LicenseFeature` `gts.cf.core.lic.feat.v1~cf.core.global.base.v1` via `OperationBuilder::require_license_features::<License>([])` — added to §5 Gateway Aggregated/Raw DoD bodies and §6 AC. The gateway's runtime 503 emission for `service_unavailable` (per `inst-agg-8c` / `inst-raw-8b`) is produced by the canonical Problem mapper at the handler boundary; the OpenAPI registry currently declares only the explicitly-registered `error_400` / `error_403` / `error_500` responses for the query routes, so the published OpenAPI document does not advertise the runtime 503 — captured as MAINT-FDESIGN-002-02 in §5 Known Limitations."
+    - version: "3.4"
+      date: "2026-05-10"
+      changes:
+        - "Drop `ctx: &SecurityContext` from the storage-plugin query trait operations (RESEARCH-diverge issue E). The gateway now compiles the PDP-derived `AccessScope` and embeds it in `AggregationQuery.scope` / `RawQuery.scope` (per `inst-agg-7` / `inst-raw-7`), so `UsageCollectorPluginClientV1::query_aggregated` and `::query_raw` take no separate `SecurityContext` parameter. Updates: `inst-sdk-8` and `inst-sdk-9` (trait signatures); `inst-agg-8` and `inst-raw-8` (gateway → plugin call labels); `inst-noop-1` and `inst-noop-2` (noop plugin steps no longer mention an ignored `ctx`)."
+    - version: "3.3"
+      date: "2026-05-10"
+      changes:
+        - "Complete v3.2 canonical-taxonomy alignment in the §2 gateway flows that consume `inst-plugin-contract-3` — v3.2 scoped its rewrite to the plugin contract / DoD / AC / OPS sections but missed the gateway flow steps that still referenced the nonexistent `QueryResultTooLarge` variant. Drop the gateway-side 400 'query too broad' shortcut (the actual handler at `usage-collector/src/api/rest/handlers.rs:287-301` forwards canonical status codes via `domain_error_to_problem` → `canonical_error_to_problem` → `e.status_code()` and never special-cases the variant). Updates: `inst-agg-8b` rewritten as a no-op fall-through note that preserves the ID for traceability and points at `inst-agg-8c`'s canonical Problem mapping; `inst-agg-8c` qualifier `[that is not QueryResultTooLarge]` removed; `inst-raw-8b` qualifier `[that is not QueryResultTooLarge]` removed (raw queries do not enforce `MAX_AGG_ROWS`, so the qualifier was doubly stale); §6 AC line for `Err(ResourceExhausted)` updated from 'returns 400 query too broad' to 'mapped via the canonical Problem flow per inst-agg-8c — there is no gateway-side 400 shortcut'."
+    - version: "3.2"
+      date: "2026-05-10"
+      changes:
+        - "Replace nonexistent `UsageCollectorError::QueryResultTooLarge` variant with the canonical `ResourceExhausted` variant (built via `UsageRecordError::resource_exhausted(\"query result too large\")`). `UsageCollectorError = CanonicalError` exposes no `QueryResultTooLarge` builder; `ResourceExhausted` is the canonical carrier for quota / size-limit violations in the platform error taxonomy. Updates: `inst-plugin-contract-3` (§3 plugin contract), `cpt-cf-usage-collector-dod-query-api-plugin-contract` (§5 DoD body), §6 AC line 'plugin returns Err(QueryResultTooLarge)', and OPS-FDESIGN-002 `MAX_AGG_ROWS` constant description in §7."
     - version: "3.1"
       date: "2026-05-03"
       changes:
@@ -152,9 +168,9 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
    1. [x] - `p1` - **RETURN** 403 Forbidden - `inst-agg-6a`
 7. [x] - `p1` - Gateway: build AggregationQuery (scope from compiled AccessScope, time_range, function, group_by, bucket_size, user-supplied optional filters) - `inst-agg-7`
    > The HTTP query parameter `usage_type=` maps directly to the `usage_type` field of `AggregationQuery`. No translation is required.
-8. [x] - `p1` - Gateway: Plugin: query_aggregated(ctx, AggregationQuery) - `inst-agg-8`
-   1. [x] - `p1` - **IF** plugin returns `Err(QueryResultTooLarge)` → **RETURN** 400 Bad Request with 'query too broad' error - `inst-agg-8b`
-   2. [x] - `p1` - **IF** plugin returns `Err(e)` [that is not `QueryResultTooLarge`] → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-agg-8c`
+8. [x] - `p1` - Gateway: Plugin: query_aggregated(AggregationQuery) — the gateway has already compiled the PDP-derived `AccessScope` into `AggregationQuery.scope` (see `inst-agg-7`); the plugin contract takes no separate `SecurityContext` - `inst-agg-8`
+   1. [x] - `p1` - The gateway does NOT special-case `Err(ResourceExhausted)` (e.g., `MAX_AGG_ROWS` exceeded per `inst-plugin-contract-3`); the canonical Problem mapping in `inst-agg-8c` applies — `inst-agg-8b`
+   2. [x] - `p1` - **IF** plugin returns `Err(e)` → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-agg-8c`
 9. [x] - `p1` - **RETURN** 200 OK with Vec<AggregationResult> - `inst-agg-9`
 
 ### Raw Usage Query
@@ -187,8 +203,8 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 6. [x] - `p2` - **IF** authorization failed - `inst-raw-6`
    1. [x] - `p2` - **RETURN** 403 Forbidden - `inst-raw-6a`
 7. [x] - `p2` - Gateway: build RawQuery (scope from compiled AccessScope, time_range, decoded cursor, page_size; pass user-supplied optional filters from HTTP query parameters: usage_type, resource_id, resource_type, subject_type, subject_id) - `inst-raw-7`
-8. [x] - `p2` - Gateway: Plugin: query_raw(ctx, RawQuery) → Page<UsageRecord> - `inst-raw-8`
-   1. [x] - `p2` - **IF** plugin returns `Err(e)` [that is not `QueryResultTooLarge`] → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-raw-8b`
+8. [x] - `p2` - Gateway: Plugin: query_raw(RawQuery) → Page<UsageRecord> — the gateway has already compiled the PDP-derived `AccessScope` into `RawQuery.scope` (see `inst-raw-7`); the plugin contract takes no separate `SecurityContext` - `inst-raw-8`
+   1. [x] - `p2` - **IF** plugin returns `Err(e)` → **LOG** at `ERROR` level with correlation ID (no PII) → **RETURN** `503 Service Unavailable` with body `{"error": "service_unavailable", "correlation_id": "<id>"}` ; the `correlation_id` field MUST match the value logged at `ERROR` level. - `inst-raw-8b`
 9. [x] - `p2` - **RETURN** 200 OK with `Page<UsageRecord>` (`items` array + `page_info.next_cursor`; absent `page_info.next_cursor` signals the final page; empty `items` with absent `page_info.next_cursor` is a valid success) - `inst-raw-9`
 
 > **Retry guidance**: 4xx responses (400, 403) are not retryable. 5xx responses (503) should be retried by the caller with exponential backoff; the gateway does not retry internally.
@@ -198,6 +214,8 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 ### Authorize and Compile Scope
 
 - [ ] `p1` - **ID**: `cpt-cf-usage-collector-algo-query-api-authz-delegate`
+
+**Code location**: implemented in the gateway crate at `usage-collector/src/domain/authz.rs`. The query handlers in `usage-collector/src/api/rest/handlers.rs` invoke this module via `Service` (`usage-collector/src/domain/service.rs`) before delegating to the plugin; the resulting `AccessScope` is embedded into `AggregationQuery.scope` / `RawQuery.scope` so the plugin contract takes no separate `SecurityContext`.
 
 **Input**: `SecurityContext`, resource type constant (`USAGE_RECORD_READ`), action (`actions::LIST`)
 
@@ -240,8 +258,8 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
    > **Filter composition**: All present optional filters AND the AccessScope scope are applied conjunctively (AND semantics).
    >
    > **Feature flags**: Not applicable for this feature; see §7.
-8. [x] - `p1` - Add `query_aggregated(&self, ctx: &SecurityContext, query: AggregationQuery) -> Result<Vec<AggregationResult>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-8`
-9. [x] - `p2` - Add `query_raw(&self, ctx: &SecurityContext, query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — breaking trait change; all existing implementations must be updated - `inst-sdk-9`
+8. [x] - `p1` - Add `query_aggregated(&self, query: AggregationQuery) -> Result<Vec<AggregationResult>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — the gateway compiles the PDP-derived `AccessScope` and embeds it in `AggregationQuery.scope` (see `inst-agg-7`), so the plugin contract takes no separate `SecurityContext`; breaking trait change; all existing implementations must be updated - `inst-sdk-8`
+9. [x] - `p2` - Add `query_raw(&self, query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError>` to `UsageCollectorPluginClientV1` — the gateway compiles the PDP-derived `AccessScope` and embeds it in `RawQuery.scope` (see `inst-raw-7`), so the plugin contract takes no separate `SecurityContext`; breaking trait change; all existing implementations must be updated - `inst-sdk-9`
 
 ### Noop Plugin Query Stubs
 
@@ -252,8 +270,8 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 **Output**: Compiling, non-panicking stub implementations in `noop-usage-collector-storage-plugin`
 
 **Steps**:
-1. [x] - `p1` - Implement `query_aggregated` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return Ok(vec![]) — no storage access, no error - `inst-noop-1`
-2. [x] - `p2` - Implement `query_raw` on `NoopUsageCollectorStoragePlugin`: accept ctx and query, ignore both, return `Ok(Page::new(vec![], PageInfo { next_cursor: None, prev_cursor: None, limit: query.page_size as u64 }))` — no storage access, no error - `inst-noop-2`
+1. [x] - `p1` - Implement `query_aggregated` on `NoopUsageCollectorStoragePlugin`: accept the query, ignore it, return Ok(vec![]) — no storage access, no error - `inst-noop-1`
+2. [x] - `p2` - Implement `query_raw` on `NoopUsageCollectorStoragePlugin`: accept the query, ignore it, return `Ok(Page::new(vec![], PageInfo { next_cursor: None, prev_cursor: None, limit: query.page_size as u64 }))` — no storage access, no error - `inst-noop-2`
 
 ### Plugin Trait Contract Requirements
 
@@ -266,7 +284,7 @@ Enables authorized usage consumers and tenant administrators to retrieve aggrega
 **Steps**:
 1. [ ] - `p2` - String filter fields MUST be parameterized in all storage queries; direct string interpolation is prohibited. - `inst-plugin-contract-1`
 2. [ ] - `p2` - AccessScope constraints MUST be applied as mandatory row filters; each Constraint is an AND-group (all fields within one Constraint must match simultaneously); constraints across groups are combined with OR. - `inst-plugin-contract-2`
-3. [ ] - `p2` - query_aggregated MUST return at most MAX_AGG_ROWS rows; if the result set would exceed this limit, the plugin MUST return `Err(UsageCollectorError::QueryResultTooLarge)` instead of silently truncating. - `inst-plugin-contract-3`
+3. [x] - `p2` - query_aggregated MUST return at most MAX_AGG_ROWS rows; if the result set would exceed this limit, the plugin MUST return `Err(UsageCollectorError::ResourceExhausted)` (built via `UsageRecordError::resource_exhausted("query result too large")`) instead of silently truncating. - `inst-plugin-contract-3`
 4. [ ] - `p2` - Plugins MUST use the configured connection pool; opening bare connections is prohibited. - `inst-plugin-contract-4`
 5. [ ] - `p2` - Both query_aggregated and query_raw are read-only; plugins MUST NOT open write transactions for these operations. - `inst-plugin-contract-5`
 
@@ -307,7 +325,7 @@ The system MUST implement `query_aggregated` and `query_raw` on `NoopUsageCollec
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-query-api-gateway-aggregated`
 
-The system MUST expose `GET /usage-collector/v1/aggregated` that derives tenant from SecurityContext (never from query parameters), validates mandatory parameters (`fn`, `from`, `to`; `bucket_size` required when `group_by` includes `time_bucket`), authorizes via the platform PDP with `require_constraints(true)` returning 403 when PDP denies or returns empty constraints, builds an `AggregationQuery` with the compiled `AccessScope` and user-supplied optional filters, delegates to the active storage plugin via `query_aggregated`, and returns 200 with the result array. 403 response body is `{"error": "forbidden"}` — generic message only; MUST NOT include PDP error details, constraint names, policy names, or role names.
+The system MUST expose `GET /usage-collector/v1/aggregated` that derives tenant from SecurityContext (never from query parameters), validates mandatory parameters (`fn`, `from`, `to`; `bucket_size` required when `group_by` includes `time_bucket`), authorizes via the platform PDP with `require_constraints(true)` returning 403 when PDP denies or returns empty constraints, builds an `AggregationQuery` with the compiled `AccessScope` and user-supplied optional filters, delegates to the active storage plugin via `query_aggregated`, and returns 200 with the result array. The endpoint MUST be registered via `OperationBuilder::get(...).authenticated().require_license_features::<License>([])` against the platform license feature `gts.cf.core.lic.feat.v1~cf.core.global.base.v1`; the gateway returns 403 to callers whose tenant is not licensed for this feature. The OpenAPI registry MUST declare the explicitly-registered error responses 400 (`error_400`), 403 (`error_403`), and 500 (`error_500`); the runtime 503 emission per `inst-agg-8c` is produced by the canonical Problem mapper from `Err(UsageCollectorError::ServiceUnavailable)` at the handler boundary and is **not** declared in the OpenAPI registry — see §5 Known Limitations (MAINT-FDESIGN-002-02). 403 response body is `{"error": "forbidden"}` — generic message only; MUST NOT include PDP error details, constraint names, policy names, or role names.
 
 **Implements**:
 - `cpt-cf-usage-collector-flow-query-api-aggregated`
@@ -325,7 +343,7 @@ The system MUST expose `GET /usage-collector/v1/aggregated` that derives tenant 
 
 - [x] `p2` - **ID**: `cpt-cf-usage-collector-dod-query-api-gateway-raw`
 
-The system MUST expose `GET /usage-collector/v1/raw` that derives tenant from SecurityContext, validates mandatory parameters and decodes any supplied cursor, authorizes via the platform PDP with `require_constraints(true)` returning 403 when PDP denies or returns empty constraints, builds a `RawQuery` with the compiled `AccessScope` plus cursor and optional filters, delegates to the active storage plugin via `query_raw`, and returns 200 with the `Page<UsageRecord>`. 403 response body is `{"error": "forbidden"}` — generic message only; MUST NOT include PDP error details, constraint names, policy names, or role names.
+The system MUST expose `GET /usage-collector/v1/raw` that derives tenant from SecurityContext, validates mandatory parameters and decodes any supplied cursor, authorizes via the platform PDP with `require_constraints(true)` returning 403 when PDP denies or returns empty constraints, builds a `RawQuery` with the compiled `AccessScope` plus cursor and optional filters, delegates to the active storage plugin via `query_raw`, and returns 200 with the `Page<UsageRecord>`. The endpoint MUST be registered via `OperationBuilder::get(...).authenticated().require_license_features::<License>([])` against the platform license feature `gts.cf.core.lic.feat.v1~cf.core.global.base.v1`; the gateway returns 403 to callers whose tenant is not licensed for this feature. The OpenAPI registry MUST declare the explicitly-registered error responses 400 (`error_400`), 403 (`error_403`), and 500 (`error_500`); the runtime 503 emission per `inst-raw-8b` is produced by the canonical Problem mapper from `Err(UsageCollectorError::ServiceUnavailable)` at the handler boundary and is **not** declared in the OpenAPI registry — see §5 Known Limitations (MAINT-FDESIGN-002-02). 403 response body is `{"error": "forbidden"}` — generic message only; MUST NOT include PDP error details, constraint names, policy names, or role names.
 
 **Implements**:
 - `cpt-cf-usage-collector-flow-query-api-raw`
@@ -343,7 +361,7 @@ The system MUST expose `GET /usage-collector/v1/raw` that derives tenant from Se
 
 - [x] `p1` - **ID**: `cpt-cf-usage-collector-dod-query-api-plugin-contract`
 
-All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (1) parameterize all string filter fields in storage queries — direct interpolation is prohibited; (2) apply `AccessScope` constraints as mandatory row filters — omitting them is a security violation; (3) return at most MAX_AGG_ROWS rows from `query_aggregated` — if the result set would exceed this limit, the plugin MUST return `Err(UsageCollectorError::QueryResultTooLarge)`; (4) use the configured connection pool — bare connections are prohibited; (5) treat both operations as read-only — write transactions are prohibited.
+All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (1) parameterize all string filter fields in storage queries — direct interpolation is prohibited; (2) apply `AccessScope` constraints as mandatory row filters — omitting them is a security violation; (3) return at most MAX_AGG_ROWS rows from `query_aggregated` — if the result set would exceed this limit, the plugin MUST return `Err(UsageCollectorError::ResourceExhausted)` (built via `UsageRecordError::resource_exhausted("query result too large")`); (4) use the configured connection pool — bare connections are prohibited; (5) treat both operations as read-only — write transactions are prohibited.
 
 **Implements**:
 - `cpt-cf-usage-collector-algo-query-api-plugin-contract`
@@ -367,11 +385,13 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
 - [ ] `GET /usage-collector/v1/raw` with `page_size > MAX_PAGE_SIZE` returns 400 Bad Request
 - [ ] `GET /usage-collector/v1/raw` with absent `page_size` uses `DEFAULT_PAGE_SIZE`
 - [ ] `GET /usage-collector/v1/raw` with cursor whose timestamp is outside [from, to] returns 400 Bad Request
-- [ ] `GET /usage-collector/v1/aggregated` when plugin returns `Err(QueryResultTooLarge)` returns 400 'query too broad'
+- [ ] `GET /usage-collector/v1/aggregated` when plugin returns `Err(ResourceExhausted)` (canonical carrier for `MAX_AGG_ROWS` exceeded; built via `UsageRecordError::resource_exhausted("query result too large")`) is mapped via the canonical Problem flow per `inst-agg-8c` — there is no gateway-side 400 'query too broad' shortcut
 - [ ] `GET /usage-collector/v1/aggregated` when plugin returns `Err` returns 503 Service Unavailable
 - [ ] `GET /usage-collector/v1/raw` when plugin returns `Err` returns 503 Service Unavailable
 - [ ] `GET /usage-collector/v1/aggregated` and `GET /usage-collector/v1/raw` when PDP returns non-Denied error return 403 (fail-closed)
 - [ ] `GET /usage-collector/v1/aggregated` and `GET /usage-collector/v1/raw` with a string filter field exceeding `MAX_FILTER_STRING_LEN` return 400 Bad Request
+- [ ] `GET /usage-collector/v1/aggregated` and `GET /usage-collector/v1/raw` are registered with `OperationBuilder::require_license_features::<License>([])` against the platform license feature `gts.cf.core.lic.feat.v1~cf.core.global.base.v1`; calls from a tenant whose license does not carry this feature receive 403 from the license gate (before the PDP authorize step is reached)
+- [ ] The OpenAPI document generated from the gateway's route registry exposes the explicitly-registered `error_400` / `error_403` / `error_500` responses for the query routes; the runtime 503 response shape is **not** declared in the OpenAPI document under the current registry wiring (see §5 Known Limitations MAINT-FDESIGN-002-02) — tests that consume the OpenAPI document MUST account for the runtime-only 503 response
 
 ### Performance Acceptance Criteria
 - [ ] `GET /usage-collector/v1/aggregated` p95 latency ≤ 500ms for time ranges up to 30 days at production record volumes (`cpt-cf-usage-collector-nfr-query-latency`) (verification deferred to Feature 4 — see PERF-FDESIGN-004)
@@ -451,7 +471,7 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
   |---|---|---|
   | `DEFAULT_PAGE_SIZE` | integer | Default number of records returned per page when `page_size` is absent. Recommended: 100. |
   | `MAX_PAGE_SIZE` | integer | Maximum allowed value for `page_size`. Recommended: 1 000. |
-  | `MAX_AGG_ROWS` | integer | Maximum number of rows that `query_aggregated` may return; exceeding this causes `QueryResultTooLarge`. Recommended: 10 000. |
+  | `MAX_AGG_ROWS` | integer | Maximum number of rows that `query_aggregated` may return; exceeding this causes `UsageCollectorError::ResourceExhausted` (built via `UsageRecordError::resource_exhausted("query result too large")`). Recommended: 10 000. |
   | `MAX_FILTER_STRING_LEN` | integer | Maximum byte length for string filter fields (`usage_type`, `resource_type`, `subject_type`, `source`). Recommended: 256. |
 
 - **OPS-FDESIGN-003 (Health and Diagnostics)**: No new health check endpoints. The existing gateway health endpoint reflects circuit breaker state for all plugin calls including the new query operations (DESIGN §3.2). Troubleshooting: persistent 403 responses → PDP unavailability or missing grant; persistent 5xx responses → plugin circuit breaker in open state.
@@ -541,4 +561,6 @@ All storage plugin implementations of `query_aggregated` and `query_raw` MUST: (
   1. *Cursor tamper-resistance*: No HMAC signing is applied to cursor tokens in this feature. A malicious caller could craft an arbitrary cursor payload. Tamper-resistance via HMAC signing is deferred to a future feature.
   2. *API stability*: The query API (`GET /usage-collector/v1/aggregated`, `GET /usage-collector/v1/raw`) carries SHOULD-level stability at this stage. Stable guarantees are not provided until v1.0 of the usage-collector module. Breaking changes to query parameters or response shapes require a version increment in the API path.
   3. *Cursor TTL not enforced*: `CursorV1` carries no `issued_at` timestamp, so server-side cursor expiry (410 Gone) cannot be implemented with the current type. Callers SHOULD treat cursors as short-lived and not store them beyond a single pagination session. Cursor TTL enforcement is deferred to a future feature that either extends `CursorV1` or wraps it with an issued-at field.
+
+- **MAINT-FDESIGN-002-02 (OpenAPI 503 declaration drift)**: The query routes (`GET /usage-collector/v1/aggregated`, `GET /usage-collector/v1/raw`) emit `503 Service Unavailable` at runtime via the canonical Problem mapper when the storage plugin returns `Err(UsageCollectorError::ServiceUnavailable)` (per `inst-agg-8c` / `inst-raw-8b`), but the OpenAPI registry currently declares only the explicitly-registered `error_400`, `error_403`, and `error_500` responses for these routes. The published OpenAPI document therefore does not advertise the runtime 503 response shape. Tracked tech debt: extend the route registration (`usage-collector/src/api/rest/routes.rs`) to register a 503 response with the canonical `service_unavailable` body schema for both query routes, so the generated OpenAPI matches runtime behaviour. Until that change lands, clients and SDK generators that rely solely on the OpenAPI document will not see a typed 503 schema; the 503 status code itself is still visible because the `inst-agg-8c` / `inst-raw-8b` AC items, the §2 retry guidance, and the §6 AC `returns 503 Service Unavailable` items remain authoritative.
 

@@ -28,7 +28,9 @@ pub struct CreateUsageRecordRequest {
     pub subject_type: Option<String>,
     /// Metric name for this observation.
     pub metric: String,
-    /// Optional idempotency key; if omitted, one is generated when building the record.
+    /// Idempotency key. Required for counter metrics (non-empty); optional for gauge metrics —
+    /// when omitted for a gauge, the gateway generates a UUID while building the record. Counter
+    /// records without a key are rejected with `422 Unprocessable Entity`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub idempotency_key: Option<String>,
     /// Numeric value for this usage observation.

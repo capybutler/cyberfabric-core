@@ -12,7 +12,7 @@ use uuid::Uuid;
 use usage_collector_sdk::models::{
     AggregationFn, AggregationQuery, AggregationResult, RawQuery, UsageKind, UsageRecord,
 };
-use usage_collector_sdk::{Page, UsageCollectorError, UsageCollectorPluginClientV1};
+use usage_collector_sdk::{CanonicalError, Page, UsageCollectorPluginClientV1};
 
 use super::TimescaleDbPluginClient;
 use crate::domain::error::{ScopeTranslationError, StoragePluginError};
@@ -99,17 +99,21 @@ impl QueryPort for MockQueryPort {
     async fn query_aggregated(
         &self,
         _query: AggregationQuery,
-    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+    ) -> Result<Vec<AggregationResult>, CanonicalError> {
         if self.agg_fail {
-            Err(UsageCollectorError::unavailable("mock transient"))
+            Err(CanonicalError::service_unavailable()
+                .with_detail("mock transient")
+                .create())
         } else {
             Ok(vec![])
         }
     }
 
-    async fn query_raw(&self, _query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+    async fn query_raw(&self, _query: RawQuery) -> Result<Page<UsageRecord>, CanonicalError> {
         if self.raw_fail {
-            Err(UsageCollectorError::unavailable("mock transient"))
+            Err(CanonicalError::service_unavailable()
+                .with_detail("mock transient")
+                .create())
         } else {
             Ok(Page::empty(10))
         }
@@ -242,8 +246,8 @@ async fn test_create_usage_record_negative_counter_value_rejected() {
     let result = client.create_usage_record(record).await;
 
     assert!(
-        matches!(result, Err(UsageCollectorError::Internal { .. })),
-        "expected Internal error for negative counter value"
+        matches!(result, Err(CanonicalError::InvalidArgument { .. })),
+        "expected InvalidArgument error for negative counter value"
     );
     assert_eq!(
         metrics.schema_validation_errors.load(Ordering::SeqCst),
@@ -270,8 +274,8 @@ async fn test_create_usage_record_missing_idempotency_key_for_counter_rejected()
     let result = client.create_usage_record(record).await;
 
     assert!(
-        matches!(result, Err(UsageCollectorError::Internal { .. })),
-        "expected Internal error for missing idempotency_key"
+        matches!(result, Err(CanonicalError::InvalidArgument { .. })),
+        "expected InvalidArgument error for missing idempotency_key"
     );
     assert_eq!(
         metrics.schema_validation_errors.load(Ordering::SeqCst),
@@ -294,7 +298,7 @@ async fn test_create_usage_record_transient_db_error() {
     let result = client.create_usage_record(base_counter_record()).await;
 
     assert!(
-        matches!(result, Err(UsageCollectorError::Unavailable { .. })),
+        matches!(result, Err(CanonicalError::ServiceUnavailable { .. })),
         "transient error must map to Unavailable"
     );
     assert_eq!(

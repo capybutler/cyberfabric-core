@@ -26,6 +26,7 @@ usage-emitter = { workspace = true }
 
 # ModKit dependencies
 modkit = { workspace = true }
+modkit-canonical-errors = { workspace = true }
 modkit-db = { workspace = true, features = ["preview-outbox"] }
 modkit-macros = { workspace = true }
 modkit-security = { workspace = true }

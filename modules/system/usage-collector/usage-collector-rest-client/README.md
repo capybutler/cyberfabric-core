@@ -2,7 +2,7 @@
 
 > **Separate-binary bridge** — builds a `UsageCollectorRestClient` that forwards `create_usage_record` and `get_module_config` calls to a remote usage-collector REST API, authenticated with a bearer token from `AuthNResolverClient::exchange_client_credentials`.
 
-ModKit module `usage-collector-rest-client`: builds [`UsageCollectorRestClient`](src/infra/rest_client.rs) at init, resolves `dyn AuthNResolverClient` and `dyn AuthZResolverClient` from `ClientHub`, then wires it into `UsageEmitter` (which registers `dyn UsageEmitterV1`). The module also implements `DatabaseCapability` and provides outbox migrations required by `UsageEmitter`.
+ModKit module `usage-collector-rest-client`: builds [`UsageCollectorRestClient`](src/infra/rest_client.rs) at init, resolves `dyn AuthNResolverClient` and `dyn AuthZResolverClient` from `ClientHub`, then wires it into a `UsageEmitterFactory` and registers it as `dyn UsageEmitterFactoryV1`. The module also implements `DatabaseCapability` and provides outbox migrations required by the emitter.
 
 ## Dependencies
 

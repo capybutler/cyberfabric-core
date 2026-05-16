@@ -8,7 +8,8 @@ use modkit_macros::domain_model;
 use usage_collector_sdk::models::{
     AggregationQuery, AggregationResult, RawQuery, UsageKind, UsageRecord,
 };
-use usage_collector_sdk::{Page, UsageCollectorError, UsageCollectorPluginClientV1};
+use usage_collector_sdk::error::UsageRecordError;
+use usage_collector_sdk::{CanonicalError, Page, UsageCollectorPluginClientV1};
 
 use crate::domain::error::StoragePluginError;
 use crate::domain::insert_port::InsertPort;
@@ -42,7 +43,7 @@ impl TimescaleDbPluginClient {
 impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
     // @cpt-algo:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1
     // @cpt-flow:cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest:p1
-    async fn create_usage_record(&self, record: UsageRecord) -> Result<(), UsageCollectorError> {
+    async fn create_usage_record(&self, record: UsageRecord) -> Result<(), CanonicalError> {
         let start = Instant::now();
 
         // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest:p1:inst-flow-ing-1
@@ -51,20 +52,35 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
 
         // @cpt-begin:cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest:p1:inst-flow-ing-2
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-1
+        if !record.value.is_finite() {
+            self.metrics.record_schema_validation_error();
+            return Err(
+                UsageRecordError::invalid_argument()
+                    .with_constraint(format!("value must be finite, got: {}", record.value))
+                    .create(),
+            );
+        }
         if record.kind == UsageKind::Counter && record.value < 0.0 {
             self.metrics.record_schema_validation_error();
-            return Err(UsageCollectorError::internal(
-                "invalid record: counter value must be >= 0",
-            ));
+            return Err(
+                UsageRecordError::invalid_argument()
+                    .with_constraint(format!(
+                        "counter value must be non-negative, got: {}",
+                        record.value
+                    ))
+                    .create(),
+            );
         }
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-1
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-2
-        if record.kind == UsageKind::Counter && record.idempotency_key.is_empty() {
+        if record.kind == UsageKind::Counter && record.idempotency_key.trim().is_empty() {
             self.metrics.record_schema_validation_error();
-            return Err(UsageCollectorError::internal(
-                "invalid record: idempotency_key required for counter records",
-            ));
+            return Err(
+                UsageRecordError::invalid_argument()
+                    .with_constraint("counter records require a non-empty idempotency_key")
+                    .create(),
+            );
         }
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-2
         // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest:p1:inst-flow-ing-2
@@ -82,9 +98,9 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                     self.metrics.record_ingestion_error();
                     self.metrics
                         .record_ingestion_latency_ms(start.elapsed().as_secs_f64() * 1000.0);
-                    return Err(UsageCollectorError::internal(
-                        "unexpected unique constraint violation",
-                    ));
+                    return Err(
+                        CanonicalError::internal("unexpected unique constraint violation").create(),
+                    );
                 }
                 // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-4
 
@@ -94,9 +110,9 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                     self.metrics.record_ingestion_error();
                     self.metrics
                         .record_ingestion_latency_ms(start.elapsed().as_secs_f64() * 1000.0);
-                    return Err(UsageCollectorError::unavailable(format!(
-                        "transient error: {msg}"
-                    )));
+                    return Err(CanonicalError::service_unavailable()
+                        .with_detail(format!("transient error: {msg}"))
+                        .create());
                 }
                 // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-create-usage-record:p1:inst-cur-5
                 // @cpt-end:cpt-cf-usage-collector-flow-production-storage-plugin-storage-backend-ingest:p1:inst-flow-ing-4
@@ -104,7 +120,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
                 self.metrics.record_ingestion_error();
                 self.metrics
                     .record_ingestion_latency_ms(start.elapsed().as_secs_f64() * 1000.0);
-                return Err(UsageCollectorError::internal(format!("storage error: {e}")));
+                return Err(CanonicalError::internal(format!("storage error: {e}")).create());
             }
         };
 
@@ -127,7 +143,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
     async fn query_aggregated(
         &self,
         query: AggregationQuery,
-    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+    ) -> Result<Vec<AggregationResult>, CanonicalError> {
         let start = Instant::now();
         let result = self.query_port.query_aggregated(query).await;
         self.metrics
@@ -136,7 +152,7 @@ impl UsageCollectorPluginClientV1 for TimescaleDbPluginClient {
     }
 
     // @cpt-algo:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1
-    async fn query_raw(&self, query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+    async fn query_raw(&self, query: RawQuery) -> Result<Page<UsageRecord>, CanonicalError> {
         let start = Instant::now();
         let result = self.query_port.query_raw(query).await;
         self.metrics

@@ -2,8 +2,17 @@
 cpt:
   kind: PRD
   id: cpt-cf-usage-collector-prd
-  version: 0.2.0
+  version: 0.2.1
   changelog:
+    - version: 0.2.1
+      date: 2026-05-10
+      changes:
+        - "Align AC for expired authorization token with the canonical error
+          taxonomy (`UsageEmitterError = CanonicalError`): replace nonexistent
+          variant `UsageEmitterError::AuthorizationExpired` with
+          `UsageEmitterError::Unauthenticated` (built via
+          `UsageEmitterError::unauthenticated()` with reason
+          \"emit authorization token has expired\")."
     - version: 0.2.0
       date: 2026-04-28
       changes:
@@ -780,7 +789,7 @@ The following commonly applicable NFR categories are not applicable to this modu
 - [ ] Every usage record includes resource attribution (resource ID and type); records without either field are rejected
 - [ ] Usage records can optionally be attributed to a subject (subject ID and type); when supplied with PDP authorization, subject is accepted from the request payload; when absent, PDP subject validation is skipped
 - [ ] Authorization failures are surfaced immediately to the caller; no record is persisted on denial
-- [ ] An `AuthorizedUsageEmitter` token older than `MAX_AUTH_AGE` (30 seconds) is rejected by `enqueue()` with an `UsageEmitterError::AuthorizationExpired` error before any record is accepted for delivery
+- [ ] An `AuthorizedUsageEmitter` token older than `MAX_AUTH_AGE` (30 seconds) is rejected by `enqueue()` with an `UsageEmitterError::Unauthenticated` (built via `UsageEmitterError::unauthenticated()` with reason "emit authorization token has expired") error before any record is accepted for delivery
 - [ ] A source module that exceeds its configured emission quota for a given tenant within the current rate limit window is rejected with an actionable error before any record is accepted for delivery
 - [ ] Rate limit configuration can be set per (source module, tenant) pair; a default per-source quota applies when no tenant-specific entry exists
 - [ ] Rate limit enforcement does not degrade ingestion latency for emissions within quota

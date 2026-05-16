@@ -4,7 +4,7 @@ use async_trait::async_trait;
 use chrono::Utc;
 use modkit_db::outbox::{LeasedMessageHandler, MessageResult, OutboxMessage};
 use usage_collector_sdk::models::{UsageKind, UsageRecord};
-use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
+use usage_collector_sdk::{UsageCollectorError, UsageCollectorClientV1, UsageRecordError};
 use uuid::Uuid;
 
 use super::DeliveryHandler;
@@ -14,6 +14,7 @@ enum CollectorOutcome {
     Transient,
     Permanent,
     Unavailable,
+    ResourceExhausted,
 }
 
 struct MockCollector {
@@ -44,6 +45,12 @@ impl MockCollector {
             outcome: CollectorOutcome::Unavailable,
         })
     }
+
+    fn resource_exhausted() -> Arc<Self> {
+        Arc::new(Self {
+            outcome: CollectorOutcome::ResourceExhausted,
+        })
+    }
 }
 
 #[async_trait]
@@ -51,13 +58,18 @@ impl UsageCollectorClientV1 for MockCollector {
     async fn create_usage_record(&self, _record: UsageRecord) -> Result<(), UsageCollectorError> {
         match self.outcome {
             CollectorOutcome::Ok => Ok(()),
-            CollectorOutcome::Transient => Err(UsageCollectorError::plugin_timeout()),
+            CollectorOutcome::Transient => {
+                Err(UsageRecordError::deadline_exceeded("plugin timed out").create())
+            }
             CollectorOutcome::Permanent => {
-                Err(UsageCollectorError::authorization_failed("permanent"))
+                Err(UsageCollectorError::unauthenticated().with_reason("permanent").create())
             }
-            CollectorOutcome::Unavailable => {
-                Err(UsageCollectorError::unavailable("connection refused"))
-            }
+            CollectorOutcome::Unavailable => Err(UsageCollectorError::service_unavailable().create()),
+            CollectorOutcome::ResourceExhausted => Err(UsageRecordError::resource_exhausted(
+                "rate limited by gateway",
+            )
+            .with_quota_violation("requests", "rate limit exceeded")
+            .create()),
         }
     }
 
@@ -132,6 +144,15 @@ async fn handle_collector_permanent_error_returns_reject() {
 #[tokio::test]
 async fn handle_collector_unavailable_error_returns_retry() {
     let h = handler(MockCollector::unavailable());
+    let payload = serde_json::to_vec(&valid_usage_record()).unwrap();
+    let msg = make_msg(payload);
+    let result = h.handle(&msg).await;
+    assert!(matches!(result, MessageResult::Retry));
+}
+
+#[tokio::test]
+async fn handle_collector_resource_exhausted_error_returns_retry() {
+    let h = handler(MockCollector::resource_exhausted());
     let payload = serde_json::to_vec(&valid_usage_record()).unwrap();
     let msg = make_msg(payload);
     let result = h.handle(&msg).await;

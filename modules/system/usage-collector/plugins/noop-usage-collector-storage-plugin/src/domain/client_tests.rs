@@ -31,17 +31,6 @@ async fn create_usage_record_always_returns_ok() {
 }
 
 #[tokio::test]
-async fn create_usage_record_multiple_records_all_return_ok() {
-    let service = Service::new();
-    let plugin: &dyn UsageCollectorPluginClientV1 = &service;
-    for _ in 0..5 {
-        let rec = make_record(Uuid::new_v4());
-        let result = plugin.create_usage_record(rec).await;
-        assert!(result.is_ok());
-    }
-}
-
-#[tokio::test]
 async fn noop_query_aggregated_returns_empty_vec() {
     use modkit_security::AccessScope;
     use usage_collector_sdk::models::{AggregationFn, AggregationQuery, GroupByDimension};

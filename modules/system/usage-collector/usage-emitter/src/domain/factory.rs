@@ -1,23 +1,23 @@
 use std::sync::Arc;
 
 use authz_resolver_sdk::AuthZResolverClient;
-use authz_resolver_sdk::EnforcerError;
 use modkit_db::Db;
 use modkit_db::outbox::WorkerTuning;
 use modkit_db::outbox::{Outbox, OutboxHandle, Partitions};
 use usage_collector_sdk::UsageCollectorClientV1;
 
-use crate::api::UsageEmitterV1;
+use crate::api::UsageEmitterFactoryV1;
 use crate::config::UsageEmitterConfig;
+use crate::domain::emitter::UsageEmitter;
 use crate::infra::delivery_handler::DeliveryHandler;
-use crate::scoped_emitter::ScopedUsageEmitter;
 
-/// An emitter that starts the usage outbox worker and issues scoped emit handles.
+/// Builds the per-process [`UsageEmitter`] pipeline and owns the outbox worker.
 ///
-/// Constructed via [`UsageEmitter::build`]. Call [`UsageEmitterV1::for_module`] to obtain a
-/// [`ScopedUsageEmitter`] bound to a module name, then use its `authorize_for` / `authorize` to
-/// get a time-limited [`crate::AuthorizedUsageEmitter`].
-pub struct UsageEmitter {
+/// Constructed via [`UsageEmitterFactory::build`] and registered in `ClientHub` as
+/// `dyn UsageEmitterFactoryV1`. Each call to [`UsageEmitterFactoryV1::for_module`] hands out a
+/// module-bound [`UsageEmitter`] handle that source modules use to authorize and
+/// enqueue usage records.
+pub struct UsageEmitterFactory {
     config: Arc<UsageEmitterConfig>,
     db: Db,
     authz: Arc<dyn AuthZResolverClient>,
@@ -25,8 +25,8 @@ pub struct UsageEmitter {
     outbox_handle: OutboxHandle,
 }
 
-impl UsageEmitter {
-    /// Build a [`UsageEmitter`] and start the background outbox worker.
+impl UsageEmitterFactory {
+    /// Build a [`UsageEmitterFactory`] and start the background outbox worker.
     ///
     /// Registers the `usage-records` queue, attaches `delivery_handler` for async delivery to
     /// `collector`, and wires the [`authz_resolver_sdk::pep::PolicyEnforcer`] for per-call PDP checks.
@@ -71,9 +71,9 @@ impl UsageEmitter {
     }
 }
 
-impl UsageEmitterV1 for UsageEmitter {
-    fn for_module(&self, module_name: &str) -> ScopedUsageEmitter {
-        ScopedUsageEmitter::new(
+impl UsageEmitterFactoryV1 for UsageEmitterFactory {
+    fn for_module(&self, module_name: &str) -> UsageEmitter {
+        UsageEmitter::new(
             module_name.to_owned(),
             Arc::clone(&self.authz),
             Arc::clone(&self.collector),
@@ -84,30 +84,7 @@ impl UsageEmitterV1 for UsageEmitter {
     }
 }
 
-pub fn enforcer_error_to_emitter_error(e: EnforcerError) -> crate::error::UsageEmitterError {
-    use crate::error::UsageEmitterError;
-    use authz_resolver_sdk::EnforcerError;
-    match e {
-        EnforcerError::Denied { deny_reason } => {
-            let message = deny_reason.map_or_else(
-                || "access denied by policy".to_owned(),
-                |r| match r.details {
-                    Some(details) => format!("{}: {}", r.error_code, details),
-                    None => r.error_code,
-                },
-            );
-            UsageEmitterError::authorization_failed(message)
-        }
-        EnforcerError::CompileFailed(_) => {
-            UsageEmitterError::internal("authorization constraint compilation failed")
-        }
-        EnforcerError::EvaluationFailed(_) => {
-            UsageEmitterError::internal("authorization evaluation failed")
-        }
-    }
-}
-
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
-#[path = "emitter_tests.rs"]
-mod emitter_tests;
+#[path = "factory_tests.rs"]
+mod factory_tests;

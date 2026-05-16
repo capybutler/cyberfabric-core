@@ -6,18 +6,17 @@ use authz_resolver_sdk::pep::{AccessRequest, PolicyEnforcer};
 use modkit_db::Db;
 use modkit_db::outbox::Outbox;
 use modkit_security::{SecurityContext, pep_properties};
-use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
+use usage_collector_sdk::UsageCollectorClientV1;
+use usage_collector_sdk::authz;
 use uuid::Uuid;
 
-use crate::authorized_emitter::AuthorizedUsageEmitter;
 use crate::config::UsageEmitterConfig;
-use crate::domain::authz;
-use crate::emitter::enforcer_error_to_emitter_error;
-use crate::error::UsageEmitterError;
+use crate::domain::authorized_emitter::AuthorizedUsageEmitter;
+use crate::error::{UsageEmitterError, enforcer_error_to_emitter_error};
 
-/// A usage emitter scoped to a specific module.
+/// A usage emitter bound to a specific source module.
 ///
-/// Constructed via [`crate::UsageEmitterV1::for_module`]. Call [`Self::authorize_for`] or
+/// Obtained from [`crate::UsageEmitterFactoryV1::for_module`]. Call [`Self::authorize_for`] or
 /// [`Self::authorize`] to obtain a time-limited [`AuthorizedUsageEmitter`] after PDP authorization
 /// and allowed-metrics retrieval for this module.
 ///
@@ -25,22 +24,22 @@ use crate::error::UsageEmitterError;
 ///
 /// ```ignore
 /// // In init():
-/// let scoped = emitter.for_module(Self::MODULE_NAME);
+/// let emitter = factory.for_module(Self::MODULE_NAME);
 ///
 /// // In a handler (with subject):
-/// let authorized = scoped
+/// let authorized = emitter
 ///     .authorize_for(&ctx, tenant_id, resource_id, resource_type, Some(subject_id), Some(subject_type))
 ///     .await?;
 /// authorized.build_usage_record("requests", 1.0).enqueue().await?;
 ///
 /// // In a handler (without subject):
-/// let authorized = scoped
+/// let authorized = emitter
 ///     .authorize_for(&ctx, tenant_id, resource_id, resource_type, None, None)
 ///     .await?;
 /// authorized.build_usage_record("requests", 1.0).enqueue().await?;
 /// ```
 #[derive(Clone)]
-pub struct ScopedUsageEmitter {
+pub struct UsageEmitter {
     module: String,
     authz: Arc<dyn AuthZResolverClient>,
     collector: Arc<dyn UsageCollectorClientV1>,
@@ -49,7 +48,7 @@ pub struct ScopedUsageEmitter {
     outbox: Arc<Outbox>,
 }
 
-impl ScopedUsageEmitter {
+impl UsageEmitter {
     pub(crate) fn new(
         module: String,
         authz: Arc<dyn AuthZResolverClient>,
@@ -128,17 +127,7 @@ impl ScopedUsageEmitter {
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-4
 
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5
-        let module_cfg = match module_cfg_result {
-            // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5a
-            Err(UsageCollectorError::ModuleNotFound { module_name }) => {
-                return Err(UsageEmitterError::module_not_configured(module_name));
-            }
-            // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5a
-            // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5b
-            Err(e) => return Err(UsageEmitterError::internal(e.to_string())),
-            // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5b
-            Ok(cfg) => cfg,
-        };
+        let module_cfg = module_cfg_result?;
         // @cpt-end:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-5
 
         // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-authorize-for:p1:inst-authz-6

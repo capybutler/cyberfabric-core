@@ -8,14 +8,14 @@ use axum::body::Body;
 use chrono::Utc;
 use http::{Method, Request, StatusCode};
 use tower::ServiceExt;
-use usage_emitter::UsageEmitterV1;
+use usage_emitter::UsageEmitterFactoryV1;
 use uuid::Uuid;
 
-use common::{AppHarness, MockUsageEmitterV1};
+use common::{AppHarness, MockUsageEmitterFactoryV1};
 
 #[tokio::test]
 async fn create_record_happy_path() {
-    let emitter = Arc::new(MockUsageEmitterV1::with_allow_authz().await) as Arc<dyn UsageEmitterV1>;
+    let emitter = Arc::new(MockUsageEmitterFactoryV1::with_allow_authz().await) as Arc<dyn UsageEmitterFactoryV1>;
     let harness = AppHarness::with_emitter(emitter);
 
     let body = serde_json::json!({
@@ -91,7 +91,7 @@ async fn create_record_subject_type_without_subject_id() {
 
 #[tokio::test]
 async fn create_record_emitter_authorization_failed() {
-    let emitter = Arc::new(MockUsageEmitterV1::with_deny_authz().await) as Arc<dyn UsageEmitterV1>;
+    let emitter = Arc::new(MockUsageEmitterFactoryV1::with_deny_authz().await) as Arc<dyn UsageEmitterFactoryV1>;
     let harness = AppHarness::with_emitter(emitter);
 
     let body = serde_json::json!({

@@ -8,8 +8,9 @@ use chrono::{DateTime, Utc};
 use modkit_db::secure::DBRunner;
 use serde_json::Value as JsonValue;
 use usage_collector_sdk::models::{UsageKind, UsageRecord};
+use uuid::Uuid;
 
-use crate::authorized_emitter::AuthorizedUsageEmitter;
+use crate::domain::authorized_emitter::AuthorizedUsageEmitter;
 use crate::error::UsageEmitterError;
 
 /// Fluent builder tied to an [`AuthorizedUsageEmitter`]. Optionally set idempotency key or
@@ -40,7 +41,14 @@ impl<'a> UsageRecordBuilder<'a> {
         }
     }
 
-    /// Sets a caller-provided idempotency key. If omitted, a new UUID string is used on enqueue.
+    /// Sets a caller-provided idempotency key.
+    ///
+    /// **Required for counter metrics**: counter records without a non-empty key are rejected at
+    /// enqueue with [`UsageRecordError::InvalidArgument`](crate::UsageRecordError). Callers must
+    /// supply a stable, retry-safe key so the storage plugin can deduplicate.
+    ///
+    /// **Optional for gauge metrics**: if omitted (or empty/whitespace), a new UUID string is
+    /// generated on enqueue.
     #[must_use]
     pub fn with_idempotency_key(self, key: impl Into<String>) -> Self {
         Self {
@@ -59,7 +67,7 @@ impl<'a> UsageRecordBuilder<'a> {
     }
 
     /// Sets optional metadata JSON. Must serialize to ≤ 8192 bytes or enqueue will return
-    /// [`UsageEmitterError::MetadataTooLarge`].
+    /// a [`UsageEmitterError::Internal`] error.
     #[must_use]
     pub fn with_metadata(self, metadata: JsonValue) -> Self {
         Self {
@@ -72,14 +80,14 @@ impl<'a> UsageRecordBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`UsageEmitterError::InvalidRecord`] if the metric is not in the allowed list,
+    /// Returns [`UsageEmitterError`] if the metric is not in the allowed list,
     /// or any error from [`AuthorizedUsageEmitter::enqueue_in`].
     pub async fn enqueue(self) -> Result<(), UsageEmitterError> {
         let conn = self
             .emitter
             .db
             .conn()
-            .map_err(|e| UsageEmitterError::internal(e.to_string()))?;
+            .map_err(|e| UsageEmitterError::internal(e.to_string()).create())?;
         self.enqueue_in(&conn).await
     }
 
@@ -87,7 +95,7 @@ impl<'a> UsageRecordBuilder<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`UsageEmitterError::InvalidRecord`] if the metric is not in the allowed list,
+    /// Returns [`UsageEmitterError`] if the metric is not in the allowed list,
     /// or any error from [`AuthorizedUsageEmitter::enqueue_in`].
     // @cpt-algo:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1
     pub async fn enqueue_in(self, db: &(dyn DBRunner + Sync)) -> Result<(), UsageEmitterError> {
@@ -114,7 +122,9 @@ impl<'a> UsageRecordBuilder<'a> {
             kind,
             // @cpt-begin:cpt-cf-usage-collector-algo-sdk-and-ingest-core-enqueue:p1:inst-enq-5b
             idempotency_key: if kind == UsageKind::Gauge {
-                String::new()
+                self.idempotency_key
+                    .filter(|k| !k.trim().is_empty())
+                    .unwrap_or_else(|| Uuid::new_v4().to_string())
             } else {
                 self.idempotency_key.unwrap_or_default()
             },
@@ -130,5 +140,5 @@ impl<'a> UsageRecordBuilder<'a> {
 
 #[cfg(test)]
 #[cfg_attr(coverage_nightly, coverage(off))]
-#[path = "usage_builder_tests.rs"]
-mod usage_builder_tests;
+#[path = "usage_record_builder_tests.rs"]
+mod usage_record_builder_tests;

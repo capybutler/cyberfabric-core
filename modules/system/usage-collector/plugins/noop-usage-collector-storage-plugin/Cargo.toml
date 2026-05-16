@@ -24,6 +24,7 @@ usage-collector-sdk = { workspace = true }
 
 # ModKit dependencies
 modkit = { workspace = true }
+modkit-canonical-errors = { workspace = true }
 modkit-macros = { workspace = true }
 
 # Async runtime

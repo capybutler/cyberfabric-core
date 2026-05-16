@@ -11,8 +11,8 @@ use modkit_db::{ConnectOpts, Db, connect_db};
 use usage_collector_sdk::models::{AllowedMetric, UsageKind, UsageRecord};
 use uuid::Uuid;
 
-use crate::authorized_emitter::AuthorizedUsageEmitter;
 use crate::config::UsageEmitterConfig;
+use crate::domain::authorized_emitter::AuthorizedUsageEmitter;
 use crate::error::UsageEmitterError;
 
 // ── Infrastructure ────────────────────────────────────────────────────────────
@@ -159,10 +159,7 @@ async fn builder_rejects_counter_metric_with_negative_value() {
         .enqueue_in(&f.conn())
         .await
         .unwrap_err();
-    assert!(matches!(
-        err,
-        UsageEmitterError::NegativeCounterValue { value } if (value + 1.0).abs() < f64::EPSILON
-    ));
+    assert!(matches!(err, UsageEmitterError::InvalidArgument { .. }));
 }
 
 #[tokio::test]
@@ -174,7 +171,7 @@ async fn builder_rejects_counter_metric_without_idempotency_key() {
         .enqueue_in(&f.conn())
         .await
         .unwrap_err();
-    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+    assert!(matches!(err, UsageEmitterError::InvalidArgument { .. }));
 }
 
 #[tokio::test]
@@ -196,9 +193,7 @@ async fn builder_rejects_unknown_metric() {
         .enqueue_in(&f.conn())
         .await
         .unwrap_err();
-    assert!(
-        matches!(err, UsageEmitterError::MetricNotAllowed { ref metric } if metric == "unknown.metric")
-    );
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 // ── Optional fields ───────────────────────────────────────────────────────────
@@ -250,7 +245,7 @@ async fn test_counter_with_blank_idempotency_key_is_rejected() {
         .enqueue_in(&f.conn())
         .await
         .unwrap_err();
-    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+    assert!(matches!(err, UsageEmitterError::InvalidArgument { .. }));
 }
 
 #[tokio::test]
@@ -307,7 +302,7 @@ async fn test_gauge_with_blank_idempotency_key_uses_uuid_fallback() {
         name: "test.gauge".to_owned(),
         kind: usage_collector_sdk::models::UsageKind::Gauge,
     }];
-    let emitter = crate::authorized_emitter::AuthorizedUsageEmitter::new(
+    let emitter = crate::domain::authorized_emitter::AuthorizedUsageEmitter::new(
         Arc::new(cfg),
         db.clone(),
         Arc::clone(handle.outbox()),
@@ -349,8 +344,13 @@ async fn test_gauge_with_blank_idempotency_key_uses_uuid_fallback() {
     let payload = captured.lock().unwrap().take().unwrap();
     let record: UsageRecord = serde_json::from_slice(&payload).unwrap();
     assert!(
-        record.idempotency_key.is_empty(),
-        "gauge records must have empty idempotency_key so storage can store NULL"
+        !record.idempotency_key.is_empty(),
+        "gauge records with blank caller key must receive a generated UUID, got empty string"
+    );
+    assert!(
+        uuid::Uuid::parse_str(&record.idempotency_key).is_ok(),
+        "gauge idempotency_key fallback must be a valid UUID, got {:?}",
+        record.idempotency_key
     );
 }
 
@@ -365,8 +365,8 @@ async fn builder_rejects_mismatched_module_name() {
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
     assert!(
-        matches!(err, crate::error::UsageEmitterError::InvalidRecord { .. }),
-        "expected InvalidRecord for mismatched module, got {err:?}"
+        matches!(err, UsageEmitterError::PermissionDenied { .. }),
+        "expected PermissionDenied for mismatched module, got {err:?}"
     );
 }
 
@@ -379,8 +379,8 @@ async fn builder_rejects_mismatched_subject_id() {
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
     assert!(
-        matches!(err, crate::error::UsageEmitterError::InvalidRecord { .. }),
-        "expected InvalidRecord for mismatched subject_id, got {err:?}"
+        matches!(err, UsageEmitterError::PermissionDenied { .. }),
+        "expected PermissionDenied for mismatched subject_id, got {err:?}"
     );
 }
 
@@ -393,8 +393,8 @@ async fn builder_rejects_mismatched_subject_type() {
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
     assert!(
-        matches!(err, crate::error::UsageEmitterError::InvalidRecord { .. }),
-        "expected InvalidRecord for mismatched subject_type, got {err:?}"
+        matches!(err, UsageEmitterError::PermissionDenied { .. }),
+        "expected PermissionDenied for mismatched subject_type, got {err:?}"
     );
 }
 

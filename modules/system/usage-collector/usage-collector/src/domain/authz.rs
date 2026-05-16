@@ -2,30 +2,18 @@
 //!
 //! Implements the PDP call, fail-closed error handling, and OR-of-ANDs scope
 //! compilation for the aggregated and raw query endpoints.
+//!
+//! Resource type, action, and property constants live in
+//! [`usage_collector_sdk::authz`].
 
 use std::sync::Arc;
 
 use authz_resolver_sdk::AuthZResolverClient;
 use authz_resolver_sdk::EnforcerError;
 use authz_resolver_sdk::pep::{AccessRequest, PolicyEnforcer, ResourceType};
-use modkit_security::{AccessScope, SecurityContext, pep_properties};
+use modkit_security::{AccessScope, SecurityContext};
 use tracing::error;
-use usage_collector_sdk::UsageCollectorError;
-
-/// Usage record resource type for read (query) operations.
-///
-/// Used by [`authorize_and_compile_scope`] when calling the PDP for LIST access.
-/// Supports `owner_tenant_id` so the PDP can return tenant-scoped constraints.
-pub const USAGE_RECORD_READ: ResourceType = ResourceType {
-    name: "gts.cf.core.usage.record.v1~",
-    supported_properties: &[pep_properties::OWNER_TENANT_ID],
-};
-
-/// PDP action constants for usage-record query authorization.
-pub mod actions {
-    /// List (query) action for usage records.
-    pub const LIST: &str = "list";
-}
+use usage_collector_sdk::{UsageCollectorError, UsageRecordError};
 
 /// Call the PDP, compile constraints into an [`AccessScope`], and return it.
 ///
@@ -44,7 +32,7 @@ pub mod actions {
 ///
 /// # Errors
 ///
-/// Returns [`UsageCollectorError::AuthorizationFailed`] on any PDP error (Denied or
+/// Returns [`UsageCollectorError::PermissionDenied`] on any PDP error (Denied or
 /// non-Denied). No allow-all path exists for any PDP error condition.
 // @cpt-algo:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1
 pub async fn authorize_and_compile_scope(
@@ -73,9 +61,9 @@ pub async fn authorize_and_compile_scope(
         // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3
         Err(EnforcerError::Denied { .. }) => {
             // @cpt-begin:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3a
-            Err(UsageCollectorError::authorization_failed(
-                "permission denied",
-            ))
+            Err(UsageRecordError::permission_denied()
+                .with_reason("AUTHORIZATION_DENIED")
+                .create())
             // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3a
         }
         // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3
@@ -85,13 +73,11 @@ pub async fn authorize_and_compile_scope(
             error!(
                 subject_id = %ctx.subject_id(),
                 pdp_error_variant = pdp_error_variant_name(&e),
-                "PDP infrastructure error (non-Denied): {}; correlation_id={}; access denied (fail-closed)",
-                pdp_error_variant_name(&e),
-                ctx.subject_id(),
+                "PDP infrastructure error (non-Denied): access denied (fail-closed)",
             );
-            Err(UsageCollectorError::authorization_failed(
-                "permission denied",
-            ))
+            Err(UsageRecordError::permission_denied()
+                .with_reason("AUTHORIZATION_DENIED")
+                .create())
         } // @cpt-end:cpt-cf-usage-collector-algo-query-api-authz-delegate:p1:inst-authz-3b
     }
 }

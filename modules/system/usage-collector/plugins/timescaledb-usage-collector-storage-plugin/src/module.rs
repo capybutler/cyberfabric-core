@@ -15,7 +15,7 @@ use sqlx::PgPool;
 use sqlx::postgres::PgPoolOptions;
 use tracing::{debug, error, info};
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
-use usage_collector_sdk::{UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1};
+use usage_collector_sdk::{UsageCollectorPluginClientV1, UsageCollectorPluginSpecV1};
 
 use crate::config::TimescaleDbConfig;
 use crate::domain::client::TimescaleDbPluginClient;
@@ -110,16 +110,16 @@ impl Module for TimescaleDbStoragePlugin {
                 anyhow::anyhow!("retention policy setup failed")
             })?;
 
-        let instance_id = UsageCollectorStoragePluginSpecV1::gts_make_instance_id(
+        let instance_id = UsageCollectorPluginSpecV1::gts_make_instance_id(
             "cf.core._.timescaledb_usage_collector_storage_plugin.v1",
         );
 
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
-        let instance = BaseModkitPluginV1::<UsageCollectorStoragePluginSpecV1> {
+        let instance = BaseModkitPluginV1::<UsageCollectorPluginSpecV1> {
             id: instance_id.clone(),
             vendor: "virtuozzo".to_owned(),
             priority: 10,
-            properties: UsageCollectorStoragePluginSpecV1,
+            properties: UsageCollectorPluginSpecV1,
         };
         let instance_json = serde_json::to_value(&instance)?;
 

@@ -12,7 +12,7 @@ use modkit::context::ModuleCtx;
 use modkit::gts::BaseModkitPluginV1;
 use tracing::info;
 use types_registry_sdk::{RegisterResult, TypesRegistryClient};
-use usage_collector_sdk::{UsageCollectorPluginClientV1, UsageCollectorStoragePluginSpecV1};
+use usage_collector_sdk::{UsageCollectorPluginClientV1, UsageCollectorPluginSpecV1};
 
 use crate::config::NoopUsageCollectorStorageConfig;
 use crate::domain::Service;
@@ -37,16 +37,16 @@ impl Module for NoopUsageCollectorStoragePlugin {
             Self::MODULE_NAME,
         );
 
-        let instance_id = UsageCollectorStoragePluginSpecV1::gts_make_instance_id(
+        let instance_id = UsageCollectorPluginSpecV1::gts_make_instance_id(
             "cf.core._.noop_usage_collector_storage_plugin.v1",
         );
 
         let registry = ctx.client_hub().get::<dyn TypesRegistryClient>()?;
-        let instance = BaseModkitPluginV1::<UsageCollectorStoragePluginSpecV1> {
+        let instance = BaseModkitPluginV1::<UsageCollectorPluginSpecV1> {
             id: instance_id.clone(),
             vendor: cfg.vendor.clone(),
             priority: cfg.priority,
-            properties: UsageCollectorStoragePluginSpecV1,
+            properties: UsageCollectorPluginSpecV1,
         };
         let instance_json = serde_json::to_value(&instance)?;
 

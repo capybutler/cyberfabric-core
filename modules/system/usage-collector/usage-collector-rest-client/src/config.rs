@@ -1,19 +1,18 @@
 //! Configuration for the REST `usage-collector-client` module.
 
-use std::time::Duration;
+use std::fmt;
+use std::net::{Ipv4Addr, Ipv6Addr};
 
 use secrecy::{ExposeSecret, SecretString};
 use serde::Deserialize;
+use tracing::warn;
 use usage_emitter::UsageEmitterConfig;
+use url::{Host, Url};
 
-/// Module configuration.
-#[derive(Debug, Clone, Deserialize, modkit_macros::ExpandVars)]
+/// `OAuth2` client credentials and scope configuration.
+#[derive(Clone, Deserialize, modkit_macros::ExpandVars)]
 #[serde(deny_unknown_fields)]
-pub struct UsageCollectorRestClientConfig {
-    /// Base URL of the usage-collector REST service (no trailing slash).
-    #[serde(default = "default_base_url")]
-    pub base_url: String,
-
+pub struct OAuthConfig {
     /// `OAuth2` client identifier for s2s authentication.
     pub client_id: String,
 
@@ -24,65 +23,94 @@ pub struct UsageCollectorRestClientConfig {
     /// `OAuth2` scopes to request (empty = `IdP` default scopes).
     #[serde(default)]
     pub scopes: Vec<String>,
+}
 
-    /// Per-request HTTP timeout.
-    #[serde(
-        default = "default_request_timeout",
-        with = "modkit_utils::humantime_serde"
-    )]
-    pub request_timeout: Duration,
+impl fmt::Debug for OAuthConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("OAuthConfig")
+            .field("client_id", &"[REDACTED]")
+            .field("client_secret", &"[REDACTED]")
+            .field("scopes", &self.scopes)
+            .finish()
+    }
+}
+
+/// Module configuration.
+#[derive(Clone, Deserialize, modkit_macros::ExpandVars)]
+#[serde(deny_unknown_fields)]
+pub struct UsageCollectorRestClientConfig {
+    /// URL of the usage-collector REST service.
+    pub collector_url: Url,
+
+    /// `OAuth2` credentials and scope configuration.
+    #[expand_vars]
+    pub oauth: OAuthConfig,
 
     /// Outbox/authorization tuning for the embedded usage emitter.
     #[serde(default)]
     pub emitter: UsageEmitterConfig,
 }
 
+impl fmt::Debug for UsageCollectorRestClientConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("UsageCollectorRestClientConfig")
+            .field("collector_url", &self.collector_url.as_str())
+            .field("oauth", &self.oauth)
+            .field("emitter", &self.emitter)
+            .finish()
+    }
+}
+
 impl UsageCollectorRestClientConfig {
-    /// Validates S2S credential fields.
+    /// Validates the configuration.
     ///
     /// # Errors
     ///
-    /// Returns an error if `client_id` or `client_secret` is empty or whitespace-only.
+    /// Returns an error if `collector_url` is not a hierarchical URL, or if
+    /// `client_id` / `client_secret` are empty or whitespace-only.
     pub fn validate(&self) -> anyhow::Result<()> {
-        if self.client_id.trim().is_empty() {
+        if self.collector_url.cannot_be_a_base() {
+            anyhow::bail!(
+                "collector_url must be a hierarchical URL with a host \
+                 (e.g. https://host:port), got: {}",
+                self.collector_url
+            );
+        }
+        if self.oauth.client_id.trim().is_empty() {
             anyhow::bail!("client_id must not be empty");
         }
-        if self.client_secret.expose_secret().trim().is_empty() {
+        if self.oauth.client_secret.expose_secret().trim().is_empty() {
             anyhow::bail!("client_secret must not be empty");
         }
+        // @cpt-dod:cpt-cf-dod-rest-ingest-tls-config:p1
+        // @cpt-begin:cpt-cf-dod-rest-ingest-tls-config:p1:inst-tls-check
+        if is_insecure_non_loopback_http(&self.collector_url) {
+            warn!(
+                %self.collector_url,
+                "collector_url uses http:// with a non-localhost host \u{2014} use https:// in production for secure transport",
+            );
+        }
+        // @cpt-end:cpt-cf-dod-rest-ingest-tls-config:p1:inst-tls-check
         Ok(())
     }
 }
 
-fn default_base_url() -> String {
-    "http://127.0.0.1:8080".to_owned()
-}
-
-fn default_request_timeout() -> Duration {
-    Duration::from_secs(30)
-}
-
-/// Returns `true` when `base_url` uses the `http://` scheme with a host that
+/// Returns `true` when `url` uses the `http://` scheme with a host that
 /// is **not** a loopback address (`127.0.0.1`, `::1`, or `localhost`).
 ///
 /// This is used by the module initialisation to decide whether to emit a
 /// `WARN`-level log message about insecure transport configuration
 /// (`cpt-cf-dod-rest-ingest-tls-config`).
-pub fn is_insecure_non_loopback_http(base_url: &str) -> bool {
-    use std::net::{Ipv4Addr, Ipv6Addr};
-
-    if let Ok(parsed) = url::Url::parse(base_url)
-        && parsed.scheme() == "http"
-    {
-        let is_loopback = match parsed.host() {
-            Some(url::Host::Ipv4(addr)) => addr == Ipv4Addr::LOCALHOST,
-            Some(url::Host::Ipv6(addr)) => addr == Ipv6Addr::LOCALHOST,
-            Some(url::Host::Domain(d)) => d == "localhost",
-            None => false,
-        };
-        return !is_loopback;
+pub fn is_insecure_non_loopback_http(url: &Url) -> bool {
+    if url.scheme() != "http" {
+        return false;
     }
-    false
+    match url.host() {
+        Some(Host::Ipv4(address)) => address != Ipv4Addr::LOCALHOST,
+        Some(Host::Ipv6(address)) => address != Ipv6Addr::LOCALHOST,
+        Some(Host::Domain(domain)) => domain != "localhost",
+        None => true,
+    }
 }
 
 #[cfg(test)]

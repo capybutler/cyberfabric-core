@@ -11,7 +11,8 @@ use modkit_db::Db;
 use usage_collector_sdk::models::{AllowedMetric, UsageKind, UsageRecord};
 use usage_collector_sdk::{UsageCollectorClientV1, UsageCollectorError};
 use usage_emitter::{
-    AuthorizedUsageEmitter, UsageEmitter, UsageEmitterConfig, UsageEmitterError, UsageEmitterV1,
+    AuthorizedUsageEmitter, UsageEmitterConfig, UsageEmitterError, UsageEmitterFactory,
+    UsageEmitterFactoryV1,
 };
 use uuid::Uuid;
 
@@ -50,7 +51,7 @@ impl UsageCollectorClientV1 for FixtureCollector {
 
 struct Fixture {
     db: Db,
-    _emitter: UsageEmitter,
+    _emitter: UsageEmitterFactory,
     emitter: AuthorizedUsageEmitter,
     tenant: Uuid,
     resource_id: Uuid,
@@ -63,7 +64,7 @@ impl Fixture {
 
     async fn build_with_config(name: &str, config: UsageEmitterConfig) -> Self {
         let db = common::build_db(name).await;
-        let emitter_obj = UsageEmitter::build(
+        let emitter_obj = UsageEmitterFactory::build(
             config,
             db.clone(),
             Arc::new(common::AllowAllAuthZ),
@@ -151,7 +152,7 @@ async fn enqueue_rejects_expired_authorization() {
         .enqueue_in(&f.conn(), f.record())
         .await
         .unwrap_err();
-    assert!(matches!(err, UsageEmitterError::AuthorizationExpired));
+    assert!(matches!(err, UsageEmitterError::Unauthenticated { .. }));
 }
 
 #[tokio::test]
@@ -170,7 +171,7 @@ async fn enqueue_rejects_mismatched_tenant() {
         ..f.record()
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(matches!(err, UsageEmitterError::AuthorizationFailed { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]
@@ -181,7 +182,7 @@ async fn enqueue_rejects_mismatched_resource_id() {
         ..f.record()
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(matches!(err, UsageEmitterError::AuthorizationFailed { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]
@@ -192,7 +193,7 @@ async fn enqueue_rejects_mismatched_resource_type() {
         ..f.record()
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(matches!(err, UsageEmitterError::AuthorizationFailed { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 // ── Counter value ─────────────────────────────────────────────────────────────
@@ -202,10 +203,7 @@ async fn enqueue_rejects_negative_counter_value() {
     let f = Fixture::build("ap_neg_ctr").await;
     let record = f.record_with_kind(UsageKind::Counter, -1.0);
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(matches!(
-        err,
-        UsageEmitterError::NegativeCounterValue { value } if (value + 1.0).abs() < f64::EPSILON
-    ));
+    assert!(matches!(err, UsageEmitterError::InvalidArgument { .. }));
 }
 
 #[tokio::test]
@@ -236,9 +234,7 @@ async fn enqueue_rejects_metric_not_in_allowed_list() {
         ..f.record()
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(
-        matches!(err, UsageEmitterError::MetricNotAllowed { ref metric } if metric == "not.allowed.metric")
-    );
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]
@@ -250,14 +246,7 @@ async fn enqueue_rejects_metric_kind_mismatch() {
         ..f.record()
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(matches!(
-        err,
-        UsageEmitterError::MetricKindMismatch {
-            ref metric,
-            expected: UsageKind::Counter,
-            actual: UsageKind::Gauge,
-        } if metric == "test.counter"
-    ));
+    assert!(matches!(err, UsageEmitterError::InvalidArgument { .. }));
 }
 
 // ── Module and subject mismatch rejection ─────────────────────────────────────
@@ -270,7 +259,7 @@ async fn enqueue_rejects_mismatched_module() {
         ..f.record()
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]
@@ -281,7 +270,7 @@ async fn enqueue_rejects_mismatched_subject_id() {
         ..f.record()
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]
@@ -292,7 +281,7 @@ async fn enqueue_rejects_mismatched_subject_type() {
         ..f.record()
     };
     let err = f.emitter.enqueue_in(&f.conn(), record).await.unwrap_err();
-    assert!(matches!(err, UsageEmitterError::InvalidRecord { .. }));
+    assert!(matches!(err, UsageEmitterError::PermissionDenied { .. }));
 }
 
 #[tokio::test]

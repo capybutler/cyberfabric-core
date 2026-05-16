@@ -2,39 +2,39 @@
 
 > **Emitter library** — two-phase PDP authorization, transactional outbox enqueue, and async delivery to the usage collector.
 
-A plain library crate (no `#[modkit::module]`). Each host module (`usage-collector`, `usage-collector-rest-client`, future gRPC client) calls `UsageEmitter::build(config, db, authz, collector)` in its own `init()` and registers the result as `dyn UsageEmitterV1` in `ClientHub`.
+A plain library crate (no `#[modkit::module]`). Each host module (`usage-collector`, `usage-collector-rest-client`, future gRPC client) calls `UsageEmitterFactory::build(config, db, authz, collector)` in its own `init()` and registers the result as `dyn UsageEmitterFactoryV1` in `ClientHub`.
 
 ## Security invariant
 
-`UsageCollectorClientV1` is **never** registered in `ClientHub`. It is supplied to `UsageEmitter::build` as a constructor argument and stays private inside the emitter. Only `dyn UsageEmitterV1` is published to the hub, so the sole path a source module has to the collector is through a PDP-authorized, tenant/resource-bound `AuthorizedUsageEmitter::enqueue*`. The PDP resource type and action constants (`gts.x.core.usage.record.v1 / create`) are `pub(crate)` in this crate and cannot be referenced externally.
+`UsageCollectorClientV1` is **never** registered in `ClientHub`. It is supplied to `UsageEmitterFactory::build` as a constructor argument and stays private inside the factory. Only `dyn UsageEmitterFactoryV1` is published to the hub, so the sole path a source module has to the collector is through a PDP-authorized, tenant/resource-bound `AuthorizedUsageEmitter::enqueue*`. The PDP resource type and action constants (`gts.x.core.usage.record.v1 / create`) are `pub(crate)` in this crate and cannot be referenced externally.
 
 ## API
 
 | Item | Description |
 |------|-------------|
-| `UsageEmitterV1` | Source-facing trait. Obtain from `ClientHub`. Call `for_module(MODULE_NAME)` once (e.g. in `init()`) to get a `ScopedUsageEmitter`. |
-| `UsageEmitter` | Concrete implementation; built with `UsageEmitter::build`. |
-| `ScopedUsageEmitter` | Returned by `for_module`; carries the module name and knows the allowed metrics list. Call `authorize_for` or `authorize` to get a time-limited handle. |
+| `UsageEmitterFactoryV1` | Source-facing trait. Obtain from `ClientHub`. Call `for_module(MODULE_NAME)` once (e.g. in `init()`) to get a `UsageEmitter`. |
+| `UsageEmitterFactory` | Concrete implementation of `UsageEmitterFactoryV1`; built with `UsageEmitterFactory::build`. |
+| `UsageEmitter` | Returned by `for_module`; carries the module name and knows the allowed metrics list. Call `authorize_for` or `authorize` to get a time-limited handle. |
 | `AuthorizedUsageEmitter` | Time-limited handle returned by `authorize` / `authorize_for`. Call `enqueue`, `enqueue_in`, or `build_usage_record`. |
 | `UsageRecordBuilder` | Returned by `AuthorizedUsageEmitter::build_usage_record(metric, value)`; tenant, resource, module, and kind come from the authorized handle. Optionally set `with_idempotency_key` / `with_timestamp`, then `enqueue` / `enqueue_in`. |
 | `UsageEmitterConfig` | Tunable authorization TTL, outbox queue name, partition count. Embedded in the host module's own config struct. |
-| `UsageEmitterError` | Typed errors for authorization, validation, and enqueue phases. |
+| `CanonicalError` | Error type returned by all emitter methods. Re-exported from `modkit-canonical-errors`. |
 
 ## Emitting a usage record
 
 ```rust
-use usage_emitter::UsageEmitterV1;
+use usage_emitter::UsageEmitterFactoryV1;
 
 // In init(): obtain from ClientHub and scope to this module's name.
-let emitter = hub.get::<dyn UsageEmitterV1>()?;
-let scoped = emitter.for_module(Self::MODULE_NAME);
+let factory = hub.get::<dyn UsageEmitterFactoryV1>()?;
+let emitter = factory.for_module(Self::MODULE_NAME);
 
 // In a handler — Phase 1: authorize (calls PDP + fetches allowed metrics;
 // valid for UsageEmitterConfig::authorization_max_age).
-let authorized = scoped
+let authorized = emitter
     .authorize_for(&ctx, tenant_id, resource_id, resource_type.clone())
     .await?;
-// Or for the subject's home tenant: scoped.authorize(&ctx, resource_id, resource_type).await?
+// Or for the subject's home tenant: emitter.authorize(&ctx, resource_id, resource_type).await?
 
 // Phase 2a: build and enqueue on the emitter's DB connection.
 authorized
@@ -77,17 +77,14 @@ modules:
 ## Error handling
 
 ```rust
-use usage_emitter::UsageEmitterError;
+use usage_emitter::CanonicalError;
 
 match authorized.enqueue(record).await {
     Ok(()) => {}
-    Err(UsageEmitterError::AuthorizationExpired) => { /* re-authorize and retry */ }
-    Err(UsageEmitterError::AuthorizationFailed { message }) => { /* PDP denied */ }
-    Err(UsageEmitterError::MetricNotAllowed { metric }) => { /* metric not configured for this module */ }
-    Err(UsageEmitterError::NegativeCounterValue { value }) => { /* counter delta must be >= 0 */ }
-    Err(UsageEmitterError::InvalidRecord { message }) => { /* incomplete builder / record */ }
-    Err(UsageEmitterError::Outbox(e)) => { /* transactional DB write failed */ }
-    Err(UsageEmitterError::Internal { message }) => { /* unexpected PDP or runtime error */ }
+    Err(CanonicalError::PermissionDenied { .. }) => { /* PDP denied or authorization expired */ }
+    Err(CanonicalError::Internal { .. }) => { /* metric not allowed, non-finite value, or runtime error */ }
+    Err(CanonicalError::ServiceUnavailable { .. }) => { /* outbox DB write failed or transient outage */ }
+    Err(e) => { /* other canonical error */ }
 }
 ```
 
@@ -96,10 +93,8 @@ match authorized.enqueue(record).await {
 The outbox worker dequeues from the queue configured via `outbox_queue` (host overrides apply) and calls `UsageCollectorClientV1::create_usage_record` per message:
 
 - **`Ok`** — message acknowledged
-- **`PluginTimeout`** — transient (plugin timeout, HTTP 429, HTTP 5xx); message is retried
-- **`CircuitOpen`** — transient (circuit breaker open); message is retried
-- **`Unavailable`** — transient (connection/transport error, identity service unreachable); message is retried
-- **Other errors** — permanent (`AuthorizationFailed`, `ModuleNotFound`, `Internal`); message is dead-lettered
+- **`DeadlineExceeded`** / **`ResourceExhausted`** / **`ServiceUnavailable`** — transient (plugin timeout, rate limit, HTTP 5xx, circuit breaker open, transport error); message is retried
+- **Other errors** — permanent (`Unauthenticated`, `PermissionDenied`, `NotFound`, `Internal`); message is dead-lettered
 
 Delivery is independent of the request that enqueued the record and survives process restarts through the durable outbox.
 

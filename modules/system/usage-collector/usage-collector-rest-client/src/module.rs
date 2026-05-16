@@ -8,8 +8,8 @@ use authz_resolver_sdk::AuthZResolverClient;
 use modkit::contracts::DatabaseCapability;
 use modkit::{Module, ModuleCtx};
 use sea_orm_migration::MigrationTrait;
-use tracing::{info, warn};
-use usage_emitter::{UsageEmitter, UsageEmitterV1};
+use tracing::info;
+use usage_emitter::{UsageEmitterFactory, UsageEmitterFactoryV1};
 
 use crate::config::UsageCollectorRestClientConfig;
 use crate::infra::UsageCollectorRestClient;
@@ -32,22 +32,11 @@ impl Module for UsageCollectorRestClientModule {
         let cfg: UsageCollectorRestClientConfig = ctx.config_expanded()?;
         cfg.validate()?;
         info!(
-            %cfg.base_url,
-            ?cfg.request_timeout,
+            ?cfg,
             "Loaded {} configuration",
             Self::MODULE_NAME,
         );
         // @cpt-end:cpt-cf-usage-collector-algo-rest-ingest-module-init:p1:inst-init-1
-
-        // @cpt-dod:cpt-cf-dod-rest-ingest-tls-config:p1
-        // @cpt-begin:cpt-cf-dod-rest-ingest-tls-config:p1:inst-tls-check
-        if crate::config::is_insecure_non_loopback_http(&cfg.base_url) {
-            warn!(
-                base_url = %cfg.base_url,
-                "base_url uses http:// with a non-localhost host \u{2014} use https:// in production for secure transport",
-            );
-        }
-        // @cpt-end:cpt-cf-dod-rest-ingest-tls-config:p1:inst-tls-check
 
         // @cpt-begin:cpt-cf-usage-collector-algo-rest-ingest-module-init:p1:inst-init-2
         let db = ctx
@@ -88,11 +77,11 @@ impl Module for UsageCollectorRestClientModule {
         // @cpt-end:cpt-cf-usage-collector-algo-rest-ingest-module-init:p1:inst-init-5
 
         // @cpt-begin:cpt-cf-usage-collector-algo-rest-ingest-module-init:p1:inst-init-6
-        let emitter = UsageEmitter::build(cfg.emitter, db, authorization, collector).await?;
+        let emitter = UsageEmitterFactory::build(cfg.emitter, db, authorization, collector).await?;
         let emitter = Arc::new(emitter);
         // @cpt-end:cpt-cf-usage-collector-algo-rest-ingest-module-init:p1:inst-init-6
         // @cpt-begin:cpt-cf-usage-collector-algo-rest-ingest-module-init:p1:inst-init-7
-        ctx.client_hub().register::<dyn UsageEmitterV1>(emitter);
+        ctx.client_hub().register::<dyn UsageEmitterFactoryV1>(emitter);
         // @cpt-end:cpt-cf-usage-collector-algo-rest-ingest-module-init:p1:inst-init-7
 
         Ok(())

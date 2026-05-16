@@ -10,7 +10,7 @@ use usage_collector_sdk::models::{
     AggregationFn, AggregationQuery, AggregationResult, BucketSize, GroupByDimension, RawQuery,
     UsageKind, UsageRecord,
 };
-use usage_collector_sdk::{CursorV1, Page, PageInfo, UsageCollectorError};
+use usage_collector_sdk::{CanonicalError, CursorV1, Page, PageInfo, UsageRecordError};
 use uuid::Uuid;
 
 use crate::domain::query_port::QueryPort;
@@ -38,13 +38,13 @@ fn is_transient_error(e: &sqlx::Error) -> bool {
     }
 }
 
-fn add_arg<T>(args: &mut PgArguments, value: T) -> Result<(), UsageCollectorError>
+fn add_arg<T>(args: &mut PgArguments, value: T) -> Result<(), CanonicalError>
 where
     T: for<'q> sqlx::Encode<'q, sqlx::Postgres> + sqlx::Type<sqlx::Postgres>,
 {
     use sqlx::Arguments as _;
     args.add(value)
-        .map_err(|e| UsageCollectorError::internal(format!("SQL argument binding failed: {e}")))
+        .map_err(|e| CanonicalError::internal(format!("SQL argument binding failed: {e}")).create())
 }
 
 fn raw_agg_expr(func: AggregationFn) -> &'static str {
@@ -77,19 +77,19 @@ fn bucket_size_to_pg_interval(size: BucketSize) -> &'static str {
     }
 }
 
+#[allow(clippy::too_many_lines)]
 #[async_trait]
 impl QueryPort for PgQueryPort {
     // @cpt-algo:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1
-    #[allow(clippy::too_many_lines)]
     async fn query_aggregated(
         &self,
         query: AggregationQuery,
-    ) -> Result<Vec<AggregationResult>, UsageCollectorError> {
+    ) -> Result<Vec<AggregationResult>, CanonicalError> {
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-1
         let (scope_sql, scope_params) = scope_to_sql(&query.scope).map_err(|_| {
-            UsageCollectorError::authorization_failed(
-                "scope translation failed \u{2014} access denied",
-            )
+            UsageRecordError::permission_denied()
+                .with_reason("AUTHORIZATION_DENIED")
+                .create()
         })?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-1
 
@@ -109,7 +109,7 @@ impl QueryPort for PgQueryPort {
         for sv in &scope_params {
             param_idx += 1;
             match sv {
-                SqlValue::Uuid(u) => add_arg(&mut args, *u)?,
+                SqlValue::Uuid(u) => add_arg(&mut args, u)?,
                 SqlValue::UuidArray(v) => add_arg(&mut args, v.clone())?,
                 SqlValue::Text(s) => add_arg(&mut args, s.clone())?,
                 SqlValue::TextArray(v) => add_arg(&mut args, v.clone())?,
@@ -214,7 +214,7 @@ impl QueryPort for PgQueryPort {
 
             let limit_idx = param_idx + 1;
             let max_rows_limit = i64::try_from(query.max_rows)
-                .map_err(|e| UsageCollectorError::internal(format!("row limit overflow: {e}")))?
+                .map_err(|e| CanonicalError::internal(format!("row limit overflow: {e}")).create())?
                 .saturating_add(1);
             add_arg(&mut args, max_rows_limit)?;
 
@@ -303,7 +303,7 @@ impl QueryPort for PgQueryPort {
 
             let limit_idx = param_idx + 1;
             let max_rows_limit = i64::try_from(query.max_rows)
-                .map_err(|e| UsageCollectorError::internal(format!("row limit overflow: {e}")))?
+                .map_err(|e| CanonicalError::internal(format!("row limit overflow: {e}")).create())?
                 .saturating_add(1);
             add_arg(&mut args, max_rows_limit)?;
 
@@ -330,9 +330,11 @@ impl QueryPort for PgQueryPort {
             .await
             .map_err(|e| {
                 if is_transient_error(&e) {
-                    UsageCollectorError::unavailable(format!("transient error: {e}"))
+                    CanonicalError::service_unavailable()
+                        .with_detail(format!("transient error: {e}"))
+                        .create()
                 } else {
-                    UsageCollectorError::internal(format!("storage error: {e}"))
+                    CanonicalError::internal(format!("storage error: {e}")).create()
                 }
             })?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-5
@@ -340,9 +342,9 @@ impl QueryPort for PgQueryPort {
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-6
         let results: Vec<AggregationResult> = rows
             .iter()
-            .map(|row| -> Result<AggregationResult, UsageCollectorError> {
+            .map(|row| -> Result<AggregationResult, CanonicalError> {
                 let value = row.try_get::<f64, _>("agg_value").map_err(|e| {
-                    UsageCollectorError::internal(format!("row decode error (agg_value): {e}"))
+                    CanonicalError::internal(format!("row decode error (agg_value): {e}")).create()
                 })?;
                 let bucket_start = if has_time_bucket {
                     row.try_get("bucket_start").ok()
@@ -395,10 +397,13 @@ impl QueryPort for PgQueryPort {
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-6
 
         if results.len() > query.max_rows {
-            return Err(UsageCollectorError::query_result_too_large(
+            return Err(UsageRecordError::resource_exhausted(format!(
+                "query result too large: got {} rows, limit is {}",
                 results.len(),
                 query.max_rows,
-            ));
+            ))
+            .with_quota_violation("rows", "query result row count exceeds limit")
+            .create());
         }
 
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-aggregated:p1:inst-qagg-7
@@ -407,12 +412,12 @@ impl QueryPort for PgQueryPort {
     }
 
     // @cpt-algo:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1
-    async fn query_raw(&self, query: RawQuery) -> Result<Page<UsageRecord>, UsageCollectorError> {
+    async fn query_raw(&self, query: RawQuery) -> Result<Page<UsageRecord>, CanonicalError> {
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-1
         let (scope_sql, scope_params) = scope_to_sql(&query.scope).map_err(|_| {
-            UsageCollectorError::authorization_failed(
-                "scope translation failed \u{2014} access denied",
-            )
+            UsageRecordError::permission_denied()
+                .with_reason("AUTHORIZATION_DENIED")
+                .create()
         })?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-1
 
@@ -422,24 +427,28 @@ impl QueryPort for PgQueryPort {
             .as_ref()
             .map(|c| {
                 if c.d != "fwd" {
-                    return Err(UsageCollectorError::internal(
-                        "backward pagination not supported",
-                    ));
+                    return Err(
+                        CanonicalError::internal("backward pagination not supported").create(),
+                    );
                 }
                 let ts_str = c
                     .k
                     .first()
-                    .ok_or_else(|| UsageCollectorError::internal("cursor missing timestamp key"))?;
+                    .ok_or_else(|| {
+                        CanonicalError::internal("cursor missing timestamp key").create()
+                    })?;
                 let id_str =
                     c.k.get(1)
-                        .ok_or_else(|| UsageCollectorError::internal("cursor missing id key"))?;
+                        .ok_or_else(|| {
+                            CanonicalError::internal("cursor missing id key").create()
+                        })?;
                 let ts = ts_str.parse::<DateTime<Utc>>().map_err(|e| {
-                    UsageCollectorError::internal(format!("cursor timestamp parse error: {e}"))
+                    CanonicalError::internal(format!("cursor timestamp parse error: {e}")).create()
                 })?;
                 let id = id_str.parse::<Uuid>().map_err(|e| {
-                    UsageCollectorError::internal(format!("cursor id parse error: {e}"))
+                    CanonicalError::internal(format!("cursor id parse error: {e}")).create()
                 })?;
-                Ok::<_, UsageCollectorError>((ts, id))
+                Ok::<_, CanonicalError>((ts, id))
             })
             .transpose()?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-2
@@ -450,7 +459,7 @@ impl QueryPort for PgQueryPort {
         for sv in &scope_params {
             param_idx += 1;
             match sv {
-                SqlValue::Uuid(u) => add_arg(&mut args, *u)?,
+                SqlValue::Uuid(u) => add_arg(&mut args, u)?,
                 SqlValue::UuidArray(v) => add_arg(&mut args, v.clone())?,
                 SqlValue::Text(s) => add_arg(&mut args, s.clone())?,
                 SqlValue::TextArray(v) => add_arg(&mut args, v.clone())?,
@@ -514,9 +523,9 @@ impl QueryPort for PgQueryPort {
         // @cpt-begin:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-5
         let page_size_idx = param_idx + 1;
         let page_size = i64::try_from(query.page_size)
-            .map_err(|e| UsageCollectorError::internal(format!("page size overflow: {e}")))?;
+            .map_err(|e| CanonicalError::internal(format!("page size overflow: {e}")).create())?;
         if page_size < 1 {
-            return Err(UsageCollectorError::internal("page_size must be >= 1"));
+            return Err(CanonicalError::internal("page_size must be >= 1").create());
         }
         add_arg(&mut args, page_size + 1)?;
 
@@ -537,9 +546,11 @@ impl QueryPort for PgQueryPort {
             .await
             .map_err(|e| {
                 if is_transient_error(&e) {
-                    UsageCollectorError::unavailable(format!("transient error: {e}"))
+                    CanonicalError::service_unavailable()
+                        .with_detail(format!("transient error: {e}"))
+                        .create()
                 } else {
-                    UsageCollectorError::internal(format!("storage error: {e}"))
+                    CanonicalError::internal(format!("storage error: {e}")).create()
                 }
             })?;
         // @cpt-end:cpt-cf-usage-collector-algo-production-storage-plugin-query-raw:p1:inst-qraw-6
@@ -555,10 +566,10 @@ impl QueryPort for PgQueryPort {
         let next_cursor: Option<String> = if has_more {
             if let Some(last_row) = rows_page.last() {
                 let last_ts: DateTime<Utc> = last_row.try_get("timestamp").map_err(|e| {
-                    UsageCollectorError::internal(format!("cursor extraction error: {e}"))
+                    CanonicalError::internal(format!("cursor extraction error: {e}")).create()
                 })?;
                 let last_id: Uuid = last_row.try_get("id").map_err(|e| {
-                    UsageCollectorError::internal(format!("cursor extraction error: {e}"))
+                    CanonicalError::internal(format!("cursor extraction error: {e}")).create()
                 })?;
                 let cursor = CursorV1 {
                     k: vec![last_ts.to_rfc3339(), last_id.to_string()],
@@ -568,7 +579,7 @@ impl QueryPort for PgQueryPort {
                     d: "fwd".to_owned(),
                 };
                 Some(cursor.encode().map_err(|e| {
-                    UsageCollectorError::internal(format!("cursor encode error: {e}"))
+                    CanonicalError::internal(format!("cursor encode error: {e}")).create()
                 })?)
             } else {
                 None
@@ -579,70 +590,79 @@ impl QueryPort for PgQueryPort {
 
         let records: Vec<UsageRecord> = rows_page
             .iter()
-            .map(|row| -> Result<UsageRecord, UsageCollectorError> {
+            .map(|row| -> Result<UsageRecord, CanonicalError> {
                 let kind_str: String = row.try_get("kind").map_err(|e| {
-                    UsageCollectorError::internal(format!("row decode error (kind): {e}"))
+                    CanonicalError::internal(format!("row decode error (kind): {e}")).create()
                 })?;
                 let kind = match kind_str.as_str() {
                     "counter" => UsageKind::Counter,
                     "gauge" => UsageKind::Gauge,
                     other => {
-                        return Err(UsageCollectorError::internal(format!(
+                        return Err(CanonicalError::internal(format!(
                             "unknown kind value in storage: {other}"
-                        )));
+                        ))
+                        .create());
                     }
                 };
                 Ok(UsageRecord {
                     module: row.try_get("module").map_err(|e| {
-                        UsageCollectorError::internal(format!("row decode error (module): {e}"))
+                        CanonicalError::internal(format!("row decode error (module): {e}")).create()
                     })?,
                     tenant_id: row.try_get("tenant_id").map_err(|e| {
-                        UsageCollectorError::internal(format!("row decode error (tenant_id): {e}"))
+                        CanonicalError::internal(format!("row decode error (tenant_id): {e}"))
+                            .create()
                     })?,
                     metric: row.try_get("metric").map_err(|e| {
-                        UsageCollectorError::internal(format!("row decode error (metric): {e}"))
+                        CanonicalError::internal(format!("row decode error (metric): {e}")).create()
                     })?,
                     kind,
                     value: row.try_get::<f64, _>("value").map_err(|e| {
-                        UsageCollectorError::internal(format!("row decode error (value): {e}"))
+                        CanonicalError::internal(format!("row decode error (value): {e}")).create()
                     })?,
                     resource_id: row.try_get("resource_id").map_err(|e| {
-                        UsageCollectorError::internal(format!(
+                        CanonicalError::internal(format!(
                             "row decode error (resource_id): {e}"
                         ))
+                        .create()
                     })?,
                     resource_type: row.try_get("resource_type").map_err(|e| {
-                        UsageCollectorError::internal(format!(
+                        CanonicalError::internal(format!(
                             "row decode error (resource_type): {e}"
                         ))
+                        .create()
                     })?,
                     subject_id: row.try_get::<Option<Uuid>, _>("subject_id").map_err(|e| {
-                        UsageCollectorError::internal(format!("row decode error (subject_id): {e}"))
+                        CanonicalError::internal(format!("row decode error (subject_id): {e}"))
+                            .create()
                     })?,
                     subject_type: row.try_get::<Option<String>, _>("subject_type").map_err(
                         |e| {
-                            UsageCollectorError::internal(format!(
+                            CanonicalError::internal(format!(
                                 "row decode error (subject_type): {e}"
                             ))
+                            .create()
                         },
                     )?,
                     idempotency_key: row
                         .try_get::<Option<String>, _>("idempotency_key")
                         .map_err(|e| {
-                            UsageCollectorError::internal(format!(
+                            CanonicalError::internal(format!(
                                 "row decode error (idempotency_key): {e}"
                             ))
+                            .create()
                         })?
                         .unwrap_or_default(),
                     timestamp: row.try_get("timestamp").map_err(|e| {
-                        UsageCollectorError::internal(format!("row decode error (timestamp): {e}"))
+                        CanonicalError::internal(format!("row decode error (timestamp): {e}"))
+                            .create()
                     })?,
                     metadata: row
                         .try_get::<Option<serde_json::Value>, _>("metadata")
                         .map_err(|e| {
-                            UsageCollectorError::internal(format!(
+                            CanonicalError::internal(format!(
                                 "row decode error (metadata): {e}"
                             ))
+                            .create()
                         })?,
                 })
             })

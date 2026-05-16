@@ -12,7 +12,9 @@ use modkit_security::access_scope::pep_properties;
 use usage_collector_sdk::UsageCollectorError;
 use uuid::Uuid;
 
-use super::{USAGE_RECORD_READ, actions, authorize_and_compile_scope};
+use usage_collector_sdk::authz::{USAGE_RECORD, actions};
+
+use super::authorize_and_compile_scope;
 
 // ── Mock AuthZ clients ────────────────────────────────────────────────────
 
@@ -135,11 +137,11 @@ async fn test_authz_denied() {
     let ctx = test_ctx();
     let authz = Arc::new(DenyAuthZ);
 
-    let result = authorize_and_compile_scope(&ctx, authz, &USAGE_RECORD_READ, actions::LIST).await;
+    let result = authorize_and_compile_scope(&ctx, authz, &USAGE_RECORD, actions::LIST).await;
 
     assert!(
-        matches!(result, Err(UsageCollectorError::AuthorizationFailed { .. })),
-        "expected AuthorizationFailed, got {result:?}"
+        matches!(result, Err(UsageCollectorError::PermissionDenied { .. })),
+        "expected PermissionDenied, got {result:?}"
     );
 }
 
@@ -151,11 +153,11 @@ async fn test_authz_non_denied_pdp_error() {
     let ctx = test_ctx();
     let authz = Arc::new(NetworkErrorAuthZ);
 
-    let result = authorize_and_compile_scope(&ctx, authz, &USAGE_RECORD_READ, actions::LIST).await;
+    let result = authorize_and_compile_scope(&ctx, authz, &USAGE_RECORD, actions::LIST).await;
 
     assert!(
-        matches!(result, Err(UsageCollectorError::AuthorizationFailed { .. })),
-        "expected AuthorizationFailed (fail-closed), got {result:?}"
+        matches!(result, Err(UsageCollectorError::PermissionDenied { .. })),
+        "expected PermissionDenied (fail-closed), got {result:?}"
     );
 }
 
@@ -166,7 +168,7 @@ async fn test_authz_single_constraint() {
     let ctx = test_ctx();
     let authz = Arc::new(SingleConstraintAuthZ { tenant_id });
 
-    let result = authorize_and_compile_scope(&ctx, authz, &USAGE_RECORD_READ, actions::LIST).await;
+    let result = authorize_and_compile_scope(&ctx, authz, &USAGE_RECORD, actions::LIST).await;
 
     let scope = result.expect("expected Ok(AccessScope)");
     assert!(
@@ -196,7 +198,7 @@ async fn test_authz_multi_constraint_or_of_ands() {
     let ctx = test_ctx();
     let authz = Arc::new(MultiConstraintAuthZ { tenant_a, tenant_b });
 
-    let result = authorize_and_compile_scope(&ctx, authz, &USAGE_RECORD_READ, actions::LIST).await;
+    let result = authorize_and_compile_scope(&ctx, authz, &USAGE_RECORD, actions::LIST).await;
 
     let scope = result.expect("expected Ok(AccessScope)");
     assert!(

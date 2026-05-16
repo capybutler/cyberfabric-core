@@ -7,21 +7,6 @@ use serde::Deserialize;
 use usage_collector_sdk::UsageKind;
 use usage_emitter::UsageEmitterConfig;
 
-/// Default number of raw records returned per page when `page_size` is absent.
-pub const DEFAULT_PAGE_SIZE: usize = 100;
-
-/// Maximum allowed value for `page_size` in raw queries.
-pub const MAX_PAGE_SIZE: usize = 1_000;
-
-/// Maximum number of rows `query_aggregated` may return before returning `QueryResultTooLarge`.
-pub const MAX_AGG_ROWS: usize = 10_000;
-
-/// Maximum byte length for string filter fields (`usage_type`, `resource_type`, `subject_type`, `source`).
-pub const MAX_FILTER_STRING_LEN: usize = 256;
-
-/// Maximum allowed query time range (from, to) per request (~1 year).
-pub const MAX_QUERY_TIME_RANGE: Duration = Duration::from_hours(8784);
-
 /// Per-metric allowed configuration.
 #[derive(Debug, Clone, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -30,6 +15,35 @@ pub struct MetricConfig {
     pub kind: UsageKind,
     /// Modules allowed to emit this metric. If absent, all modules are allowed.
     pub modules: Option<Vec<String>>,
+}
+
+/// Sliding-window circuit-breaker tuning for the storage plugin proxy.
+#[derive(Debug, Clone, Deserialize)]
+#[serde(default, deny_unknown_fields)]
+pub struct CircuitBreakerConfig {
+    /// Number of failures within `window` that will open the circuit.
+    /// Valid range: 1–100. Default: 5.
+    pub failure_threshold: u32,
+
+    /// Rolling window for counting failures.
+    /// Default: 10s.
+    #[serde(with = "modkit_utils::humantime_serde")]
+    pub window: Duration,
+
+    /// Duration to wait in the open state before allowing a half-open probe.
+    /// Valid range: 1s–5m. Default: 30s.
+    #[serde(with = "modkit_utils::humantime_serde")]
+    pub recovery_timeout: Duration,
+}
+
+impl Default for CircuitBreakerConfig {
+    fn default() -> Self {
+        Self {
+            failure_threshold: 5,
+            window: Duration::from_secs(10),
+            recovery_timeout: Duration::from_secs(30),
+        }
+    }
 }
 
 /// Module configuration.
@@ -44,19 +58,8 @@ pub struct UsageCollectorConfig {
     #[serde(with = "modkit_utils::humantime_serde")]
     pub plugin_timeout: Duration,
 
-    /// Number of failures within `circuit_breaker_window` that will open the circuit.
-    /// Valid range: 1–100. Default: 5.
-    pub circuit_breaker_failure_threshold: u32,
-
-    /// Rolling window for counting failures.
-    /// Default: 10s.
-    #[serde(with = "modkit_utils::humantime_serde")]
-    pub circuit_breaker_window: Duration,
-
-    /// Duration to wait in the open state before allowing a half-open probe.
-    /// Valid range: 1s–5m. Default: 30s.
-    #[serde(with = "modkit_utils::humantime_serde")]
-    pub circuit_breaker_recovery_timeout: Duration,
+    /// Sliding-window circuit-breaker tuning for the storage plugin proxy.
+    pub circuit_breaker: CircuitBreakerConfig,
 
     /// Outbox/authorization tuning for the embedded usage emitter.
     pub emitter: UsageEmitterConfig,
@@ -79,37 +82,20 @@ impl UsageCollectorConfig {
         if self.plugin_timeout > std::time::Duration::from_secs(30) {
             anyhow::bail!("plugin_timeout must not exceed 30s");
         }
-        if self.circuit_breaker_failure_threshold < 1 {
-            anyhow::bail!("circuit_breaker_failure_threshold must be at least 1");
+        if self.circuit_breaker.failure_threshold < 1 {
+            anyhow::bail!("circuit_breaker.failure_threshold must be at least 1");
         }
-        if self.circuit_breaker_failure_threshold > 100 {
-            anyhow::bail!("circuit_breaker_failure_threshold must not exceed 100");
+        if self.circuit_breaker.failure_threshold > 100 {
+            anyhow::bail!("circuit_breaker.failure_threshold must not exceed 100");
         }
-        if self.circuit_breaker_window < std::time::Duration::from_millis(100) {
-            anyhow::bail!("circuit_breaker_window must be at least 100ms");
+        if self.circuit_breaker.window < std::time::Duration::from_millis(100) {
+            anyhow::bail!("circuit_breaker.window must be at least 100ms");
         }
-        if self.circuit_breaker_recovery_timeout < std::time::Duration::from_secs(1) {
-            anyhow::bail!("circuit_breaker_recovery_timeout must be at least 1s");
+        if self.circuit_breaker.recovery_timeout < std::time::Duration::from_secs(1) {
+            anyhow::bail!("circuit_breaker.recovery_timeout must be at least 1s");
         }
-        if self.circuit_breaker_recovery_timeout > std::time::Duration::from_mins(5) {
-            anyhow::bail!("circuit_breaker_recovery_timeout must not exceed 5min");
-        }
-        // Startup invariants for query configuration constants.
-        #[allow(clippy::assertions_on_constants)]
-        {
-            assert!(
-                DEFAULT_PAGE_SIZE > 0,
-                "DEFAULT_PAGE_SIZE must be greater than zero"
-            );
-            assert!(MAX_PAGE_SIZE > 0, "MAX_PAGE_SIZE must be greater than zero");
-            assert!(
-                DEFAULT_PAGE_SIZE <= MAX_PAGE_SIZE,
-                "DEFAULT_PAGE_SIZE must not exceed MAX_PAGE_SIZE"
-            );
-            assert!(
-                MAX_FILTER_STRING_LEN > 0,
-                "MAX_FILTER_STRING_LEN must be greater than zero"
-            );
+        if self.circuit_breaker.recovery_timeout > std::time::Duration::from_mins(5) {
+            anyhow::bail!("circuit_breaker.recovery_timeout must not exceed 5min");
         }
         Ok(())
     }
@@ -120,9 +106,7 @@ impl Default for UsageCollectorConfig {
         Self {
             vendor: "cyberfabric".to_owned(),
             plugin_timeout: Duration::from_secs(5),
-            circuit_breaker_failure_threshold: 5,
-            circuit_breaker_window: Duration::from_secs(10),
-            circuit_breaker_recovery_timeout: Duration::from_secs(30),
+            circuit_breaker: CircuitBreakerConfig::default(),
             emitter: UsageEmitterConfig::default(),
             metrics: HashMap::new(),
         }
